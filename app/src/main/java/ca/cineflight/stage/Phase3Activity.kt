@@ -346,6 +346,15 @@ class Phase3Activity : AppCompatActivity() {
     // au point d'emission 2D, si le dernier battement est trop vieux (boucle figee), le
     // throttle est force a 0. FAIL-CLOSED : tant qu'aucun battement, le cycle est non frais.
     private val soccerWatchdog = ca.cineflight.stage.sport.soccer.CommandeWatchdog()
+    // WATCHDOG INDEPENDANT (REQ-WDG-001) : thread B STRICTEMENT independant du fil
+    // d'emission. Si le battement cesse (gel TOTAL de la boucle, ce que le watchdog de
+    // cycle ne peut pas detecter), il desarme le mode, neutralise la commande et demande
+    // la sortie du Virtual Stick — depuis son propre fil vivant. Latch one-shot ; le
+    // re-armement passe par la decision humaine d'armer a nouveau le mode (dialog).
+    // L'EFFET physique reste a caracteriser par E-03 (limite documentee au dossier).
+    private val soccerWatchdogIndep = ca.cineflight.stage.sport.soccer.WatchdogIndependant(
+        onDefaillance = { ageMs -> mettreEnSecuriteDepuisWatchdogIndep(ageMs) }
+    )
     // MULTI-JOUEURS (mode soccer) : la liste complete des personnes YOLO -> tracker -> centre
     // de groupe. Alimente le vrai nbJoueurs + centre d'action du realisateur (au lieu de 1).
     private val soccerPlayerTracker = ca.cineflight.stage.sport.soccer.PlayerTracker()
@@ -723,6 +732,7 @@ class Phase3Activity : AppCompatActivity() {
                 if (TEST_E01_SIGNE_THROTTLE && soccerMode2D) {
                     try { observerMiroirMouvementSoccer(commandSent = "TEST_E01_SOL") } catch (_: Throwable) {}
                     soccerWatchdog.battement(System.nanoTime())
+                    soccerWatchdogIndep.battement()   // REQ-WDG-001 : battement vers le thread B
                     delay(100)
                     continue
                 }
@@ -737,6 +747,10 @@ class Phase3Activity : AppCompatActivity() {
                 // WATCHDOG (Phase 1.2) : battement de fin d'iteration SAINE. Si la boucle se
                 // fige, ce battement cesse ; l'emission 2D forcera alors le throttle a 0.
                 soccerWatchdog.battement(System.nanoTime())
+                // WATCHDOG INDEPENDANT (REQ-WDG-001) : meme battement publie vers le
+                // thread B — si CETTE boucle gele totalement, B le detecte et met en
+                // securite depuis son propre fil (desarme + neutre + sortie VS).
+                soccerWatchdogIndep.battement()
                 delay(100)   // 10 Hz
             }
         }
@@ -2103,6 +2117,7 @@ class Phase3Activity : AppCompatActivity() {
     private fun basculerArmementSoccer() {
         if (soccerArme) {
             soccerArme = false
+            soccerWatchdogIndep.desarmerSurveillance()  // desarmement volontaire, pas une defaillance
             majBoutonSoccer()
             return
         }
@@ -2113,6 +2128,12 @@ class Phase3Activity : AppCompatActivity() {
         ) {
             soccerArretUrgence = false     // un nouvel armement leve un ancien arret d'urgence
             soccerArme = true
+            // WATCHDOG INDEPENDANT (REQ-WDG-001) : la confirmation du dialog EST la
+            // decision humaine explicite -> reset d'un eventuel latch, armement de la
+            // surveillance, demarrage du thread B (idempotent).
+            soccerWatchdogIndep.reset()
+            soccerWatchdogIndep.armer()
+            soccerWatchdogIndep.demarrer()
             majBoutonSoccer()
         }
     }
@@ -2145,6 +2166,7 @@ class Phase3Activity : AppCompatActivity() {
         suiviActif = false
         soccerArme = false                // SECURITE : l'arret d'urgence desarme le soccer
         soccerArretUrgence = true         // ...et pose le drapeau (l'arbitre -> commande neutre)
+        soccerWatchdogIndep.desarmerSurveillance()  // mode desarme -> surveillance suspendue
         // TEST E-08 : trace l'instant precis de la cessation.
         logSecuTest("E08 ts=${System.currentTimeMillis()} emergencyStop=true soccerArme=false vsActif=false raison=arret_urgence")
         try { pont.envoyerVitesses(0f, 0f, 0f, 0f, ca.cineflight.stage.control.CommandOrigin.AUTOMATIC) } catch (_: Exception) {}
@@ -2286,6 +2308,33 @@ class Phase3Activity : AppCompatActivity() {
         try { flux?.arreter() } catch (_: Exception) {}       // libere la video live
         try { yoloSuivi?.arreter() } catch (_: Exception) {}  // stoppe la detection YOLO
         try { lecteurPerception.arreter() } catch (_: Exception) {}
+        try { soccerWatchdogIndep.arreter() } catch (_: Exception) {}  // stoppe le thread B
+    }
+
+    /**
+     * MISE EN SECURITE declenchee par le WATCHDOG INDEPENDANT (REQ-WDG-001).
+     * S'execute sur le THREAD B (independant) : ne touche PAS l'UI directement — si le
+     * fil UI est gele, les actions de securite ci-dessous s'executent quand meme.
+     * Actions (miroir de arretUrgence(), sans UI) : desarmement + drapeau urgence +
+     * commande neutre directe + demande de sortie Virtual Stick + journalisation.
+     * L'EFFET physique de la cessation reste a caracteriser par E-03.
+     */
+    private fun mettreEnSecuriteDepuisWatchdogIndep(ageMs: Long) {
+        soccerArme = false
+        soccerArretUrgence = true
+        try { pont.envoyerVitesses(0f, 0f, 0f, 0f, ca.cineflight.stage.control.CommandOrigin.AUTOMATIC) } catch (_: Throwable) {}
+        try { pont.activerVirtualStick(false) } catch (_: Throwable) {}
+        vsActif = false
+        logSecuTest("WDG_INDEP ts=${System.currentTimeMillis()} defaillance=battement_perime age_ms=$ageMs actions=desarme+urgence+neutre+sortieVS")
+        android.util.Log.e("CineFlightWDG",
+            "WATCHDOG INDEPENDANT declenche (age=$ageMs ms) : desarmement + neutralisation + sortie Virtual Stick demandes")
+        // UI en meilleur effort seulement (peut ne jamais s'executer si le fil UI est mort).
+        runOnUiThread {
+            try {
+                majBoutonSoccer()
+                txtEtat.text = "⛔ WATCHDOG INDÉPENDANT : boucle d'émission figée (${ageMs} ms) — mode désarmé, commande neutralisée, sortie Virtual Stick demandée."
+            } catch (_: Throwable) {}
+        }
     }
 
     private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()

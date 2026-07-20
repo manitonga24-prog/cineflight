@@ -32,6 +32,10 @@ object SafetyLimits {
     /** Âge maximal du dernier battement de la boucle (ms). Au-delà : cycle figé → throttle 0. */
     const val WATCHDOG_TIMEOUT_MS: Long = 500L
 
+    // ── WATCHDOG INDÉPENDANT (REQ-WDG-001) ──────────────────────────────────────
+    /** Période de vérification du thread B indépendant (ms). Doit être < WATCHDOG_TIMEOUT_MS. */
+    const val WATCHDOG_INDEP_PERIODE_MS: Long = 100L
+
     // ── FRÉQUENCES DES BOUCLES (Hz) — valeurs de conception ─────────────────────
     /** Boucle pilote (émission de commande) : ~10 Hz (période 100 ms). */
     const val BOUCLE_PILOTE_HZ: Int = 10
