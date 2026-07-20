@@ -308,6 +308,10 @@ class Phase3Activity : AppCompatActivity() {
     // signaux bruts -> snapshot immuable + numero de generation. Remplace les lectures
     // eparpillees de variables @Volatile aux deux sites d'emission (rail + 2D).
     private val soccerSnapshotFactory = ca.cineflight.stage.sport.soccer.SafetySnapshotFactory()
+    // WATCHDOG de cycle (Phase 1.2). "Bat" a chaque iteration saine de la boucle pilote ;
+    // au point d'emission 2D, si le dernier battement est trop vieux (boucle figee), le
+    // throttle est force a 0. FAIL-CLOSED : tant qu'aucun battement, le cycle est non frais.
+    private val soccerWatchdog = ca.cineflight.stage.sport.soccer.CommandeWatchdog()
     // MULTI-JOUEURS (mode soccer) : la liste complete des personnes YOLO -> tracker -> centre
     // de groupe. Alimente le vrai nbJoueurs + centre d'action du realisateur (au lieu de 1).
     private val soccerPlayerTracker = ca.cineflight.stage.sport.soccer.PlayerTracker()
@@ -674,6 +678,9 @@ class Phase3Activity : AppCompatActivity() {
                         try { pont.envoyerVitesses(0f, 0f, 0f, 0f, ca.cineflight.stage.control.CommandOrigin.AUTOMATIC) } catch (_: Exception) {}  // hover
                     }
                 }
+                // WATCHDOG (Phase 1.2) : battement de fin d'iteration SAINE. Si la boucle se
+                // fige, ce battement cesse ; l'emission 2D forcera alors le throttle a 0.
+                soccerWatchdog.battement(System.nanoTime())
                 delay(100)   // 10 Hz
             }
         }
@@ -1684,7 +1691,11 @@ class Phase3Activity : AppCompatActivity() {
                     altitudeOptimiseeM = realise.altitudeM,
                     altitudeActuelleM = altCourante,
                     vMaxMps = SOCCER_2D_MAX_VSPEED_MPS)
-                val emis2D = emettre2DSoccer(throttle2D)
+                // WATCHDOG (Phase 1.2) : si la boucle de decision s'est figee (dernier battement
+                // trop vieux), on force le throttle a 0 AVANT l'arbitre. Barriere independante
+                // du double verrou : un cycle mort ne peut plus commander de mouvement.
+                val throttle2DSurveille = soccerWatchdog.filtrerThrottle(throttle2D, System.nanoTime())
+                val emis2D = emettre2DSoccer(throttle2DSurveille)
 
                 if (t != null) {
                     val srcTxt = if (multi) "%d joueurs".format(nbJoueurs) else "mono-cible"
