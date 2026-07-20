@@ -192,10 +192,38 @@ class Phase3Activity : AppCompatActivity() {
     // Mettre ANTICIPATION_ACTIVE = false pour revenir au comportement Etape 1
     // (poursuite de la position brute), utile pour comparer en test.
     private val ANTICIPATION_ACTIVE = true
+    // ══════════════════════════════════════════════════════════════════════════════
+    // ⚠️ TEST E-01 AU SOL — HÉLICES PHYSIQUEMENT RETIRÉES OBLIGATOIRE ⚠️
+    // UN SEUL flag maître pilote TOUT le test de signe du throttle. Mettre à false
+    // pour revenir à l'état de production. NE JAMAIS laisser cet APK décoller.
+    // Déclaré ICI (avant profilSujet) pour garantir l'ordre d'initialisation.
+    // Effets quand true : (1) profil PERSONNE force, (2) auto-arme, (3) emission 2D
+    // autorisee, (4) vMax=0.2, (5) gate obstacle ouvert, (6) throttle force a +0.2,
+    // (7) chaque ligne de log ecrite dans un fichier sur le telephone.
+    private val TEST_E01_SIGNE_THROTTLE = false   // ← SEUL commutateur. false = production.
+    // ══════════════════════════════════════════════════════════════════════════════
+    // ⚠️ TEST E-06/E-07/E-08/E-09 AU SOL — HÉLICES RETIRÉES ⚠️
+    // Flag pour valider AU SOL que les SÉCURITÉS coupent l'émission :
+    //   E-06/E-07 : perte YOLO/vidéo -> bit AC=0 -> throttle_emis=0
+    //   E-08      : arrêt d'urgence -> bit EM=1 -> throttle_emis=0
+    //   E-09      : perte liaison RC -> détectée + (via arretUrgence) coupe l'émission
+    // Quand true : écrit des lignes de diagnostic dédiées (E06/E08/E09) dans le fichier
+    // test_secu_e0x.log, et BRANCHE la détection RC dans Phase3 (absente en production).
+    // Mettre à false pour revenir à l'état de production. Hélices retirées obligatoire.
+    // IMPORTANT : pour observer la COUPURE d'une émission active, activer AUSSI
+    // TEST_E01_SIGNE_THROTTLE=true (fournit le contexte d'émission au sol : profil
+    // personne, auto-armement, boucle 2D, throttle forcé +0.2). Les logs E06/E08/E09
+    // montreront alors que la sécurité ramène throttle_emis à 0.
+    private val TEST_E06_09_SECU = false   // ← SEUL commutateur pour E-06..E-09. false = production.
+    // ══════════════════════════════════════════════════════════════════════════════
     // Profil du sujet suivi, choisi au lancement (carte "personne" -> MARCHE ;
     // carte "vehicule" ou defaut -> AUTO). Lu paresseusement : l'intent est pret des onCreate.
     private val profilSujet: ProfilSujetMobile by lazy {
-        if (intent?.getStringExtra("PROFIL_SUJET") == "MARCHE") ProfilSujetMobile.MARCHE
+        // TEST E-01 : force le profil PERSONNE (MARCHE -> classeVision=PERSON) pour que
+        // YOLO detecte des personnes en mode soccer, condition necessaire a l'emission 2D
+        // (sinon detection = voiture -> soccerNbJoueurs reste 0 -> aucun log). Flag=false -> comportement normal.
+        if (TEST_E01_SIGNE_THROTTLE) ProfilSujetMobile.MARCHE
+        else if (intent?.getStringExtra("PROFIL_SUJET") == "MARCHE") ProfilSujetMobile.MARCHE
         else ProfilSujetMobile.AUTO
     }
     private val predicteur by lazy { DiagnosticPredictionRtk(profilSujet.configurationPrediction()) }
@@ -237,7 +265,9 @@ class Phase3Activity : AppCompatActivity() {
     // true  = on OBSERVE seulement (log SOCCER_RAIL_MIRROR, soccer_motion_applied=false).
     // Ce flag est SEPARE du flag d'emission reelle (jamais actives implicitement ensemble).
     // Active par le mode SOCCER (extra MODE_SOCCER) : observation a l'ecran, aucun mouvement.
-    @Volatile private var SOCCER_RAIL_MIRROR_ENABLED = false
+    // TEST E-01 : ouvre le miroir de mouvement (sinon observerMiroirMouvementSoccer, qui
+    // contient le bloc d'emission 2D, n'est JAMAIS appele). Flag=false -> false comme avant.
+    @Volatile private var SOCCER_RAIL_MIRROR_ENABLED = TEST_E01_SIGNE_THROTTLE
     private var txtSoccer: TextView? = null
     private var overlayYoloP3: OverlayYolo? = null
     @Volatile private var overlayYoloVisible = false
@@ -254,13 +284,17 @@ class Phase3Activity : AppCompatActivity() {
     //  2) SOCCER_2D_MAX_VSPEED_MPS = 0 : meme flag actif, la vitesse verticale reste neutre.
     // Essai 1 : ALTITUDE SEULE (throttle). roll/pitch/yaw = 0. Ne PAS augmenter vMax avant
     // d'avoir verifie le SENS du throttle par un test statique au sol.
-    private val SOCCER_2D_REAL_ENABLED = false
-    private val SOCCER_2D_MAX_VSPEED_MPS = 0f      // Essai 1 : zero. Aucun mouvement vertical.
+    // Flags derives du flag maitre TEST_E01_SIGNE_THROTTLE (declare plus haut, avant profilSujet).
+    private val SOCCER_2D_REAL_ENABLED = TEST_E01_SIGNE_THROTTLE
+    private val SOCCER_2D_MAX_VSPEED_MPS = if (TEST_E01_SIGNE_THROTTLE) 0.2f else 0f
     private val SOCCER_BATT_MIN_PCT = 40           // batterie mini operationnelle pour le mode soccer
     private val SOCCER_DIST_MAX_M = 200.0          // distance max operateur (decollage) <-> rail
     // ARMEMENT runtime : le mode soccer n'est "arme" que si l'operateur l'a active ET
     // que le flag reel l'autorise. Toute reprise pilote / arret d'urgence le desarme.
-    @Volatile private var soccerArme = false
+    // TEST E-01 : auto-arme le mode soccer quand le flag de test est actif (le bouton
+    // d'armement n'est visible que si SOCCER_RAIL_REAL_ENABLED, hors scope du test 2D).
+    // En production (flag=false) -> false comme avant. REMETTRE le flag a false apres le test.
+    @Volatile private var soccerArme = TEST_E01_SIGNE_THROTTLE
     @Volatile private var soccerArretUrgence = false
     private var btnSoccer: Button? = null
     // NB : en Phase3 la cible YOLO est unique (yoloCx), on construit l'estimation
@@ -653,6 +687,16 @@ class Phase3Activity : AppCompatActivity() {
             runOnUiThread {
                 if (ok) {
                     try { pont.initialiserListeners() } catch (_: Exception) {}
+                    // SECURITE E-09 (correction, ACTIVE EN PRODUCTION) : détecte la perte de
+                    // liaison radiocommande et déclenche l'arrêt d'urgence (coupe l'émission
+                    // soccer + désarme). En complément du failsafe DJI natif. Le log fichier
+                    // n'est écrit que sous TEST_E06_09_SECU (logSecuTest est gardé par le flag).
+                    try {
+                        pont.obsConnexionRc = { connecte ->
+                            logSecuTest("E09 ts=${System.currentTimeMillis()} rc_connecte=$connecte estConnecte=${try { pont.estConnecte() } catch (_: Throwable) { false }} soccerArme=$soccerArme")
+                            if (!connecte) runOnUiThread { try { arretUrgence() } catch (_: Throwable) {} }
+                        }
+                    } catch (_: Throwable) {}
                     try { flux?.demarrer() } catch (_: Exception) {}   // relie la video live
                     try { demarrerYolo() } catch (_: Exception) {}     // confirmation + cadrage fin
                     try { lecteurPerception.demarrer() } catch (_: Exception) {}  // etat capteurs (mode camera)
@@ -671,6 +715,18 @@ class Phase3Activity : AppCompatActivity() {
         // ── BOUCLE PILOTE : envoie la commande de suivi (ou hover) a ~10 Hz ─────
         jobPilote = lifecycleScope.launch(Dispatchers.Default) {
             while (isActive) {
+                // ══ TEST E-01 AU SOL — HÉLICES RETIRÉES ══════════════════════════════════
+                // Appelle DIRECTEMENT le pipeline soccer 2D (observerMiroirMouvementSoccer),
+                // en sautant tickSuivi() qui exige un contexte voiture RTK absent en mode soccer.
+                // But : observer le SIGNE du throttle au sol. NE JAMAIS voler avec ce build
+                // (throttle force a +0.2 = montee continue). Flag=false -> code normal.
+                if (TEST_E01_SIGNE_THROTTLE && soccerMode2D) {
+                    try { observerMiroirMouvementSoccer(commandSent = "TEST_E01_SOL") } catch (_: Throwable) {}
+                    soccerWatchdog.battement(System.nanoTime())
+                    delay(100)
+                    continue
+                }
+                // ═════════════════════════════════════════════════════════════════════════
                 if (vsActif) {
                     if (suiviActif && enVol) {
                         if (suiviVision) tickSuiviVision() else tickSuivi()
@@ -1211,6 +1267,18 @@ class Phase3Activity : AppCompatActivity() {
      */
     private fun majMultiJoueursSoccer(personnes: List<FloatArray>) {
         val now = System.currentTimeMillis()
+        // TEST E-01 : diagnostic ecrit dans le fichier a chaque frame de detection recue.
+        // Nous dit si YOLO tourne et combien de personnes il voit, meme si on n'entre jamais
+        // dans le bloc d'emission 2D. SUPPRIMER apres le test (flag=false le desactive).
+        if (TEST_E01_SIGNE_THROTTLE) {
+            try {
+                val f = java.io.File(getExternalFilesDir(null), "test_e01_signe.log")
+                java.io.FileOutputStream(f, true).use {
+                    it.write(("DIAG ts=$now personnes_yolo=${personnes.size} mode2D=$soccerMode2D\n")
+                        .toByteArray(Charsets.UTF_8))
+                }
+            } catch (_: Throwable) {}
+        }
         val dets = personnes.mapNotNull { p ->
             if (p.size < 5) null
             else ca.cineflight.stage.sport.soccer.PlayerTracker.Detection(p[0], p[1], p[2], p[3], p[4])
@@ -1343,6 +1411,9 @@ class Phase3Activity : AppCompatActivity() {
                 // Arme SEULEMENT si l'operateur a arme ET que le flag reel l'autorise.
                 soccerModeArmed = (SOCCER_RAIL_REAL_ENABLED && soccerArme),
                 safety = safety,
+                // RAIL = deplacement HORIZONTAL (roll) : le gate obstacle RESTE une
+                // condition dure sur ce chemin (hors perimetre de la demande SFOC actuelle).
+                horizontalMotionRequested = true,
             )
 
             // DOUBLE VERROU + ARMEMENT : on n'applique la commande soccer QUE si le flag reel
@@ -1390,8 +1461,12 @@ class Phase3Activity : AppCompatActivity() {
         val sample = ca.cineflight.stage.sport.soccer.RawSafetySample(
             pilotOverride = cPilote,
             emergencyStop = cUrgence,
-            // GATE OBSTACLE encore en mode miroir en Phase3 -> fail-closed a false
-            // (a rebrancher quand le gate passera en mode applique : NC-T2-003).
+            // GATE OBSTACLE — BASELINE ALTITUDE_ONLY (audit v50, Option A) : ce champ est
+            // HORS PERIMETRE du chemin d'emission altitude (l'arbitre l'ignore quand
+            // horizontalMotionRequested=false ; preuve exhaustive dans les tests). AUCUN
+            // credit d'evitement d'obstacles n'est revendique : les obstacles sont traites
+            // par l'evaluation du site et les procedures. Reste false (fail-closed) pour le
+            // chemin RAIL/horizontal, ou il demeure une condition dure (NC-T2-003).
             obstacleGateAllows = false,
             virtualStickAvailable = cVs,
             inFlightCompatible = cEnVol,
@@ -1419,8 +1494,21 @@ class Phase3Activity : AppCompatActivity() {
         try {
             val nowNanos = System.nanoTime()
             // CAPTURE ATOMIQUE (NC-T2-001) : un seul point de lecture des signaux bruts.
-            // L'action est fiable en 2D si la confiance suffit OU si des joueurs sont vus.
-            val actionFiable2D = (yoloConf >= YOLO_CONF_MIN || soccerNbJoueurs > 0)
+            // L'action est fiable en 2D si la confiance suffit OU si des joueurs sont vus,
+            // ET si la derniere detection est FRAICHE (garde d'age). CORRECTION SECURITE
+            // (E-06/E-07) : sans cette garde, un flux video GELE laisse yoloConf/nbJoueurs
+            // figes sur leur derniere valeur -> le systeme se croit voyant indefiniment.
+            // La garde d'age force actionFiable=false des que la detection date de plus de
+            // YOLO_FRAIS_MS, ce qui fait tomber le bit AC -> throttle bloque (fail-closed).
+            val yoloFrais = (yoloVueMs > 0L && (System.currentTimeMillis() - yoloVueMs) < YOLO_FRAIS_MS)
+            val actionFiable2D = yoloFrais && (yoloConf >= YOLO_CONF_MIN || soccerNbJoueurs > 0)
+            // TEST E-06/E-07 : trace l'age YOLO et le bit AC (actionFreshAndConfident).
+            // Quand la video/detection est perdue, actionFiable2D passe a false -> AC=0 ->
+            // throttle_emis=0 (verifiable aussi via le champ snapshot du log SOCCER_2D_EMISSION).
+            if (TEST_E06_09_SECU) {
+                val ageYolo = if (yoloVueMs > 0L) System.currentTimeMillis() - yoloVueMs else -1L
+                logSecuTest("E06 ts=${System.currentTimeMillis()} yolo_age_ms=$ageYolo yoloConf=$yoloConf nbJoueurs=$soccerNbJoueurs actionFiable=$actionFiable2D (AC)")
+            }
             val pub = capturerSnapshotSecurite(actionFiable = actionFiable2D)
             val safety = pub.snapshot
             // DECISION : source UNIQUE du double verrou 2D + arbitre (Emission2DGuard, teste).
@@ -1440,22 +1528,31 @@ class Phase3Activity : AppCompatActivity() {
             }
             // JOURNALISATION HAUTE FREQUENCE (Phase 1.4) : trace generation + 11 conditions +
             // etat watchdog + les 3 throttles (demande/surveille/emis) + verdict guard.
-            android.util.Log.i(
-                ca.cineflight.stage.sport.soccer.Soccer2DEmissionLog.TAG,
-                ca.cineflight.stage.sport.soccer.Soccer2DEmissionLog.ligne(
-                    tsMs = System.currentTimeMillis(),
-                    generation = pub.generation,
-                    throttleDemandeMps = throttleDemandeMps,
-                    throttleSurveilleMps = throttleSurveilleMps,
-                    throttleEmisMps = throttleEmis,
-                    watchdogFrais = soccerWatchdog.cycleFrais(nowNanos),
-                    watchdogAgeMs = soccerWatchdog.ageMs(nowNanos),
-                    etat = r.etat,
-                    raison = r.raison,
-                    snapshot = safety,
-                    emis = r.emettre,
-                )
+            val ligneLog = ca.cineflight.stage.sport.soccer.Soccer2DEmissionLog.ligne(
+                tsMs = System.currentTimeMillis(),
+                generation = pub.generation,
+                throttleDemandeMps = throttleDemandeMps,
+                throttleSurveilleMps = throttleSurveilleMps,
+                throttleEmisMps = throttleEmis,
+                watchdogFrais = soccerWatchdog.cycleFrais(nowNanos),
+                watchdogAgeMs = soccerWatchdog.ageMs(nowNanos),
+                etat = r.etat,
+                raison = r.raison,
+                snapshot = safety,
+                emis = r.emettre,
             )
+            android.util.Log.i(ca.cineflight.stage.sport.soccer.Soccer2DEmissionLog.TAG, ligneLog)
+            // TEST E-01 : ecrit aussi chaque ligne dans un fichier sur le telephone, pour
+            // pouvoir lire les logs sans cable ADB (telephone occupe par la manette DJI).
+            // Fichier : Android/data/ca.cineflight.solo/files/test_e01_signe.log
+            if (TEST_E01_SIGNE_THROTTLE) {
+                try {
+                    val f = java.io.File(getExternalFilesDir(null), "test_e01_signe.log")
+                    java.io.FileOutputStream(f, true).use {
+                        it.write((ligneLog + "\n").toByteArray(Charsets.UTF_8))
+                    }
+                } catch (_: Throwable) { /* fail-open : ne jamais casser la boucle pilote */ }
+            }
             if (r.emettre) {
                 return "ACTIVE throttle=%.2f m/s (%s)".format(r.command.throttle, r.raison)
             }
@@ -1616,6 +1713,16 @@ class Phase3Activity : AppCompatActivity() {
             // Le mode 2D marche des qu'on a soit un groupe de joueurs suivis (multi-joueurs),
             // soit la cible mono-YOLO fraiche (repli).
             val multi = soccerNbJoueurs > 0
+            // TEST E-01 : diag a l'entree de la boucle d'emission (thread pilote).
+            if (TEST_E01_SIGNE_THROTTLE) {
+                try {
+                    val f = java.io.File(getExternalFilesDir(null), "test_e01_signe.log")
+                    java.io.FileOutputStream(f, true).use {
+                        it.write(("BOUCLE ts=${System.currentTimeMillis()} mode2D=$soccerMode2D nbJoueurs=$soccerNbJoueurs multi=$multi vue=$vue entre=${soccerMode2D && (multi || vue)}\n")
+                            .toByteArray(Charsets.UTF_8))
+                    }
+                } catch (_: Throwable) {}
+            }
             if (soccerMode2D && (multi || vue)) {
                 // CENTRE D'ACTION : le centre du groupe principal si multi-joueurs, sinon
                 // la cible mono-YOLO (repli). C'est la vraie action collective.
@@ -1711,10 +1818,14 @@ class Phase3Activity : AppCompatActivity() {
                 //     l'altitude optimisee ; roll/pitch/yaw = 0. La commande passe
                 //     OBLIGATOIREMENT par l'arbitre + double verrou. Inerte par defaut
                 //     (SOCCER_2D_REAL_ENABLED=false, vMax=0).
-                val throttle2D = soccerAltThrottle.throttle(
+                val throttle2Dcalcule = soccerAltThrottle.throttle(
                     altitudeOptimiseeM = realise.altitudeM,
                     altitudeActuelleM = altCourante,
                     vMaxMps = SOCCER_2D_MAX_VSPEED_MPS)
+                // TEST E-01 AU SOL SEULEMENT (hélices retirées) : force un throttle POSITIF
+                // connu (+0.2 = montée) pour vérifier le SIGNE au log. En production
+                // (flag=false) on utilise la valeur calculée normale, rien n'est modifié.
+                val throttle2D = if (TEST_E01_SIGNE_THROTTLE) 0.2f else throttle2Dcalcule
                 // WATCHDOG (Phase 1.2) : si la boucle de decision s'est figee (dernier battement
                 // trop vieux), on force le throttle a 0 AVANT l'arbitre. Barriere independante
                 // du double verrou : un cycle mort ne peut plus commander de mouvement.
@@ -2017,10 +2128,25 @@ class Phase3Activity : AppCompatActivity() {
         }
     }
 
+    // TEST E-06..E-09 : écrit une ligne de diagnostic dans un fichier sur le téléphone
+    // (lecture sans câble ADB). Fail-open : n'interrompt jamais le flux. Actif seulement
+    // quand TEST_E06_09_SECU = true.
+    private fun logSecuTest(ligne: String) {
+        if (!TEST_E06_09_SECU) return
+        try {
+            val f = java.io.File(getExternalFilesDir(null), "test_secu_e0x.log")
+            java.io.FileOutputStream(f, true).use {
+                it.write((ligne + "\n").toByteArray(Charsets.UTF_8))
+            }
+        } catch (_: Throwable) {}
+    }
+
     private fun arretUrgence() {
         suiviActif = false
         soccerArme = false                // SECURITE : l'arret d'urgence desarme le soccer
         soccerArretUrgence = true         // ...et pose le drapeau (l'arbitre -> commande neutre)
+        // TEST E-08 : trace l'instant precis de la cessation.
+        logSecuTest("E08 ts=${System.currentTimeMillis()} emergencyStop=true soccerArme=false vsActif=false raison=arret_urgence")
         try { pont.envoyerVitesses(0f, 0f, 0f, 0f, ca.cineflight.stage.control.CommandOrigin.AUTOMATIC) } catch (_: Exception) {}
         try { pont.activerVirtualStick(false) } catch (_: Exception) {}
         vsActif = false

@@ -34,8 +34,15 @@ class FlightCommandArbiterTest {
         corridorClear = true,
     )
 
-    private fun decide(armed: Boolean, s: FlightCommandArbiter.SafetySnapshot) =
-        A.decide(existing, soccer, pilot, soccerModeArmed = armed, safety = s)
+    /**
+     * Les tests historiques ci-dessous exercent le mode HORIZONTAL (rail/2D), ou le gate
+     * obstacle RESTE une condition dure : horizontal = true. La baseline ALTITUDE_ONLY
+     * (defaut de l'arbitre, gate hors perimetre — audit v50 Option A) est prouvee par la
+     * section ALTITUDE en fin de fichier.
+     */
+    private fun decide(armed: Boolean, s: FlightCommandArbiter.SafetySnapshot, horizontal: Boolean = true) =
+        A.decide(existing, soccer, pilot, soccerModeArmed = armed, safety = s,
+                 horizontalMotionRequested = horizontal)
 
     private fun assertNeutre(d: FlightCommandArbiter.FlightCommandDecision) {
         assertEquals(0f, d.command.pitch, EPS)
@@ -248,5 +255,88 @@ class FlightCommandArbiterTest {
         assertEquals(0f, FlightCommandArbiter.NEUTRE.roll, EPS)
         assertEquals(0f, FlightCommandArbiter.NEUTRE.throttle, EPS)
         assertEquals(0f, FlightCommandArbiter.NEUTRE.yaw, EPS)
+    }
+
+    // ============================================================================
+    //  BASELINE ALTITUDE_ONLY (audit v50, Option A) : le gate obstacle est HORS
+    //  PERIMETRE du chemin altitude (retrait PROPRE de la condition, pas un
+    //  false->true). Preuves : (1) gate ferme ne bloque pas ; (2) decision
+    //  INDEPENDANTE du bit gate sur les 512 combinaisons ; (3) emission ssi les
+    //  8 conditions applicables sont vraies ; (4) chaque condition applicable
+    //  bloque encore seule ; (5) pilote/urgence gagnent toujours ; (6) le DEFAUT
+    //  de l'arbitre est bien la baseline altitude.
+    // ============================================================================
+
+    private val ALT = false  // horizontalMotionRequested = false (altitude seule)
+
+    @Test fun altitude_gate_ferme_n_empeche_pas_soccer() {
+        val d = decide(armed = true, okSnapshot().copy(obstacleGateAllows = false), horizontal = ALT)
+        assertEquals(FlightCommandArbiter.FlightCommandSource.SoccerRail, d.source)
+        assertTrue(d.allowed)
+    }
+
+    @Test fun altitude_emission_ssi_les_8_conditions_applicables_sont_vraies() {
+        val APPLICABLES = 0b111111110   // tout sauf le bit gate (bit 0)
+        var nbAutorise = 0
+        for (bits in 0..0b111111111) {
+            val d = decide(armed = true, snapshotDepuisBits(bits), horizontal = ALT)
+            val estSoccer = d.source == FlightCommandArbiter.FlightCommandSource.SoccerRail
+            if ((bits and APPLICABLES) == APPLICABLES) {
+                assertTrue("bits=$bits : 8 applicables vraies doivent autoriser", estSoccer)
+                nbAutorise++
+            } else {
+                assertFalse("bits=$bits : condition applicable fausse mais soccer retenu", estSoccer)
+                assertFalse("bits=$bits : commande soccer emise a tort", commandeEstSoccer(d))
+            }
+        }
+        assertEquals("exactement 2 cas autorises (gate=0/1, 8 applicables vraies)", 2, nbAutorise)
+    }
+
+    @Test fun altitude_decision_independante_du_bit_gate() {
+        for (bits in 0..0b111111111) {
+            val a = decide(armed = true, snapshotDepuisBits(bits), horizontal = ALT)
+            val b = decide(armed = true, snapshotDepuisBits(bits xor 0b000000001), horizontal = ALT)
+            assertEquals("bits=$bits : le bit gate change la source", a.source, b.source)
+            assertEquals("bits=$bits : le bit gate change allowed", a.allowed, b.allowed)
+            assertEquals("bits=$bits : le bit gate change la commande",
+                a.command.throttle, b.command.throttle, EPS)
+        }
+    }
+
+    @Test fun altitude_chaque_condition_applicable_bloque_encore_seule() {
+        val invalidations: List<(FlightCommandArbiter.SafetySnapshot) -> FlightCommandArbiter.SafetySnapshot> = listOf(
+            { it.copy(virtualStickAvailable = false) },
+            { it.copy(inFlightCompatible = false) },
+            { it.copy(railLoadedAndValid = false) },
+            { it.copy(dronePositionFresh = false) },
+            { it.copy(actionFreshAndConfident = false) },
+            { it.copy(batteryOk = false) },
+            { it.copy(corridorClear = false) },
+            { it.copy(operatorNearRail = false) },
+        )
+        assertEquals("8 conditions applicables en baseline altitude", 8, invalidations.size)
+        for ((i, invalide) in invalidations.withIndex()) {
+            val d = decide(armed = true, invalide(okSnapshot()), horizontal = ALT)
+            assertNeutre(d)
+            assertTrue("condition #$i : raison vide", d.reason.isNotBlank())
+        }
+    }
+
+    @Test fun altitude_pilote_et_urgence_gagnent_toujours() {
+        for (bits in 0..0b111111111) {
+            val p = decide(armed = true, snapshotDepuisBits(bits).copy(pilotOverride = true), horizontal = ALT)
+            assertEquals("bits=$bits : pilote doit gagner (altitude)",
+                FlightCommandArbiter.FlightCommandSource.Pilot, p.source)
+            val u = decide(armed = true, snapshotDepuisBits(bits).copy(emergencyStop = true), horizontal = ALT)
+            assertNeutre(u)
+        }
+    }
+
+    @Test fun altitude_est_le_defaut_de_l_arbitre() {
+        // Appel SANS le parametre : le defaut DOIT etre la baseline altitude (gate ignore).
+        val d = A.decide(existing, soccer, pilot, soccerModeArmed = true,
+            safety = okSnapshot().copy(obstacleGateAllows = false))
+        assertEquals(FlightCommandArbiter.FlightCommandSource.SoccerRail, d.source)
+        assertTrue(d.allowed)
     }
 }

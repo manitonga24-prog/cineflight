@@ -113,13 +113,16 @@ class Emission2DGuardTest {
         operatorNearRail = (bits and 0b100000000) != 0,
     )
 
-    @Test fun emission_seulement_si_tous_verrous_et_toute_la_securite() {
-        val TOUT = 0b111111111
+    @Test fun emission_seulement_si_les_8_conditions_applicables_sont_vraies() {
+        // BASELINE ALTITUDE_ONLY (audit v50, Option A) : le gate obstacle (bit 0) est HORS
+        // PERIMETRE du chemin d'emission altitude. Les 8 conditions APPLICABLES (bits 1-8)
+        // doivent toutes etre vraies ; le bit gate ne doit avoir AUCUN effet.
+        val APPLICABLES = 0b111111110   // tout sauf le bit gate
         var nbEmis = 0
         for (bits in 0..0b111111111) {
             val r = G.decider(0.4f, flagReel = true, operateurArme = true, vMaxMps = 0.5f, safety = snap(bits))
-            if (bits == TOUT) {
-                assertTrue("tout vrai doit emettre", r.emettre)
+            if ((bits and APPLICABLES) == APPLICABLES) {
+                assertTrue("bits=$bits : 8 conditions vraies doivent emettre", r.emettre)
                 assertEquals(0.4f, r.command.throttle, EPS)
                 nbEmis++
             } else {
@@ -127,7 +130,19 @@ class Emission2DGuardTest {
                 assertEquals("bits=$bits : throttle doit etre 0", 0f, r.command.throttle, EPS)
             }
         }
-        assertEquals("un seul cas doit emettre", 1, nbEmis)
+        assertEquals("exactement 2 cas emettent (gate=0 et gate=1, les 8 autres vraies)", 2, nbEmis)
+    }
+
+    @Test fun le_bit_gate_obstacle_n_a_aucun_effet_sur_le_chemin_altitude() {
+        // PREUVE D'INDEPENDANCE : pour chacune des 512 combinaisons, basculer UNIQUEMENT
+        // le bit gate ne change ni l'emission ni le throttle (retrait PROPRE de la
+        // condition, pas un false->true).
+        for (bits in 0..0b111111111) {
+            val a = G.decider(0.4f, true, true, 0.5f, snap(bits))
+            val b = G.decider(0.4f, true, true, 0.5f, snap(bits xor 0b000000001))
+            assertEquals("bits=$bits : le bit gate change l'emission", a.emettre, b.emettre)
+            assertEquals("bits=$bits : le bit gate change le throttle", a.command.throttle, b.command.throttle, EPS)
+        }
     }
 
     @Test fun aucun_verrou_ouvert_jamais_d_emission_meme_securite_parfaite() {
@@ -185,13 +200,19 @@ class Emission2DGuardTest {
         assertBloque2D(okSnapshot().copy(actionFreshAndConfident = false), "soccer bloque : action_yolo_non_fiable")
     }
 
-    @Test fun c2d_gate_obstacle_refuse_bloque_le_2D() {
-        // Cas special : soccerModeArmed + gate refuse est intercepte AVANT la liste des
-        // conditions -> raison "gate obstacle refuse" (etat BLOQUE_ARBITRE, pas d'emission).
+    @Test fun c2d_gate_obstacle_hors_perimetre_baseline_altitude() {
+        // BASELINE ALTITUDE_ONLY (audit v50, Option A) : le gate obstacle n'est PAS une
+        // condition du chemin altitude (aucun credit d'evitement d'obstacles revendique ;
+        // obstacles traites par l'evaluation du site + procedures). gate=false, toutes les
+        // autres conditions vraies -> l'emission altitude DOIT passer.
         val r = decider2D(okSnapshot().copy(obstacleGateAllows = false))
-        assertNeutre(r)
-        assertEquals(Emission2DGuard.Etat.BLOQUE_ARBITRE, r.etat)
-        assertEquals("gate obstacle refuse", r.raison)
+        assertTrue("gate hors perimetre : ne doit pas bloquer l'altitude", r.emettre)
+        assertEquals(Emission2DGuard.Etat.ACTIVE, r.etat)
+        assertEquals(0.4f, r.command.throttle, EPS)
+        // et toujours AUCUN mouvement horizontal :
+        assertEquals(0f, r.command.pitch, EPS)
+        assertEquals(0f, r.command.roll, EPS)
+        assertEquals(0f, r.command.yaw, EPS)
     }
 
     @Test fun c2d_batterie_insuffisante_bloque_le_2D() {
@@ -220,21 +241,22 @@ class Emission2DGuardTest {
         assertEquals(Emission2DGuard.Etat.BLOQUE_ARBITRE, r.etat)
     }
 
-    @Test fun c2d_les_9_conditions_couvrent_le_chemin_2D_une_a_une() {
-        // Synthese : partant d'un snapshot parfait, invalider CHAQUE condition une a une
-        // bloque le 2D. Prouve qu'aucune condition n'est "morte" sur le chemin 2D.
+    @Test fun c2d_les_8_conditions_applicables_couvrent_le_chemin_altitude_une_a_une() {
+        // Synthese : partant d'un snapshot parfait, invalider CHAQUE condition APPLICABLE
+        // une a une bloque le chemin altitude. Le gate obstacle est HORS PERIMETRE de la
+        // baseline ALTITUDE_ONLY (retrait propre, audit v50) et n'apparait donc PAS ici —
+        // son absence d'effet est prouvee par le_bit_gate_obstacle_n_a_aucun_effet.
         val invalidations: List<(FlightCommandArbiter.SafetySnapshot) -> FlightCommandArbiter.SafetySnapshot> = listOf(
             { it.copy(virtualStickAvailable = false) },
             { it.copy(inFlightCompatible = false) },
             { it.copy(railLoadedAndValid = false) },
             { it.copy(dronePositionFresh = false) },
             { it.copy(actionFreshAndConfident = false) },
-            { it.copy(obstacleGateAllows = false) },
             { it.copy(batteryOk = false) },
             { it.copy(corridorClear = false) },
             { it.copy(operatorNearRail = false) },
         )
-        assertEquals("il doit y avoir 9 conditions d'armement", 9, invalidations.size)
+        assertEquals("il doit y avoir 8 conditions d'armement applicables", 8, invalidations.size)
         for ((i, invalide) in invalidations.withIndex()) {
             val r = decider2D(invalide(okSnapshot()))
             assertFalse("condition #$i invalidee mais 2D emet quand meme", r.emettre)

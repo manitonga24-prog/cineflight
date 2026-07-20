@@ -79,11 +79,25 @@ object FlightCommandArbiter {
     /**
      * Rend la decision d'arbitrage.
      *
+     * BASELINE ALTITUDE SEULE vs MOUVEMENT HORIZONTAL (audit v50, Option A) :
+     * le parametre [horizontalMotionRequested] fixe le PERIMETRE des conditions.
+     *   - false (DEFAUT = baseline ALTITUDE_ONLY de la demande SFOC) : la commande soccer
+     *     est verticale pure (roll/pitch/yaw forces a 0 par Emission2DGuard). Le gate
+     *     obstacle ne fait PAS partie des conditions d'emission de cette baseline : AUCUN
+     *     credit d'evitement d'obstacles n'est revendique ; les obstacles sont traites par
+     *     l'evaluation du site et les procedures operationnelles (dossier de securite).
+     *     Ce n'est PAS un simple false->true : la condition est RETIREE du chemin, et la
+     *     preuve exhaustive demontre que la decision est INDEPENDANTE de ce bit.
+     *   - true (mode RAIL / deplacement horizontal, HORS du perimetre de la demande
+     *     actuelle) : le gate obstacle reste une condition dure — il bloque l'emission.
+     *
      * @param existingCommand commande du mode AUTOMATIQUE existant (valeur par defaut).
      * @param soccerCommand commande proposee par le pipeline soccer (RailMotionController).
      * @param pilotCommand commande du pilote si reprise manuelle (repere corps).
      * @param soccerModeArmed le mode SoccerRail est-il explicitement arme par l'operateur ?
      * @param safety instantane de securite/etat.
+     * @param horizontalMotionRequested true si la commande soccer contient du deplacement
+     *        horizontal (rail/2D) ; false = altitude seule (defaut, baseline SFOC).
      */
     fun decide(
         existingCommand: AssainisseurVitesse.Vitesses,
@@ -91,6 +105,7 @@ object FlightCommandArbiter {
         pilotCommand: AssainisseurVitesse.Vitesses,
         soccerModeArmed: Boolean,
         safety: SafetySnapshot,
+        horizontalMotionRequested: Boolean = false,
     ): FlightCommandDecision {
         // 1) PILOTE : priorite absolue, quoi qu'il arrive.
         if (safety.pilotOverride) {
@@ -112,10 +127,11 @@ object FlightCommandArbiter {
             )
         }
 
-        // 3) GATE OBSTACLE : s'il refuse, aucun deplacement soccer possible -> neutre.
-        //    (Le mode existant a son propre traitement de gate ailleurs ; ici on protege
-        //     specifiquement l'autorisation SoccerRail.)
-        if (soccerModeArmed && !safety.obstacleGateAllows) {
+        // 3) GATE OBSTACLE : condition dure UNIQUEMENT pour le deplacement HORIZONTAL.
+        //    Baseline ALTITUDE_ONLY (horizontalMotionRequested=false) : le gate est HORS
+        //    perimetre — aucun credit d'evitement d'obstacles n'est revendique, et ce bit
+        //    n'influence pas la decision (prouve exhaustivement par les tests).
+        if (soccerModeArmed && horizontalMotionRequested && !safety.obstacleGateAllows) {
             return FlightCommandDecision(
                 command = NEUTRE,
                 source = FlightCommandSource.ExistingAutomaticMode,
@@ -125,9 +141,9 @@ object FlightCommandArbiter {
         }
 
         // 4-5-6) SoccerRail n'est retenu que si le mode est arme ET toutes les
-        // conditions d'armement sont vraies. Sinon -> mode automatique existant.
+        // conditions d'armement APPLICABLES sont vraies. Sinon -> mode automatique existant.
         if (soccerModeArmed) {
-            val manque = premiereConditionManquante(safety)
+            val manque = premiereConditionManquante(safety, horizontalMotionRequested)
             if (manque == null) {
                 return FlightCommandDecision(
                     command = soccerCommand,
@@ -157,14 +173,19 @@ object FlightCommandArbiter {
     /**
      * Retourne le nom de la PREMIERE condition d'armement manquante, ou null si toutes
      * sont satisfaites. L'ordre reflete la spec (etat SDK -> rail -> perception -> env).
+     * Le gate obstacle n'est une condition QUE si le deplacement horizontal est demande
+     * (baseline ALTITUDE_ONLY : 8 conditions ; mode horizontal : 9 conditions).
      */
-    private fun premiereConditionManquante(s: SafetySnapshot): String? = when {
+    private fun premiereConditionManquante(
+        s: SafetySnapshot,
+        horizontalMotionRequested: Boolean,
+    ): String? = when {
         !s.virtualStickAvailable -> "virtual_stick_indisponible"
         !s.inFlightCompatible -> "etat_vol_incompatible"
         !s.railLoadedAndValid -> "rail_non_valide"
         !s.dronePositionFresh -> "position_drone_perimee"
         !s.actionFreshAndConfident -> "action_yolo_non_fiable"
-        !s.obstacleGateAllows -> "gate_obstacle_refuse"
+        horizontalMotionRequested && !s.obstacleGateAllows -> "gate_obstacle_refuse"
         !s.batteryOk -> "batterie_insuffisante"
         !s.corridorClear -> "corridor_occupe"
         !s.operatorNearRail -> "operateur_trop_loin_du_rail"

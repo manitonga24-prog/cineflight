@@ -97,7 +97,10 @@ class SoccerTortureTest {
             okSnap().copy(operatorNearRail = false),
         )
         for (s in snaps) {
-            val d = FlightCommandArbiter.decide(existante, soccerCmd, existante, soccerModeArmed = true, safety = s)
+            // soccerCmd(1,1,1,1) contient du MOUVEMENT HORIZONTAL -> chemin horizontal :
+            // les 9 conditions (gate obstacle inclus) doivent toutes bloquer.
+            val d = FlightCommandArbiter.decide(existante, soccerCmd, existante,
+                soccerModeArmed = true, safety = s, horizontalMotionRequested = true)
             assertTrue("ne doit pas etre SoccerRail",
                 d.source != FlightCommandArbiter.FlightCommandSource.SoccerRail)
             assertFalse("ne doit pas etre allowed en soccer", d.allowed && d.command == soccerCmd)

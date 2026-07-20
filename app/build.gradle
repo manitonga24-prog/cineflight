@@ -166,5 +166,5 @@ tasks.register('jacocoSoccerReport', JacocoReport) {
 
     // Donnees d'execution produites par les tests unitaires debug.
     executionData.setFrom(fileTree(dir: buildDir,
-        includes: ['jacoco/testDebugUnitTest.exec', 'outputs/unit_test_code_coverage/**/*.ec']))
+        includes: ['jacoco/testDebugUnitTest.exec', 'outputs/unit_test_code_coverage/**/*.ec', 'outputs/unit_test_code_coverage/**/*.exec']))
 }

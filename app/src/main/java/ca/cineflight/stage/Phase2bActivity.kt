@@ -54,6 +54,15 @@ class Phase2bActivity : AppCompatActivity() {
     private val VITESSE_TEST = 0.5f       // m/s (doux)
     private val DUREE_TEST_MS = 1000L     // 1 s par appui
 
+    // ══════════════════════════════════════════════════════════════════════════════
+    // ⚠️ TEST E-01b AU SOL — HÉLICES PHYSIQUEMENT RETIRÉES OBLIGATOIRE ⚠️
+    // UN SEUL flag maître. Quand true : contourne enVol/vsActif pour envoyer les
+    // commandes d'axe au SDK AU SOL (lecture du SIGNE dans PontDjiReel + fichier log),
+    // sans décollage. NE JAMAIS activer avec des hélices montées : le drone bougerait.
+    // Mettre à false pour revenir à l'état de production (test en vol normal).
+    private val TEST_E01B_SIGNE_AXES = false   // ← SEUL commutateur. false = production.
+    // ══════════════════════════════════════════════════════════════════════════════
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
@@ -149,7 +158,14 @@ class Phase2bActivity : AppCompatActivity() {
         // boucle d'envoi 15 Hz : envoie la commande de test courante (ou hover si null) tant qu'on vole
         jobTest = lifecycleScope.launch(Dispatchers.Default) {
             while (isActive) {
-                if (vsActif) {
+                // TEST E-01b AU SOL : emet la commande d'axe meme sans vsActif/enVol, pour
+                // lire le SIGNE envoye au SDK au sol (helices retirees). Flag=false -> code normal.
+                if (TEST_E01B_SIGNE_AXES) {
+                    val c = cmdTest
+                    if (c != null) {
+                        try { pont.envoyerVitesses(c[0], c[1], c[2], c[3], ca.cineflight.stage.control.CommandOrigin.TEST) } catch (_: Exception) {}
+                    }
+                } else if (vsActif) {
                     val c = cmdTest
                     if (c != null) {
                         try { pont.envoyerVitesses(c[0], c[1], c[2], c[3], ca.cineflight.stage.control.CommandOrigin.TEST) } catch (_: Exception) {}
@@ -214,7 +230,18 @@ class Phase2bActivity : AppCompatActivity() {
 
     /** Envoie une commande sur UN axe pendant DUREE_TEST_MS, puis revient en hover. */
     private fun testAxe(pitch: Float, roll: Float, throttle: Float, yaw: Float) {
-        if (!enVol) { txtEtat.text = getString(R.string.p2b_decolle_dabord); return }
+        // TEST E-01b AU SOL : autorise l'envoi de la commande d'axe sans decollage
+        // (helices retirees) pour lire le SIGNE. Flag=false -> exige enVol comme avant.
+        if (!enVol && !TEST_E01B_SIGNE_AXES) { txtEtat.text = getString(R.string.p2b_decolle_dabord); return }
+        if (TEST_E01B_SIGNE_AXES) {
+            try {
+                val f = java.io.File(getExternalFilesDir(null), "test_e01b_axes.log")
+                java.io.FileOutputStream(f, true).use {
+                    it.write(("AXE_DEMANDE ts=${System.currentTimeMillis()} pitch=$pitch roll=$roll throttle=$throttle yaw=$yaw\n")
+                        .toByteArray(Charsets.UTF_8))
+                }
+            } catch (_: Throwable) {}
+        }
         txtEtat.text = getString(R.string.p2b_test_axe, pitch, roll, throttle, yaw)
         cmdTest = floatArrayOf(pitch, roll, throttle, yaw)
         lifecycleScope.launch {

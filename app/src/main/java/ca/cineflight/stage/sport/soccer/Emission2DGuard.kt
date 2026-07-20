@@ -59,12 +59,17 @@ object Emission2DGuard {
         val cmd2D = AssainisseurVitesse.Vitesses(pitch = 0f, roll = 0f, throttle = th, yaw = 0f)
 
         // ARBITRE : juge unique. On arme la source soccer (flag+arme deja verifies).
+        // BASELINE ALTITUDE_ONLY (audit v50, Option A) : la commande est verticale pure
+        // (roll/pitch/yaw = 0 reconstruits ci-dessus). Le gate obstacle est HORS perimetre
+        // de cette baseline (aucun credit d'evitement d'obstacles revendique) : le
+        // deplacement horizontal n'est PAS demande a l'arbitre.
         val decision = FlightCommandArbiter.decide(
             existingCommand = NEUTRE,        // pas de mode auto concurrent en 2D
             soccerCommand = cmd2D,
             pilotCommand = NEUTRE,
             soccerModeArmed = true,          // flagReel && operateurArme prouves ci-dessus
             safety = safety,
+            horizontalMotionRequested = false, // ALTITUDE SEULE : gate obstacle hors perimetre
         )
         val retenu = decision.source == FlightCommandArbiter.FlightCommandSource.SoccerRail
         return if (retenu) {
