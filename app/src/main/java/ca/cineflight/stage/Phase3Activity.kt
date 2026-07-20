@@ -304,6 +304,10 @@ class Phase3Activity : AppCompatActivity() {
     private var soccerLateralM = 0.0   // decalage lateral courant propose (m), etat observe
     // Controleur altitude->throttle (Essai 1 emission reelle : altitude SEULE).
     private val soccerAltThrottle = ca.cineflight.stage.sport.soccer.SoccerAltitudeThrottle()
+    // PUBLICATION ATOMIQUE du SafetySnapshot (NC-T2-001). Un unique point de capture des
+    // signaux bruts -> snapshot immuable + numero de generation. Remplace les lectures
+    // eparpillees de variables @Volatile aux deux sites d'emission (rail + 2D).
+    private val soccerSnapshotFactory = ca.cineflight.stage.sport.soccer.SafetySnapshotFactory()
     // MULTI-JOUEURS (mode soccer) : la liste complete des personnes YOLO -> tracker -> centre
     // de groupe. Alimente le vrai nbJoueurs + centre d'action du realisateur (au lieu de 1).
     private val soccerPlayerTracker = ca.cineflight.stage.sport.soccer.PlayerTracker()
@@ -1319,33 +1323,12 @@ class Phase3Activity : AppCompatActivity() {
                 pitch = 0f, roll = output.requestedVelocityMps, throttle = 0f, yaw = 0f
             )
 
-            // Conditions d'armement cablees sur les VRAIS signaux du drone. Principe
-            // FAIL-CLOSED : ce qui n'est pas prouve vrai bloque le soccer.
-            val batt = try { pont.batteriePourcent() } catch (_: Throwable) { -1 }
-            val rtkQ = autoRtk.uppercase()
-            val positionFraiche = (rtkQ == "FIX" || rtkQ == "FLOAT")   // GPS/LOST -> non fiable
-            // PROXIMITE OPERATEUR : le point de decollage doit etre <= SOCCER_DIST_MAX_M
-            // du rail (VLOS). Decollage = celui du profil (takeoff_zone) si present, sinon
-            // la position reelle du drone (il decolle d'ou se tient le pilote). Si aucun
-            // point connu -> fail-closed (false).
-            val operateurProche = estOperateurProcheDuRail()
-            val safety = ca.cineflight.stage.sport.soccer.FlightCommandArbiter.SafetySnapshot(
-                pilotOverride = modeManuel,                   // le pilote a repris la main -> priorite
-                emergencyStop = soccerArretUrgence,           // arret d'urgence pose -> commande neutre
-                // GATE OBSTACLE : en Phase3 le gate tourne en MODE MIROIR (il ne bloque pas
-                // encore reellement). Tant qu'il n'est pas en mode reel, on NE PEUT PAS
-                // affirmer qu'il autorise -> fail-closed a false. A rebrancher quand le gate
-                // Phase3 passera en mode applique.
-                obstacleGateAllows = false,
-                virtualStickAvailable = vsActif,              // Virtual Stick reellement actif
-                inFlightCompatible = enVol,                   // drone reellement en vol
-                railLoadedAndValid = true,                    // rail d'essai valide (profil Web plus tard)
-                dronePositionFresh = positionFraiche,         // RTK FIX/FLOAT seulement
-                actionFreshAndConfident = (stable.confidence >= YOLO_CONF_MIN),
-                batteryOk = (batt >= SOCCER_BATT_MIN_PCT),    // seuil operationnel reel
-                corridorClear = true,                         // detection corridor : alerte seule en V1 (spec 10)
-                operatorNearRail = operateurProche,           // decollage <= 200 m du rail (VLOS)
-            )
+            // CAPTURE ATOMIQUE (NC-T2-001) : un unique point de lecture des signaux bruts,
+            // publie via la fabrique (snapshot immuable + generation). Principe FAIL-CLOSED :
+            // ce qui n'est pas prouve vrai bloque le soccer. L'action rail est fiable si la
+            // confiance stable atteint le seuil YOLO.
+            val actionFiableRail = (stable.confidence >= YOLO_CONF_MIN)
+            val safety = capturerSnapshotSecurite(actionFiable = actionFiableRail).snapshot
             val decision = ca.cineflight.stage.sport.soccer.FlightCommandArbiter.decide(
                 existingCommand = existante,
                 soccerCommand = soccerCmd,
@@ -1379,6 +1362,43 @@ class Phase3Activity : AppCompatActivity() {
     }
 
     /**
+     * CAPTURE ATOMIQUE de l'instantane de securite (NC-T2-001). Lit TOUS les signaux bruts
+     * en une seule passe, les emballe dans un RawSafetySample immuable, puis les publie via
+     * la fabrique (snapshot immuable + generation). Un lecteur ne verra jamais un melange
+     * d'etats de moments differents. FAIL-CLOSED : ce qui n'est pas prouve vrai bloque.
+     *
+     * @param actionFiable resultat deja calcule de la fiabilite d'action (contexte rail ou 2D).
+     */
+    private fun capturerSnapshotSecurite(actionFiable: Boolean): ca.cineflight.stage.sport.soccer.SafetySnapshotFactory.Published {
+        // --- CAPTURE EN UNE PASSE (aucune logique metier entre les lectures) ---
+        val cPilote = modeManuel
+        val cUrgence = soccerArretUrgence
+        val cVs = vsActif
+        val cEnVol = enVol
+        val cRtk = autoRtk.uppercase()
+        val cBatt = try { pont.batteriePourcent() } catch (_: Throwable) { -1 }
+        val cOperateurProche = estOperateurProcheDuRail()
+        // --- FIN DE CAPTURE : plus aucune variable partagee n'est relue apres ce point ---
+
+        val sample = ca.cineflight.stage.sport.soccer.RawSafetySample(
+            pilotOverride = cPilote,
+            emergencyStop = cUrgence,
+            // GATE OBSTACLE encore en mode miroir en Phase3 -> fail-closed a false
+            // (a rebrancher quand le gate passera en mode applique : NC-T2-003).
+            obstacleGateAllows = false,
+            virtualStickAvailable = cVs,
+            inFlightCompatible = cEnVol,
+            railLoadedAndValid = true,
+            dronePositionFresh = (cRtk == "FIX" || cRtk == "FLOAT"),
+            actionFreshAndConfident = actionFiable,
+            batteryOk = (cBatt >= SOCCER_BATT_MIN_PCT),
+            corridorClear = true,
+            operatorNearRail = cOperateurProche,
+        )
+        return soccerSnapshotFactory.publish(sample)
+    }
+
+    /**
      * EMISSION REELLE 2D (Essai 1 : ALTITUDE SEULE). Prend le throttle propose par le
      * controleur d'altitude, le fait passer par le MEME arbitre + le MEME SafetySnapshot
      * que le mode RAIL, applique le DOUBLE VERROU 2D, et n'emet REELLEMENT que si tout est
@@ -1390,23 +1410,10 @@ class Phase3Activity : AppCompatActivity() {
      */
     private fun emettre2DSoccer(throttleMps: Float): String {
         try {
-            // Signaux reels du drone (fail-closed, identiques a l'emission rail).
-            val batt = try { pont.batteriePourcent() } catch (_: Throwable) { -1 }
-            val rtkQ = autoRtk.uppercase()
-            val positionFraiche = (rtkQ == "FIX" || rtkQ == "FLOAT")
-            val safety = ca.cineflight.stage.sport.soccer.FlightCommandArbiter.SafetySnapshot(
-                pilotOverride = modeManuel,
-                emergencyStop = soccerArretUrgence,
-                obstacleGateAllows = false,                  // gate encore en miroir -> fail-closed
-                virtualStickAvailable = vsActif,
-                inFlightCompatible = enVol,
-                railLoadedAndValid = true,                   // pas de rail requis en 2D, mais on garde OK
-                dronePositionFresh = positionFraiche,
-                actionFreshAndConfident = (yoloConf >= YOLO_CONF_MIN || soccerNbJoueurs > 0),
-                batteryOk = (batt >= SOCCER_BATT_MIN_PCT),
-                corridorClear = true,
-                operatorNearRail = estOperateurProcheDuRail(),
-            )
+            // CAPTURE ATOMIQUE (NC-T2-001) : un seul point de lecture des signaux bruts.
+            // L'action est fiable en 2D si la confiance suffit OU si des joueurs sont vus.
+            val actionFiable2D = (yoloConf >= YOLO_CONF_MIN || soccerNbJoueurs > 0)
+            val safety = capturerSnapshotSecurite(actionFiable = actionFiable2D).snapshot
             // DECISION : source UNIQUE du double verrou 2D + arbitre (Emission2DGuard, teste).
             val r = ca.cineflight.stage.sport.soccer.Emission2DGuard.decider(
                 throttleMps = throttleMps,
