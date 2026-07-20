@@ -1,0 +1,913 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CineFlight Solo — Guide de l'utilisateur</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, "Segoe UI", Roboto, sans-serif; color: #1c1c1e; background: #f2f2f7; line-height: 1.65; }
+  .doc { max-width: 760px; margin: 0 auto; padding: 18px 18px 60px; }
+  h1 { font-size: 30px; font-weight: 700; letter-spacing: -0.5px; margin-bottom: 2px; }
+  .sub { color: #8e8e93; font-size: 15px; margin-bottom: 28px; }
+  h2 { font-size: 22px; font-weight: 700; margin: 38px 0 12px; padding-bottom: 6px; border-bottom: 2px solid #007aff; scroll-margin-top: 12px; }
+  h3 { font-size: 16px; font-weight: 600; margin: 24px 0 8px; color: #007aff; }
+  p { font-size: 14px; margin-bottom: 12px; color: #3a3a3c; }
+  .image { background: #f0f4ff; border-radius: 12px; padding: 14px 16px; margin: 14px 0; font-size: 14px; color: #1c3a5e; font-style: italic; }
+  .image strong { font-style: normal; color: #007aff; }
+  .scene { background: #fff; border: 1.5px solid #007aff33; border-radius: 14px; padding: 14px 16px; margin: 14px 0; }
+  .scene .titre { font-weight: 700; color: #007aff; font-size: 14px; margin-bottom: 8px; }
+  .scene p { margin-bottom: 8px; }
+  .tip { background: #e8f0fe; border-radius: 12px; padding: 14px 16px; margin: 14px 0; font-size: 13.5px; color: #1c3a5e; }
+  .warn { background: #fff1f0; border-left: 4px solid #ff3b30; border-radius: 12px; padding: 14px 16px; margin: 14px 0; font-size: 13.5px; color: #7a1a14; }
+  ul, ol { margin: 8px 0 14px 22px; }
+  li { font-size: 14px; margin-bottom: 7px; color: #3a3a3c; }
+  table { width: 100%; border-collapse: collapse; margin: 14px 0; font-size: 13.5px; }
+  th { background: #007aff; color: #fff; text-align: left; padding: 8px 10px; }
+  td { padding: 8px 10px; border-bottom: 0.5px solid #e5e5ea; color: #3a3a3c; }
+  tr:nth-child(even) td { background: #fafafa; }
+  .tag-id { display: inline-block; min-width: 26px; text-align: center; background: #007aff; color: #fff; border-radius: 6px; padding: 1px 6px; font-weight: 700; font-size: 13px; }
+  .step { display: flex; gap: 12px; margin-bottom: 14px; }
+  .step-num { flex-shrink: 0; width: 28px; height: 28px; border-radius: 50%; background: #007aff; color: #fff; font-weight: 700; text-align: center; line-height: 28px; font-size: 14px; }
+  .step-txt { font-size: 14px; padding-top: 3px; }
+  .toc { background: #fff; border-radius: 14px; padding: 16px 20px; margin: 12px 0; }
+  .toc a { color: #007aff; text-decoration: none; display: block; font-size: 14px; padding: 3px 0; }
+  .fiche { background:#fff; border-radius:14px; padding:16px 18px; margin:14px 0; }
+  .fiche h3 { margin:0 0 8px; font-size:17px; color:#1c1c1e; }
+  .lab { font-weight:600; color:#007aff; font-size:13px; }
+  .row { font-size:13.5px; margin-bottom:6px; color:#3a3a3c; }
+  .astuce { background:#eaf7ea; border-radius:8px; padding:8px 10px; margin-top:8px; font-size:13px; color:#1e5e2e; }
+  .erreur { background:#fdeceb; border-radius:8px; padding:8px 10px; margin-top:6px; font-size:13px; color:#7a1a14; }
+  .key { display:inline-block; background:#37474f; color:#fff; border-radius:6px; padding:1px 8px; font-weight:600; font-size:13px; }
+</style>
+</head>
+<body>
+<div class="doc">
+
+<h1>CineFlight Solo</h1>
+<div class="sub">Guide de l'utilisateur — votre drone assistant-realisateur</div>
+
+<div class="scene" id="compatibles" style="border-color:#34c75955;">
+<div class="titre" style="color:#1e7e34;">✅ Drones compatibles</div>
+<p>CineFlight Solo fonctionne avec <strong>tous les drones DJI pris en charge par le SDK DJI Mobile v5</strong>. L'application détecte le modèle connecté et adapte automatiquement son comportement à ses capacités réelles : évitement d'obstacles, tenue au vent et plage de température.</p>
+<table>
+<tr><th>Catégorie</th><th>Drones pris en charge</th></tr>
+<tr><td>Grand public</td><td>DJI Mini 3 · Mini 3 Pro · Mini 4 Pro</td></tr>
+<tr><td>Mavic Entreprise</td><td>DJI Mavic 3E · Mavic 3T · Mavic 3M (Multispectral) · Mavic 3TA</td></tr>
+<tr><td>Matrice 4 Entreprise</td><td>DJI Matrice 4E · Matrice 4T</td></tr>
+<tr><td>Matrice 4D / Dock 3</td><td>DJI Matrice 4D · Matrice 4TD</td></tr>
+<tr><td>Matrice 30</td><td>DJI Matrice 30 · Matrice 30T</td></tr>
+<tr><td>Grandes plateformes Entreprise</td><td>DJI Matrice 300 RTK · Matrice 350 RTK · Matrice 400</td></tr>
+</table>
+<div class="astuce">Un drone plus récent, ajouté par DJI après cette version ? L'application le reconnaît quand même et applique automatiquement les réglages les plus prudents (évitement, vent, température) — vous volez en sécurité, sans attendre une mise à jour.</div>
+</div>
+
+<div class="toc">
+  <strong>Sommaire</strong>
+  <a href="#intro">1. Qu'est-ce que CineFlight Solo</a>
+  <a href="#demarrage">2. Mise en route (pas a pas)</a>
+  <a href="#boutons">3. Tous les boutons de l'ecran</a>
+  <a href="#reglages">4. Les reglages que vous pouvez ajuster</a>
+  <a href="#commandes">5. Les trois facons de commander</a>
+  <a href="#tags">6. Les tags ArUco</a>
+  <a href="#macros">7. Creer ses propres macros</a>
+  <a href="#chien">8. Le mode chien fidele</a>
+  <a href="#securite">9. Securite</a>
+  <a href="#depannage">10. Depannage</a>
+  <a href="#recettes">11. Recettes de tournage</a>
+  <a href="#captureauto">12. Capture Auto Intelligente</a>
+  <a href="#carte">13. Carte et navigation</a>
+  <a href="#album">14. Album du drone (photos)</a>
+  <a href="#perso">15. Sujet personnalise</a>
+  <a href="#montage">16. Montage automatique (IA)</a>
+  <a href="#cablecam">17. Rail Cable-Cam et Hyperlapse</a>
+  <a href="#reco">18. Reconnaissance d'un sujet (menu "Preparer un tournage")</a>
+<a href="#mouvements">19. Mouvements cinematographiques (CineFlight Explorer)</a>
+<a href="#tournage-auto">20. Tournage automatique (reconnaissance et realisateur)</a>
+<a href="#vehicule">21. Suivre un vehicule (le drone filme une voiture)</a>
+</div>
+
+<h2 id="intro">1. Qu'est-ce que CineFlight Solo</h2>
+<div class="image"><strong>Imaginez ceci :</strong> un cameraman professionnel qui sait voler, qui vous reconnait dans une foule, et qui reste braque sur vous pour vous filmer — pendant que vous, vous avez les deux mains libres pour faire votre activite. C'est exactement cela, CineFlight Solo.</div>
+<p>CineFlight Solo est une application qui transforme votre drone en <strong>assistant-realisateur autonome</strong>. Concretement, cela veut dire que le drone ne se contente pas de voler la ou vous le dirigez a la manette : il vous observe, vous comprend, et prend l'initiative de vous filmer correctement. La plupart du temps, vous n'avez meme pas besoin de tenir la telecommande.</p>
+<p>Comment fait-il ? Le drone embarque une intelligence artificielle de reconnaissance visuelle (son nom technique est YOLO, mais vous n'avez pas a le retenir). Cette IA analyse en permanence l'image de la camera, repere les personnes, et identifie celle que vous avez designee comme votre sujet. Une fois qu'il vous a verrouille, il ajuste sa position et l'orientation de sa camera plusieurs fois par seconde pour vous garder bien place dans le cadre — ni trop a gauche, ni trop loin, ni coupe au mauvais endroit. C'est ce travail invisible et constant qui donne l'impression qu'un vrai cadreur vous suit.</p>
+<p>Vous gardez toujours la main. Vous dirigez la prise de vue de <strong>trois facons</strong>, que vous pouvez melanger librement selon le moment : en touchant l'ecran du telephone, en parlant a voix haute (commande vocale), ou en montrant des cartes imprimees devant la camera du drone (ce que l'on appelle les "tags"). Chacune de ces methodes a ses avantages, et nous les detaillons plus loin. Et si vous voulez aller plus loin, vous pourrez meme programmer vos propres sequences automatiques, appelees macros.</p>
+<div class="scene"><div class="titre">Pour bien comprendre, projetez-vous</div>
+<p>Vous partez seul en randonnee sur un beau sentier de montagne. Vous voulez en ramener une video qui ressemble a un mini-documentaire, mais vous n'avez personne pour vous filmer. Vous sortez le drone de votre sac, il decolle, vous lui montrez une petite carte, et le voila qui s'eleve et vous accompagne le long du sentier en vous gardant cadre, comme si un cameraman marchait a vos cotes en volant.</p>
+<p>Vous rangez la carte dans votre poche et vous reprenez votre marche, les mains libres. Pendant ce temps, le film se fait tout seul. A un moment fort — un point de vue, un sommet — vous lui montrez une autre carte, et il s'eloigne en montant pour reveler tout le paysage derriere vous. A la fin, de retour a la voiture, vous recuperez les images sur votre telephone, et l'application peut meme vous monter automatiquement un clip a partir des meilleurs moments.</p></div>
+<p>Voila l'esprit de CineFlight Solo : vous laisser vivre et bouger, pendant que le drone s'occupe de la technique du cadrage et du mouvement. Vous n'avez pas besoin d'etre pilote chevronne ni cineaste de formation. Ce guide est concu pour vous accompagner depuis le tout premier vol.</p>
+<div class="tip"><strong>Comment lire ce guide :</strong> si c'est votre premier vol, lisez d'abord la section 2 (mise en route) en entier. Gardez ensuite la section 9 (securite) bien en tete, car elle protege a la fois les gens autour de vous et votre materiel. Enfin, quand vous saurez quoi filmer, allez piocher dans les recettes de la section 11 : elles vous donnent des resultats de qualite sans avoir a tout inventer.</div>
+
+<h2 id="demarrage">2. Mise en route (pas a pas)</h2>
+<p>Cette section decrit votre tout premier vol, du materiel eteint jusqu'au moment ou le drone vous suit. Prenez le temps de la lire en entier avant de sortir sur le terrain : tout ira beaucoup mieux si vous savez deja a quoi vous attendre a chaque etape. Choisissez pour ce premier essai un grand espace bien degage, en plein air, par temps calme et lumineux, et surtout loin des autres personnes.</p>
+<p>Pourquoi ces conditions ? Le plein air donne un bon signal GPS, indispensable pour que le drone se repere. Le temps calme evite que le vent ne complique le vol stationnaire. La lumiere aide l'intelligence artificielle a bien vous voir. Et l'absence de monde autour vous laisse toute la place pour apprendre sans risque ni stress.</p>
+
+<div class="step"><span class="step-num">1</span><span class="step-txt"><strong>Allumez le drone et la telecommande, et attendez la connexion et un bon signal GPS.</strong> Le GPS est en quelque sorte le sens de l'orientation du drone : tant qu'il ne sait pas precisement ou il se trouve, il refuse de faire quoi que ce soit de risque, et c'est tres bien ainsi. En plein air, ce calage prend en general une a deux minutes. Patientez jusqu'a ce que l'application indique que le GPS est fiable avant d'aller plus loin.</span></div>
+
+<div class="step"><span class="step-num">2</span><span class="step-txt"><strong>Lancez CineFlight Solo sur le telephone, en le tenant a l'horizontale.</strong> L'application affiche alors l'ecran de vol, avec l'image de la camera du drone et tous les boutons de commande autour. Prenez un instant pour respirer et reperer, en haut, les deux boutons de securite (STOP rouge et RTH jaune) : ce sont vos filets de securite, vous devez savoir ou ils sont sans avoir a chercher.</span></div>
+
+<div class="step"><span class="step-num">3</span><span class="step-txt"><strong>Faites decoller le drone avec le bouton <span class="key">DEC</span>.</strong> Le drone s'eleve et se stabilise a quelques metres du sol, puis reste parfaitement immobile en l'air. A ce stade, il est comme un chien assis qui attend l'ordre : il ne suit encore personne, il ne fait que tenir sa position et vous regarder. C'est normal et voulu — rien ne se passera tant que vous ne le lui aurez pas demande.</span></div>
+
+<div class="step"><span class="step-num">4</span><span class="step-txt"><strong>Posez la telecommande et placez-vous devant le drone.</strong> Vous pouvez deposer la manette sur le sol, sur un sac ou un banc : le drone n'en a plus besoin pour l'instant, c'est l'application sur le telephone qui prend le relais. Placez-vous bien en face de sa camera, a quelques metres, et prenez votre temps : il vous attend sans bouger, aussi longtemps qu'il le faut.</span></div>
+
+<div class="step"><span class="step-num">5</span><span class="step-txt"><strong>Montrez le tag Presentation (<span class="tag-id">0</span>) au drone.</strong> Tenez la carte numero 0 bien a plat, face a la camera, comme on brandit une pancarte. Gardez-la immobile une seconde. Le drone l'analyse, confirme, et vous verrouille comme cible : a partir de cet instant, c'est vous qu'il suit. L'ecran vous le confirme.</span></div>
+
+<div class="step"><span class="step-num">6</span><span class="step-txt"><strong>Dirigez la prise de vue et profitez.</strong> Vous pouvez maintenant ranger la carte. Le drone vous suit. Donnez-lui vos ordres comme vous voulez : d'autres tags pour changer de mouvement ou de cadrage, la voix, ou l'ecran. Bon tournage.</span></div>
+
+<div class="scene"><div class="titre">Votre tout premier vol, raconte du debut a la fin</div>
+<p>Vous etes dans un grand parc desert un matin clair. Vous posez le drone au sol, vous allumez la manette, puis le drone. Vous lancez l'application et vous attendez, les yeux sur l'indicateur GPS, jusqu'a ce qu'il devienne vert. Cela prend une minute. Vous appuyez sur DEC : le drone monte a hauteur de votre tete et s'immobilise, sa camera tournee vers vous. Il ne bouge plus, il attend.</p>
+<p>Vous deposez la manette sur un banc et vous reculez de cinq ou six pas pour bien etre dans son champ. Vous sortez la carte numero 0 de votre poche et vous la brandissez face a lui, immobile. Une seconde passe. L'ecran affiche que vous etes verrouille comme cible. Vous rangez la carte et, doucement, vous commencez a marcher de cote : le drone pivote et vous garde au centre de l'image. Vous venez de realiser votre tout premier plan en solo, sans personne pour vous filmer.</p></div>
+
+<div class="tip"><strong>Pourquoi le drone n'avance-t-il pas tout seul des le decollage ?</strong> C'est un choix de conception pense pour votre securite et votre confort. Tant que vous ne lui avez pas explicitement montre le tag de verrouillage, le drone reste sur place et ne suit personne. Ainsi, c'est <strong>vous</strong> qui decidez du moment precis ou le suivi demarre : vous avez le temps de vous installer, de verifier que tout est en ordre, et de lancer la prise quand vous etes pret. Vous gardez le controle du depart, toujours.</div>
+
+<h2 id="boutons">3. Tous les boutons de l'ecran</h2>
+<p>L'ecran de vol peut sembler charge la premiere fois, avec ses nombreux boutons tout autour de l'image. Pas d'inquietude : ils sont regroupes par familles logiques, et vous n'aurez jamais besoin de tous les utiliser en meme temps. Le mieux est de les reperer tranquillement chez vous, avant le premier vol, plutot que de les decouvrir en pleine action. Cette section les passe tous en revue, famille par famille.</p>
+
+<h3>Les deux boutons a connaitre par coeur</h3>
+<div class="image"><strong>Pensez-y comme la pedale de frein et le volant d'une voiture :</strong> meme si vous ne maitrisez rien d'autre, ces deux commandes-la vous sortent de n'importe quelle situation. Apprenez leur emplacement par coeur, pour pouvoir les actionner les yeux fermes.</div>
+<p>Avant tout le reste, memorisez ces deux boutons situes en haut de l'ecran. Ce sont vos reflexes de securite, et ils priment sur tout :</p>
+<ul>
+  <li><span class="key">STOP</span> (rouge) — c'est l'<strong>arret d'urgence</strong>. Un appui coupe immediatement le suivi automatique et fige le drone sur place, en vol stationnaire. Des qu'une situation vous inquiete, vous surprend, ou vous echappe, c'est le bouton a frapper sans reflechir. Le drone s'arrete net et attend vos ordres.</li>
+  <li><span class="key">RTH</span> (jaune) — c'est le <strong>retour maison</strong> (Return To Home). Un appui et le drone interrompt ce qu'il faisait pour revenir tout seul se poser a son point de decollage, comme un pigeon voyageur qui rentre au colombier. Utilisez-le en cas de doute, si vous avez perdu le sujet de vue, si la batterie baisse, ou simplement pour rappeler le drone vers vous.</li>
+</ul>
+
+<h3>Le vol</h3>
+<p>Cette famille regroupe les commandes de base du vol : decoller, atterrir, rentrer, arreter. Ce sont les actions qui controlent ou se trouve physiquement le drone.</p>
+<table>
+<tr><th>Bouton</th><th>Ce qu'il fait</th><th>Quand l'utiliser</th></tr>
+<tr><td><span class="key">DEC</span></td><td>Fait decoller le drone, qui monte et se stabilise en vol stationnaire.</td><td>Au tout debut, une fois le drone connecte et le GPS fiable.</td></tr>
+<tr><td><span class="key">ATT</span></td><td>Fait atterrir le drone a la verticale, la ou il se trouve.</td><td>Pour le poser a la fin, en zone bien degagee sous lui.</td></tr>
+<tr><td><span class="key">RTH</span></td><td>Retour automatique au point de decollage, puis atterrissage.</td><td>Doute, sujet perdu, batterie basse, ou pour rappeler le drone.</td></tr>
+<tr><td><span class="key">STOP</span></td><td>Arret d'urgence : coupe le suivi et fige le drone sur place.</td><td>Des qu'une situation vous inquiete, sans hesiter.</td></tr>
+</table>
+
+<h3>Le suivi</h3>
+<p>Le suivi est le coeur de CineFlight Solo : c'est lui qui fait que le drone s'occupe de vous tout seul. Ce bouton agit comme un grand interrupteur a deux positions, qui dit au drone soit "occupe-toi de moi", soit "repos".</p>
+<table>
+<tr><th>Bouton</th><th>Ce qu'il veut dire</th></tr>
+<tr><td>● TARGET (orange)</td><td>Le drone vous suit automatiquement en ce moment. Appuyez pour arreter le suivi et repasser en manuel.</td></tr>
+<tr><td>○ MANUEL (gris)</td><td>Le drone ne suit personne, il est au repos. Appuyez pour activer le suivi — ou bien touchez une personne a l'ecran, ou montrez le tag Presentation (0).</td></tr>
+</table>
+<p>Vous remarquez qu'il existe donc plusieurs facons d'activer le suivi : le bouton lui-meme, le toucher d'une personne a l'ecran, ou le tag 0. Elles font toutes la meme chose. Utilisez celle qui est la plus pratique sur le moment.</p>
+
+<h3>Que peut suivre le drone ?</h3>
+<p>Par defaut, le drone est regle pour suivre les <strong>personnes</strong>, ce qui couvre la grande majorite des situations de tournage. L'intelligence artificielle est concue pour reconnaitre une silhouette humaine sous toutes ses formes : qu'il s'agisse d'un marcheur, d'un coureur, d'un skieur, d'un cycliste ou d'un cavalier, le drone les identifie tous comme des personnes et sait les suivre.</p>
+<p>Mais vous pouvez elargir ce que le drone cherche de lui-meme, dans <strong>Reglages → Sujet a suivre</strong>. C'est utile si vous voulez qu'il s'accroche automatiquement a autre chose qu'une personne, par exemple un vehicule ou un animal :</p>
+<table>
+<tr><th>Mode</th><th>Le drone cherche</th></tr>
+<tr><td>Personne</td><td>Les personnes uniquement (le reglage par defaut).</td></tr>
+<tr><td>Personne + Animal</td><td>Les personnes, mais aussi les chiens, chats et chevaux.</td></tr>
+<tr><td>Personne + Vehicule</td><td>Les personnes, mais aussi velos, voitures, motos, bus, camions et bateaux.</td></tr>
+<tr><td>Tout</td><td>Personnes, animaux et vehicules en meme temps.</td></tr>
+<tr><td>Personnalise</td><td>Vous cochez vous-meme exactement les types voulus. Voir la section 15.</td></tr>
+</table>
+<div class="tip"><strong>A retenir absolument :</strong> quel que soit ce reglage, vous pouvez <strong>toujours</strong> toucher n'importe quel sujet directement a l'ecran pour le designer comme cible. Le toucher du doigt fonctionne sur tout ce que le drone est capable de detecter, meme si ce n'est pas dans le mode choisi. Le reglage "Sujet a suivre" ne fait qu'indiquer ce que le drone cherche <em>automatiquement</em> ; votre doigt, lui, reste universel.</div>
+<div class="warn"><strong>Ce qui aide le suivi, et ce qui le complique.</strong> Le drone suit le mieux un sujet bien visible, vertical, qui se deplace a vitesse moderee et se detache nettement du decor. A l'inverse, il aura plus de mal avec un sujet tres rapide, sur un fond uniforme (neige, eau, ciel), a contre-jour, ou perdu dans un sous-bois dense ou tout se ressemble. Dans ces cas difficiles, rassurez-vous : le drone ne part jamais a l'aveugle. S'il vous perd, il s'arrete et vous attend (voir le mode chien fidele, section 8).</div>
+
+<h3>Le cadrage : votre taille dans l'image</h3>
+<div class="image"><strong>C'est comme le zoom d'un photographe :</strong> du gros plan serre sur le visage jusqu'a la petite silhouette perdue dans un grand paysage. Choisir un cadrage, c'est decider quelle part de vous et du decor on voit a l'image.</div>
+<p>Ces quatre boutons reglent a quelle distance le drone vous cadre, c'est-a-dire quelle proportion de votre corps remplit l'ecran. C'est un choix artistique important : un gros plan cree de l'intimite et de l'emotion, un plan large raconte un lieu et une ambiance.</p>
+<table>
+<tr><th>Bouton</th><th>Cadrage obtenu</th></tr>
+<tr><td><span class="key">GP</span></td><td>Gros plan — le visage et les epaules remplissent l'image. Intime, expressif.</td></tr>
+<tr><td><span class="key">AM</span></td><td>Plan americain — de la mi-cuisse a la tete. Equilibre entre la personne et un peu de decor.</td></tr>
+<tr><td><span class="key">PD</span></td><td>Plan pied — la personne en entier, de la tete aux pieds. Montre la posture, le mouvement.</td></tr>
+<tr><td><span class="key">ENS</span></td><td>Plan d'ensemble — vous et tout le decor autour. Raconte le lieu, donne l'echelle.</td></tr>
+</table>
+
+<h3>Les mouvements</h3>
+<p>Les mouvements determinent comment le drone se deplace par rapport a vous pendant qu'il filme. C'est ce qui transforme une simple captation fixe en un plan vivant et cinematographique. Chaque mouvement raconte quelque chose de different.</p>
+<table>
+<tr><th>Bouton</th><th>Mouvement et effet</th></tr>
+<tr><td>▣</td><td>Statique — le drone reste fixe a sa position et se contente de vous garder cadre. Sobre et stable.</td></tr>
+<tr><td>◎</td><td>Orbite — le drone tourne autour de vous, comme un satellite autour d'une planete. Spectaculaire, devoile le decor sous tous les angles.</td></tr>
+<tr><td>↔</td><td>Travelling — le drone vous accompagne en se deplacant sur le cote. Donne une sensation de mouvement et de voyage.</td></tr>
+<tr><td>↑F</td><td>Approche — le drone se rapproche doucement de vous. Cree de la tension, de l'intimite croissante.</td></tr>
+<tr><td>⤢</td><td>Revelation — le drone recule et monte en meme temps, pour devoiler progressivement le decor autour de vous. L'effet de fin de film classique.</td></tr>
+<tr><td>◉</td><td>Spotlight — le drone reste sur place, c'est vous qui pilotez a la manette, et la camera vous garde automatiquement cadre.</td></tr>
+</table>
+<div class="tip">Le mode <strong>Spotlight</strong> (◉) merite une explication a part, car il fonctionne a l'envers des autres. Dans tous les autres mouvements, c'est le drone qui se deplace tout seul pendant que vous vous concentrez sur votre activite. En Spotlight, au contraire, <strong>c'est vous qui pilotez le drone a la manette</strong>, et lui se contente d'orienter sa camera pour vous garder dans l'image, comme un projecteur de theatre qui suit l'acteur ou qu'il aille sur scene — d'ou son nom. C'est le mode des utilisateurs qui veulent composer eux-memes leur mouvement de vol tout en gardant le sujet cadre, comme les professionnels.</div>
+
+<h3>La camera</h3>
+<p>Ces boutons controlent ce que la camera enregistre : photos, video, ou diffusion en direct. Ils sont independants du mouvement et du cadrage : vous pouvez par exemple filmer pendant une orbite, ou prendre une photo pendant un suivi de marche.</p>
+<table>
+<tr><th>Bouton</th><th>Ce qu'il fait</th></tr>
+<tr><td><span class="key">PHOT</span></td><td>Un appui court prend une photo. Un appui long active ou desactive la Capture Auto Intelligente (detaillee en section 12).</td></tr>
+<tr><td><span class="key">REC</span></td><td>Demarre ou arrete l'enregistrement video.</td></tr>
+<tr><td><span class="key">RTSP</span></td><td>Diffuse le flux video en direct sur le reseau, pour l'afficher sur un autre ecran ou faire un live.</td></tr>
+<tr><td>Fleches gimbal</td><td>Inclinent manuellement la camera vers le haut ou le bas (le gimbal est le support motorise de la camera).</td></tr>
+</table>
+
+<h3>Les outils</h3>
+<p>Cette derniere famille rassemble les fonctions annexes : voix, reglages, carte, exposition et acces a ce guide.</p>
+<table>
+<tr><th>Bouton</th><th>Ce qu'il fait</th></tr>
+<tr><td><span class="key">VOIX</span></td><td>Active l'ecoute des commandes vocales (voir section 5).</td></tr>
+<tr><td>⚙</td><td>Ouvre le menu des outils : tags a voir et imprimer, macros, reglages, et l'Album du drone (section 14).</td></tr>
+<tr><td><span class="key">MAP</span></td><td>Affiche ou cache la mini-carte sur l'ecran de vol (section 13).</td></tr>
+<tr><td><span class="key">EV</span></td><td>Regle l'exposition, c'est-a-dire la luminosite de l'image. A monter a contre-jour ou sur la neige, a baisser si l'image est trop claire.</td></tr>
+<tr><td><span class="key">?</span></td><td>Ouvre ce guide.</td></tr>
+</table>
+<div class="tip">Les boutons des macros que vous creez vous-meme apparaissent en <strong>violet</strong>, sous la rangee des mouvements, avec le nom que vous leur avez donne. Un simple appui lance toute la sequence enregistree (voir section 7).</div>
+
+<h2 id="reglages">4. Les reglages que vous pouvez ajuster</h2>
+<div class="image"><strong>Comme les boutons d'une chaine hi-fi :</strong> vous ajustez le rendu a votre gout — plus de basses, plus d'aigus — mais le volume ne montera jamais au point de casser les enceintes. Ici, c'est pareil : vous personnalisez chaque mouvement, mais aucun reglage ne peut atteindre une valeur dangereuse. Les limites sont integrees pour vous proteger.</div>
+<p>L'ecran Reglages vous permet d'affiner le comportement de chaque mouvement avec des curseurs. C'est ce qui fait passer vos videos d'un rendu correct a un rendu vraiment personnel et soigne. Mais rassurez-vous : vous ne pouvez rien casser ni rendre dangereux. Toutes les valeurs restent confinees dans des plages sures, calculees pour que le drone reste maitrisable en toutes circonstances.</p>
+<div class="tip"><strong>Le bouton "Valeurs sures" est votre meilleur ami.</strong> En un seul appui, il remet l'ensemble des reglages dans une configuration prudente et cinematique, eprouvee. C'est votre bouton "remise a zero" : utilisez-le des que vous avez un doute, que vous vous etes perdu dans les reglages, ou simplement pour repartir d'une base saine et belle. Beaucoup d'utilisateurs ne touchent jamais aux curseurs et s'en tiennent tres bien aux valeurs sures.</p></div>
+
+<h3>La logique generale des curseurs</h3>
+<p>Avant de detailler chaque mouvement, voici un principe qui s'applique a tous et qui vous evitera de retenir des dizaines de reglages. Pour n'importe quel mouvement, la regle est la meme :</p>
+<ul>
+  <li><strong>Lent et large</strong> donne un rendu doux, elegant, cinematique. Le drone bouge avec retenue, les transitions sont posees, l'image respire. C'est le choix de la beaute et du calme.</li>
+  <li><strong>Rapide et proche</strong> donne un rendu nerveux, dynamique, intense. Le drone reagit vite et serre, l'energie est palpable. C'est le choix de l'action et du punch.</li>
+</ul>
+<p>Gardez ce principe en tete et vous saurez instinctivement dans quel sens pousser n'importe quel curseur, selon l'ambiance que vous recherchez.</p>
+
+<h3>Orbite (le drone tourne autour de vous)</h3>
+<table>
+<tr><th>Reglage</th><th>Ce qu'il controle</th></tr>
+<tr><td>Hauteur (2 a 30 m)</td><td>Plus haut donne une vue plongeante, dominante. Plus bas vous filme a hauteur d'oeil, plus immersif.</td></tr>
+<tr><td>Rayon (3 a 15 m)</td><td>Un grand rayon ouvre l'orbite et laisse voir tout le decor. Un petit rayon serre l'image sur vous.</td></tr>
+<tr><td>Vitesse de rotation</td><td>Lente pour un rendu tres cinematique et elegant. Rapide pour une energie plus dynamique.</td></tr>
+</table>
+
+<h3>Travelling, Revelation, Approche</h3>
+<p>Chacun de ces mouvements possede ses propres curseurs (distance de suivi, hauteur, vitesse, reactivite laterale...), mais ils obeissent tous au meme principe enonce plus haut. Pour le travelling, par exemple, une grande distance de suivi donne un plan large, une petite distance vous filme de pres et de facon intime ; une reactivite laterale elevee colle a vos moindres mouvements, tandis qu'une reactivite basse adoucit le rendu. Pour l'approche, le reglage le plus important est la distance d'arret : c'est la distance a laquelle le drone cesse de se rapprocher de vous. Elle ne peut jamais descendre sous 2 metres, par securite — le drone ne vous foncera jamais dessus.</p>
+
+<h3>Camera : resolution et images par seconde</h3>
+<p>Ces deux reglages determinent la qualite technique de vos images, et ils se choisissent <strong>avant</strong> le decollage.</p>
+<table>
+<tr><th>Reglage</th><th>Options et conseils</th></tr>
+<tr><td>Resolution</td><td>FHD 1080p (fichiers legers, suffisant pour les reseaux sociaux), 2.7K (bon compromis), ou 4K (image tres nette, ideale pour un grand ecran ou un montage soigne, mais fichiers volumineux).</td></tr>
+<tr><td>Images par seconde</td><td>24 images/seconde donne le rendu cinema classique. 30 est le standard polyvalent. 60 offre une grande fluidite et permet de creer des ralentis au montage.</td></tr>
+</table>
+<div class="tip">Retenez bien la distinction : la <strong>resolution et les images par seconde se choisissent au sol, avant de decoller</strong>, car elles definissent comment la camera enregistre. En revanche, l'<strong>exposition (luminosite, bouton EV) se regle en plein vol</strong>, car la lumiere change selon que vous filmez face au soleil, a l'ombre ou sur la neige.</div>
+<div class="warn"><strong>Conseil pour bien debuter.</strong> Commencez toujours vos premieres sorties avec les "valeurs sures". Ne touchez aux curseurs que progressivement, une fois que vous etes a l'aise avec le comportement du drone, et toujours dans un grand espace bien degage ou une erreur de reglage n'aura aucune consequence. Augmenter brusquement toutes les vitesses des le debut est le meilleur moyen de se faire peur.</div>
+
+<h2 id="commandes">5. Les trois facons de commander</h2>
+<p>CineFlight Solo vous offre trois telecommandes differentes pour le meme drone. Elles ne s'excluent pas : vous pouvez tout a fait commencer une sequence a l'ecran, ajuster a la voix, puis lancer une recette avec un tag. Chacune a ses points forts selon la situation, et il vaut la peine de toutes les connaitre pour choisir la bonne au bon moment.</p>
+
+<h3>A l'ecran (tactile)</h3>
+<p>C'est la methode la plus directe et la plus complete. Tous les boutons de l'interface permettent de tout piloter : activer ou couper le suivi, choisir le plan et le mouvement, gerer le decollage, l'atterrissage, le retour et l'urgence. Le reglage actif est toujours surligne a l'ecran, ce qui vous permet de voir en un coup d'oeil dans quel etat se trouve le drone. C'est la facon de faire la plus naturelle quand vous avez le telephone en main et que vous etes a proximite.</p>
+
+<h3>A la voix</h3>
+<p>La commande vocale est tres pratique quand vous avez les mains prises ou que vous etes en mouvement. Activez d'abord l'ecoute avec le bouton VOIX. Ensuite, dites toujours le mot <strong>"CineFlight"</strong> avant votre ordre, par exemple "CineFlight orbite" ou "CineFlight gros plan". Ce mot d'eveil joue le role d'un mot de passe : il evite que le drone ne reagisse a une conversation ordinaire ou a un mot prononce par hasard. Pour l'arret d'urgence, dites simplement "CineFlight stop". Parlez clairement et a voix posee ; dans le vent ou le bruit, la voix est moins fiable, et c'est la que les tags prennent l'avantage.</p>
+
+<h3>Avec les tags (cartes ArUco)</h3>
+<p>Montrer une carte imprimee au drone est la methode <strong>la plus fiable de toutes</strong>, en particulier quand vous etes loin de la telecommande, dans un environnement bruyant, ou par grand vent. C'est un peu comme faire des signes a quelqu'un de loin avec des pancartes dont vous avez convenu du sens a l'avance : pas besoin de cris ni de gestes compliques, le message passe instantanement et sans ambiguite. Les tags font l'objet de toute la section suivante.</p>
+
+<h2 id="tags">6. Les tags ArUco</h2>
+<div class="image"><strong>Un tag, c'est une carte avec un symbole noir et blanc</strong> que le drone sait lire avec sa camera, exactement comme un QR code que vous scannez avec votre telephone. Chaque carte declenche une action precise et programmee. Vous imprimez ces cartes depuis l'application, sur papier ordinaire, sur carton, ou en grand format pour les lire de plus loin.</div>
+<p>Les tags sont la colonne vertebrale du pilotage a distance. Leur grand avantage est qu'ils fonctionnent meme quand vous etes trop loin pour toucher le telephone et trop bruyant pour la voix. Le drone reconnait le motif de chaque carte de maniere quasi infaillible, ce qui en fait la methode de commande la plus sure sur le terrain.</p>
+
+<h3>Comment presenter un tag correctement</h3>
+<p>La lecture d'un tag est simple, mais quelques gestes garantissent qu'elle reussisse du premier coup :</p>
+<ul>
+  <li>Tenez la carte bien face a la camera du drone, a plat, sans l'incliner. Vous pouvez aussi l'afficher sur un support la ou le drone la verra.</li>
+  <li>Gardez-la immobile environ une seconde. Le drone ne valide pas a la premiere image : il attend de l'avoir vue nettement sur plusieurs images consecutives, justement pour ne jamais se tromper d'action. Cette petite seconde de patience est une securite.</li>
+  <li>Des que l'action correspondante s'affiche a l'ecran, vous pouvez ranger la carte : le message est passe.</li>
+  <li>Le drone doit etre assez proche pour distinguer le motif. Un grand tag se lit de plus loin qu'un petit, ce qui est utile quand le drone est haut ou eloigne.</li>
+  <li>Evitez les reflets et le contre-jour, qui brouillent le motif. Un tag imprime sur papier mat se lit beaucoup mieux qu'un tag plastifie brillant.</li>
+</ul>
+
+<h3>Deux familles de tags : le PLAN et le MOUVEMENT</h3>
+<p>Les tags se rangent en deux familles que vous combinez librement. Les tags de <strong>plan</strong> reglent le cadrage (quelle part de vous remplit l'image), et les tags de <strong>mouvement</strong> reglent la trajectoire de la camera (orbite, travelling, etc.). En montrant d'abord un plan puis un mouvement, vous dirigez votre prise de vue exactement comme un realisateur.</p>
+
+<h3>Les tags de PLAN (cadrage)</h3>
+<table>
+<tr><th>Tag</th><th>Plan</th><th>Ce qu'on voit</th></tr>
+<tr><td><span class="tag-id">31</span></td><td>Gros plan (GP)</td><td>Le visage et les epaules remplissent l'image. Intime, expressif.</td></tr>
+<tr><td><span class="tag-id">32</span></td><td>Americain (AM)</td><td>De la mi-cuisse a la tete. Equilibre entre vous et un peu de decor.</td></tr>
+<tr><td><span class="tag-id">33</span></td><td>Pied (PD)</td><td>La personne en entier, de la tete aux pieds. Montre la posture.</td></tr>
+<tr><td><span class="tag-id">34</span></td><td>Ensemble (ENS)</td><td>Vous et tout le decor autour. Raconte le lieu, donne l'echelle.</td></tr>
+</table>
+
+<h3>Les tags de MOUVEMENT (trajectoire)</h3>
+<table>
+<tr><th>Tag</th><th>Mouvement</th><th>Ce que fait le drone</th></tr>
+<tr><td><span class="tag-id">40</span></td><td>Statique</td><td>Il reste en place et vous garde cadre.</td></tr>
+<tr><td><span class="tag-id">41</span></td><td>Orbite</td><td>Il tourne autour de vous.</td></tr>
+<tr><td><span class="tag-id">42</span></td><td>Travelling</td><td>Il vous accompagne lateralement pendant que vous marchez.</td></tr>
+<tr><td><span class="tag-id">43</span></td><td>Revelation</td><td>Il recule et monte pour devoiler le decor.</td></tr>
+<tr><td><span class="tag-id">44</span></td><td>Approche</td><td>Il se rapproche doucement de vous.</td></tr>
+<tr><td><span class="tag-id">45</span></td><td>Spotlight</td><td>Vous pilotez a la manette, la camera vous garde cadre.</td></tr>
+<tr><td><span class="tag-id">46</span></td><td>Recul</td><td>Il vous precede pendant que vous avancez.</td></tr>
+<tr><td><span class="tag-id">47</span></td><td>Suivi</td><td>Il vous suit de dos, energique et reactif.</td></tr>
+</table>
+
+<h3>Les tags speciaux</h3>
+<table>
+<tr><th>Tag</th><th>Nom</th><th>Ce qu'il declenche</th></tr>
+<tr><td><span class="tag-id">0</span></td><td>Presentation</td><td>Verrouille la cible et passe en plan stable. A montrer en tout premier.</td></tr>
+<tr><td><span class="tag-id">9</span></td><td>Pause</td><td>Met le suivi en pause, le drone reste en vol stationnaire.</td></tr>
+<tr><td><span class="tag-id">10</span></td><td>Stop</td><td>Arret d'urgence, interrompt absolument tout.</td></tr>
+</table>
+<div class="tip">Les tags <strong>11 a 30</strong> restent libres pour vos macros (voir section 7).</div>
+
+<h3>La regle d'or : d'abord le PLAN, ensuite le MOUVEMENT</h3>
+<p>Pour obtenir un cadrage precis avec un mouvement, presentez les deux cartes <strong>dans l'ordre</strong> : d'abord le tag de plan, puis le tag de mouvement. Le drone applique alors ce plan avec ce mouvement, et <strong>demarre l'enregistrement video automatiquement</strong>.</p>
+<div class="step"><span class="step-num">1</span><span class="step-txt">Montrez le tag du <strong>plan</strong> voulu (ex. Gros plan, tag 40). L'ecran confirme : "Plan arme, montrez un mouvement".</span></div>
+<div class="step"><span class="step-num">2</span><span class="step-txt">Montrez le tag du <strong>mouvement</strong> voulu (ex. Orbite, tag 51). Le drone applique Gros plan + Orbite, et le REC se lance.</span></div>
+
+<div class="tip"><strong>Mouvement seul ? Le drone choisit le bon plan pour vous.</strong> Si vous montrez directement un tag de mouvement sans avoir montre de plan avant, le systeme selectionne automatiquement le plan le plus sur et le plus beau pour ce mouvement (voir la colonne "Plan automatique" du tableau ci-dessous). Vous n'avez donc jamais besoin de connaitre les bonnes associations par coeur.</div>
+
+<div class="warn"><strong>Delai de 15 secondes.</strong> Si vous montrez un tag de plan puis que vous ne montrez aucun mouvement pendant 15 secondes, le plan en attente est <strong>annule</strong> automatiquement. C'est une securite pour eviter qu'un plan montre par erreur ne reste actif. L'ecran vous previent de l'annulation. Il vous suffit de recommencer.</div>
+
+<div class="tip"><strong>Toute demande de mouvement par tag est toujours filmee.</strong> Des qu'un mouvement est declenche par une carte, l'enregistrement video demarre s'il ne tournait pas deja. Vous ne ratez jamais le plan que vous venez de lancer.</div>
+
+<h3>Tableau de compatibilite : quels plans avec quels mouvements</h3>
+<p>Certaines associations de plan et de mouvement sont contradictoires et donc <strong>refusees</strong> par le drone, pour votre securite et la qualite de l'image. D'autres sont possibles mais delicates. Le tableau ci-dessous resume tout. Quand une combinaison est refusee, <strong>rien ne change</strong> : le mouvement demande n'est pas applique, le drone continue tranquillement ce qu'il faisait, et l'ecran vous propose un plan compatible a montrer a la place. Il vous suffit de re-presenter le bon plan suivi du mouvement.</p>
+<p style="font-size:13px;color:#3a3a3c;"><strong>Legende :</strong> <span style="color:#1e8e3e;font-weight:700;">&#10003; OK</span> &nbsp; <span style="color:#b06000;font-weight:700;">&#9888; limite</span> &nbsp; <span style="color:#c5221f;font-weight:700;">&#9940; refuse</span></p>
+<table>
+<tr><th>Mouvement</th><th>Gros plan</th><th>Americain</th><th>Pied</th><th>Ensemble</th><th>Plan automatique</th></tr>
+<tr><td>Statique</td><td style="text-align:center;color:#1e8e3e;">&#10003;</td><td style="text-align:center;color:#1e8e3e;">&#10003;</td><td style="text-align:center;color:#1e8e3e;">&#10003;</td><td style="text-align:center;color:#1e8e3e;">&#10003;</td><td>Americain</td></tr>
+<tr><td>Orbite</td><td style="text-align:center;color:#b06000;">&#9888;</td><td style="text-align:center;color:#1e8e3e;">&#10003;</td><td style="text-align:center;color:#1e8e3e;">&#10003;</td><td style="text-align:center;color:#b06000;">&#9888;</td><td>Americain</td></tr>
+<tr><td>Travelling</td><td style="text-align:center;color:#c5221f;">&#9940;</td><td style="text-align:center;color:#1e8e3e;">&#10003;</td><td style="text-align:center;color:#1e8e3e;">&#10003;</td><td style="text-align:center;color:#1e8e3e;">&#10003;</td><td>Pied</td></tr>
+<tr><td>Revelation</td><td style="text-align:center;color:#c5221f;">&#9940;</td><td style="text-align:center;color:#b06000;">&#9888;</td><td style="text-align:center;color:#1e8e3e;">&#10003;</td><td style="text-align:center;color:#1e8e3e;">&#10003;</td><td>Ensemble</td></tr>
+<tr><td>Approche</td><td style="text-align:center;color:#1e8e3e;">&#10003;</td><td style="text-align:center;color:#1e8e3e;">&#10003;</td><td style="text-align:center;color:#b06000;">&#9888;</td><td style="text-align:center;color:#c5221f;">&#9940;</td><td>Gros plan</td></tr>
+<tr><td>Spotlight</td><td style="text-align:center;color:#1e8e3e;">&#10003;</td><td style="text-align:center;color:#1e8e3e;">&#10003;</td><td style="text-align:center;color:#1e8e3e;">&#10003;</td><td style="text-align:center;color:#b06000;">&#9888;</td><td>Americain</td></tr>
+<tr><td>Recul</td><td style="text-align:center;color:#c5221f;">&#9940;</td><td style="text-align:center;color:#b06000;">&#9888;</td><td style="text-align:center;color:#1e8e3e;">&#10003;</td><td style="text-align:center;color:#1e8e3e;">&#10003;</td><td>Ensemble</td></tr>
+<tr><td>Suivi</td><td style="text-align:center;color:#b06000;">&#9888;</td><td style="text-align:center;color:#1e8e3e;">&#10003;</td><td style="text-align:center;color:#1e8e3e;">&#10003;</td><td style="text-align:center;color:#1e8e3e;">&#10003;</td><td>Americain</td></tr>
+</table>
+<h3>Pourquoi certaines combinaisons sont refusees</h3>
+<ul>
+  <li><strong>Revelation + Gros plan</strong> et <strong>Travelling + Gros plan</strong> : la revelation et le travelling eloignent ou deplacent le drone, alors qu'un gros plan veut au contraire serrer le cadre. Les deux ordres se contredisent et vous sortiriez du champ.</li>
+  <li><strong>Approche + Ensemble</strong> : l'approche rapproche le drone, le plan d'ensemble veut l'eloigner. Objectifs opposes.</li>
+  <li><strong>Recul + Gros plan</strong> : le recul eloigne le drone, impossible alors de tenir un gros plan.</li>
+</ul>
+<div class="scene"><div class="titre">Comment on enchaine les tags en pratique</div>
+<p>Vous etes au bord d'un lac. Vous montrez d'abord le tag 0 pour que le drone vous verrouille. Pour une belle entree, vous montrez le tag 43 (plan d'ensemble) puis le tag 53 (revelation) : il recule et vous cadre dans tout le paysage. Vous marchez vers le ponton en montrant le tag 42 (pied) puis le tag 52 (travelling) : il vous accompagne lateralement. Arrive au bout, vous montrez simplement le tag 51 (orbite) sans plan : le drone choisit tout seul l'americain et tourne autour de vous avec le lac en fond. Chaque carte compose votre sequence en direct, sans jamais toucher le telephone.</p></div>
+
+<h2 id="macros">7. Creer ses propres macros</h2>
+<div class="image"><strong>Une macro, c'est une recette de cuisine enregistree :</strong> au lieu de donner chaque ingredient et chaque etape un par un, vous appuyez sur "lecture" et toute la sequence se deroule seule. Avec une macro, vous montrez une seule carte et le drone enchaine automatiquement toute une suite de mouvements que vous avez programmes a l'avance, comme une choregraphie apprise.</div>
+<p>Les tags numerotes de <strong>11 a 30</strong> sont entierement libres : c'est a vous de leur attribuer une macro. C'est la fonction qui transforme CineFlight Solo en veritable outil de realisation, car elle vous permet de creer des sequences complexes et de les rejouer a l'identique d'un simple geste. Une fois une macro programmee, vous n'avez plus a vous souvenir de l'ordre des mouvements : la carte s'en charge.</p>
+
+<h3>Programmer une macro, etape par etape</h3>
+<div class="step"><span class="step-num">1</span><span class="step-txt">Ouvrez "Mes macros" depuis l'ecran Tags (accessible par le bouton engrenage).</span></div>
+<div class="step"><span class="step-num">2</span><span class="step-txt">Choisissez un tag libre, entre 11 et 30. C'est lui qui declenchera votre sequence.</span></div>
+<div class="step"><span class="step-num">3</span><span class="step-txt">Ajoutez les etapes une par une. Chaque etape se compose d'une action (un mouvement ou un cadrage) et d'une duree d'attente en secondes avant de passer a la suivante. C'est cette duree qui donne le rythme a votre sequence.</span></div>
+<div class="step"><span class="step-num">4</span><span class="step-txt">Sauvegardez. Desormais, montrer ce tag au drone lancera toute la sequence d'un coup. Un bouton violet portant le nom de votre macro apparait aussi a l'ecran.</span></div>
+
+<div class="scene"><div class="titre">Exemple complet : une entree en scene memorable (tag 11)</div>
+<p>Imaginons que vous vouliez une arrivee impressionnante au debut de votre video. Vous programmez sur le tag 11 la sequence suivante : Plan large (attente 3 secondes), puis Approche (attente 4 secondes), puis Gros plan (attente 2 secondes), puis Orbite (attente 5 secondes).</p>
+<p>Le jour du tournage, vous vous placez, vous montrez la carte 11, et vous la rangez. Le drone fait alors tout le travail tout seul : il commence par vous cadrer en plan large dans le decor, puis se rapproche doucement de vous, arrive en gros plan sur votre visage, et termine en tournant autour de vous. Pendant ces quatorze secondes, vous n'avez eu qu'a jouer votre role, sans toucher a aucune commande. C'est exactement ce que ferait un realisateur dirigeant son cameraman, sauf que tout est automatique.</p></div>
+<div class="warn"><strong>Securite :</strong> a tout moment, le tag Stop (10) ou la commande vocale "CineFlight stop" interrompent instantanement une macro en cours. Vous n'etes jamais prisonnier d'une sequence lancee : l'arret d'urgence garde toujours la priorite.</div>
+
+<h2 id="chien">8. Le mode chien fidele</h2>
+<div class="image"><strong>Imaginez un chien bien dresse :</strong> il vous accompagne fidelement, et si jamais il vous perd de vue un instant dans la foule, il ne s'affole pas et ne part pas au hasard. Il retourne calmement au dernier endroit ou il vous a vu et vous cherche du regard, jusqu'a vous retrouver. Le drone se comporte exactement de cette maniere.</div>
+<p>Ce comportement est une securite essentielle, car en suivi automatique il arrive forcement, de temps en temps, que le drone vous perde quelques instants : vous passez derriere un arbre, un autre marcheur vous cache, la lumiere change brutalement. Plutot que de paniquer ou de foncer dans une direction au hasard, le drone applique une logique calme et prudente.</p>
+<p>Voici comment il raisonne. Pendant tout le temps ou il vous suit et vous voit clairement, il enregistre discretement sa position GPS — c'est-a-dire le point precis depuis lequel il a une bonne vue sur vous. Ce point memorise lui sert de refuge si les choses se compliquent :</p>
+<ul>
+  <li>S'il vous perd de vue tres brievement, quelques secondes seulement, il ne bouge pas : il reste en vol stationnaire a sa place et vous attend, le temps que vous reapparaissiez.</li>
+  <li>S'il vous perd plus longtemps et que son GPS est fiable, il revient doucement vers son point de memorisation, en montant un peu pour elargir son champ de vision, et il vous cherche depuis cette position avantageuse.</li>
+  <li>Des l'instant ou il vous revoit, il reprend le suivi normal comme si de rien n'etait.</li>
+</ul>
+<div class="tip"><strong>Une prudence supplementaire :</strong> si le GPS n'est pas fiable au moment ou il vous perd, le drone ne se deplace surtout pas a l'aveugle. Il reste sagement sur place et attend de vous revoir. Il ne prend jamais le risque de voler vers un point qu'il ne peut pas situer avec certitude. C'est pourquoi le mode chien fidele, qui implique des deplacements autonomes, ne doit s'utiliser que dans une zone bien degagee et sans monde.</div>
+
+<h2 id="securite">9. Securite</h2>
+<div class="warn"><strong>La regle d'or, celle qui prime sur tout : ne JAMAIS voler au-dessus des personnes.</strong> Le drone passe a cote des gens, jamais au-dessus de leur tete — ni au-dessus de vous, ni au-dessus des spectateurs. Ce n'est pas seulement une bonne pratique : c'est une regle de securite fondamentale et une obligation legale.</div>
+<div class="image"><strong>Le bon reflexe a adopter :</strong> pensez au drone comme a une voiture qui en double une autre. Elle passe sur le cote, a distance, et jamais elle ne roule sur les gens. Le drone doit toujours rester "sur la voie d'a cote", jamais en survol direct des personnes.</div>
+<p>La securite n'est pas une contrainte ennuyeuse : c'est ce qui fait la difference entre une belle journee de tournage et un accident. Prenez le temps de lire et d'integrer ces regles avant chaque vol. Elles protegent les autres, elles vous protegent vous, et elles protegent votre materiel.</p>
+<ul>
+  <li><strong>Jamais au-dessus des personnes</strong>, ni du sujet filme, ni des spectateurs. En cas de defaillance, un drone qui tombe ne doit jamais pouvoir blesser quelqu'un.</li>
+  <li><strong>Gardez une distance horizontale de securite</strong> avec toute personne qui n'est pas impliquee dans le tournage.</li>
+  <li><strong>Le sujet reste sur le cote :</strong> quand le drone vous suit ou s'approche, il vous cadre de face ou de profil, jamais en passant au-dessus de votre tete.</li>
+  <li><strong>Espace degage obligatoire</strong> pour le suivi automatique et les macros : assurez-vous qu'il n'y a ni public ni passants dans la zone ou le drone va evoluer.</li>
+  <li><strong>Orbite et approche a bonne hauteur :</strong> reglez-les a une altitude ou, en cas de chute, le drone ne toucherait personne.</li>
+  <li><strong>Mode chien fidele (retour GPS) :</strong> a n'utiliser que dans une zone sans monde, car le drone s'y deplace de lui-meme.</li>
+  <li><strong>Gardez le drone a vue en permanence.</strong> C'est une obligation legale au Canada : vous devez pouvoir voir votre drone a l'oeil nu pendant tout le vol.</li>
+  <li><strong>L'arret d'urgence toujours a portee :</strong> connaissez par coeur le tag 10 et la commande "CineFlight stop".</li>
+  <li><strong>Verifiez la reglementation locale.</strong> Transports Canada fixe des regles precises sur les zones autorisees, l'altitude maximale et la distance a respecter avec les gens. Renseignez-vous avant de voler dans un lieu nouveau.</li>
+  <li><strong>Surveillez la batterie avec une vraie marge.</strong> Ne finissez jamais un vol au ras de la batterie : prevoyez toujours de quoi assurer le retour et un atterrissage tranquille.</li>
+</ul>
+
+<h2 id="depannage">10. Depannage</h2>
+<p>Voici les petits soucis les plus courants et leur solution. La plupart se reglent en une seconde une fois qu'on en connait la cause. Si un probleme persiste, le reflexe sain est toujours le meme : ramenez le drone (RTH), posez-vous, et reprenez calmement au sol.</p>
+<table>
+<tr><th>Probleme</th><th>Solution</th></tr>
+<tr><td>Le drone ne me suit pas</td><td>Verifiez que vous avez bien montre le tag Presentation (0) pour le verrouiller, et que le suivi est actif (l'ecran doit afficher ● TARGET, pas ○ MANUEL).</td></tr>
+<tr><td>Le tag n'est pas reconnu</td><td>Rapprochez la carte du drone, tenez-la bien a plat et parfaitement immobile une seconde, et evitez les reflets et le contre-jour. Un tag plus grand se lit de plus loin.</td></tr>
+<tr><td>Le drone me perd souvent</td><td>Le sujet est sans doute trop rapide, sur un fond uniforme ou a contre-jour. Ralentissez, changez d'angle pour vous detacher du decor, ou rapprochez le cadrage.</td></tr>
+<tr><td>La carte ne s'affiche pas</td><td>La premiere fois, le fond de carte a besoin d'une connexion Internet pour se charger. Connectez-vous une fois, ensuite il reste en memoire.</td></tr>
+<tr><td>La voix ne reagit pas</td><td>Verifiez que le bouton VOIX est bien active, dites clairement "CineFlight" avant chaque ordre, et parlez a voix posee. Le vent et le bruit genent la reconnaissance vocale.</td></tr>
+<tr><td>Le drone reste fige et ne fait rien</td><td>C'est souvent le GPS qui n'est pas encore fiable. Attendez en plein air qu'il se cale, ou eloignez-vous des batiments et des arbres qui le perturbent.</td></tr>
+</table>
+
+<h2 id="recettes">11. Recettes de tournage</h2>
+<p>Voici seize fiches pretes a l'emploi, chacune correspondant a un type de plan eprouve par les professionnels. Pour chaque recette, vous trouverez l'effet recherche, ou vous placer, les tags ou la macro exacte a utiliser, une astuce de pro et l'erreur classique a eviter. Toutes respectent scrupuleusement la regle d'or : jamais au-dessus des personnes. Considerez ces fiches comme un livre de cuisine : choisissez celle qui correspond a l'ambiance voulue, suivez-la, puis improvisez avec l'experience.</p>
+
+<div class="fiche"><h3>1. Le dronie</h3>
+<div class="row"><span class="lab">Effet :</span> le grand classique du drone. Le plan demarre en gros plan sur vous, puis le drone s'eloigne et monte progressivement, devoilant peu a peu tout le paysage autour de vous. C'est la cloture parfaite d'une video : on passe de l'intime a l'immensite.</div>
+<div class="row"><span class="lab">Placement :</span> tenez-vous dans un lieu ouvert et spectaculaire, ou le devoilement aura de l'impact. Le drone demarre face a vous, a deux ou trois metres.</div>
+<div class="row"><span class="lab">Tags :</span> Gros plan (31) puis Ensemble (34). En version macro : Gros plan (attente 3 s) puis Revelation (attente 6 s).</div>
+<div class="astuce"><strong>Astuce de pro :</strong> regardez l'horizon, pas le drone. Votre regard porte au loin rend la scene naturelle et habitee, comme si vous contempliez le paysage.</div>
+<div class="erreur"><strong>Erreur a eviter :</strong> reculer trop vite. Le devoilement perd toute sa magie s'il est precipite ; laissez le paysage se reveler lentement.</div></div>
+
+<div class="fiche"><h3>2. Le reveal</h3>
+<div class="row"><span class="lab">Effet :</span> le plan demarre serre sur un detail — vous, un objet, un element du decor — puis recule pour reveler l'ensemble du lieu. C'est l'ouverture ideale d'une video, qui pique la curiosite avant de devoiler le contexte.</div>
+<div class="row"><span class="lab">Placement :</span> placez le sujet du detail au premier plan, et le grand decor a reveler derriere lui.</div>
+<div class="row"><span class="lab">Tags :</span> Gros plan (31) puis Revelation (43). Une lumiere de lever ou de coucher de soleil renforce l'effet dramatique.</div>
+<div class="astuce"><strong>Astuce de pro :</strong> commencez sur un detail intrigant, qui donne envie de comprendre ou l'on se trouve.</div>
+<div class="erreur"><strong>Erreur a eviter :</strong> reveler trop tot. Gardez le mystere quelques secondes avant d'ouvrir sur le decor.</div></div>
+
+<div class="fiche"><h3>3. L'orbite hero</h3>
+<div class="row"><span class="lab">Effet :</span> le drone tourne a 360 degres autour de vous tandis que le decor defile en arriere-plan. C'est le plan signature des sommets de montagne et des lieux uniques, celui qui fait dire "comment as-tu filme ca ?".</div>
+<div class="row"><span class="lab">Placement :</span> tenez-vous au centre, avec un espace bien degage tout autour, sur tout le cercle que parcourra le drone.</div>
+<div class="row"><span class="lab">Tags :</span> Orbite (41), ou Orbite (41) pour une version plus energique. Une orbite lente et constante donne le rendu le plus cinematique.</div>
+<div class="astuce"><strong>Astuce de pro :</strong> restez immobile ou faites un geste tres lent, et laissez le drone faire tout le travail. Votre calme contraste avec le mouvement.</div>
+<div class="erreur"><strong>Erreur a eviter :</strong> orbiter trop pres. Le decor defile alors trop vite et donne une sensation de tournis desagreable.</div></div>
+
+<div class="fiche"><h3>4. Le suivi de marche (travelling)</h3>
+<div class="row"><span class="lab">Effet :</span> le drone vous accompagne pendant que vous marchez vers un point d'interet. Il cree une puissante sensation de voyage et de progression.</div>
+<div class="row"><span class="lab">Placement :</span> choisissez un chemin bien degage devant vous ; le drone vous suit de cote ou de face.</div>
+<div class="row"><span class="lab">Tags :</span> Travelling (42), en plan Americain (32) ou Ensemble (34). Marchez d'un pas regulier, sans a-coups.</div>
+<div class="astuce"><strong>Astuce de pro :</strong> marchez vers quelque chose de precis — une cascade, un sommet, une porte. Cette destination donne une direction et un sens a la scene.</div>
+<div class="erreur"><strong>Erreur a eviter :</strong> changer brusquement de direction, ce qui rend le suivi saccade et casse la fluidite.</div></div>
+
+<div class="fiche"><h3>5. La sequence voyage complete (macro)</h3>
+<div class="row"><span class="lab">Effet :</span> une veritable mini-histoire racontee en un seul tag : presentation du decor, marche, moment hero, et dronie final. C'est une recette ideale pour resumer toute une sortie en quelques secondes soignees.</div>
+<div class="row"><span class="lab">Macro (tag 11) :</span> Plan large (4 s), puis Marche (6 s), puis Orbite (8 s), puis Immobilier (6 s).</div>
+<div class="astuce"><strong>Astuce de pro :</strong> montrez le tag au depart, rangez la carte, et concentrez-vous sur le fait de jouer la scene naturellement.</div>
+<div class="erreur"><strong>Erreur a eviter :</strong> regler des durees trop courtes. Chaque plan a besoin de respirer ; mieux vaut un peu trop long que trop court.</div></div>
+
+<div class="fiche"><h3>6. Le sport / action</h3>
+<div class="row"><span class="lab">Effet :</span> le drone vous suit de pres et de maniere reactive pendant une activite rapide. Il capte l'energie et l'intensite du mouvement.</div>
+<div class="row"><span class="lab">Placement :</span> un espace tres degage et une trajectoire previsible sont indispensables.</div>
+<div class="row"><span class="lab">Tags :</span> Sport (4), en plan Americain (32).</div>
+<div class="astuce"><strong>Astuce de pro :</strong> repetez le parcours une premiere fois a vide, sans filmer, pour verifier que le suivi accroche bien avant de vous lancer pour de vrai.</div>
+<div class="erreur"><strong>Erreur a eviter :</strong> filmer dans une zone frequentee. Le suivi rapide exige imperativement un espace vide de monde.</div></div>
+
+<div class="fiche"><h3>7. Tour immobilier (facade)</h3>
+<div class="row"><span class="lab">Effet :</span> montrer un bien sous son meilleur jour : d'abord la facade, puis une revelation montante qui devoile le terrain et l'environnement.</div>
+<div class="row"><span class="lab">Placement :</span> placez-vous a l'entree comme point de reference d'echelle ; le drone fait face a la facade.</div>
+<div class="row"><span class="lab">Tags :</span> Ensemble (34) puis Revelation (43). Une lumiere rasante du matin ou du soir fait ressortir le relief.</div>
+<div class="astuce"><strong>Astuce de pro :</strong> un bien revele en montant parait plus grand et plus prestigieux. La montee flatte toujours l'architecture.</div>
+<div class="erreur"><strong>Erreur a eviter :</strong> filmer en plein midi. La lumiere verticale est plate et aplatit le bati, qui perd tout relief.</div></div>
+
+<div class="fiche"><h3>8. Le portrait cinematique</h3>
+<div class="row"><span class="lab">Effet :</span> un gros plan stable sur vous, parfait pour une introduction de chaine, un message a la camera ou une presentation.</div>
+<div class="row"><span class="lab">Placement :</span> choisissez un fond degage et esthetique derriere vous ; le drone reste fixe a hauteur de votre visage.</div>
+<div class="row"><span class="lab">Tags :</span> Presentation (0) pour vous verrouiller, puis Gros plan (31) suivi de Statique (40) pour bien stabiliser le plan.</div>
+<div class="astuce"><strong>Astuce de pro :</strong> laissez un peu d'espace au-dessus de votre tete pour un cadrage propre et professionnel.</div>
+<div class="erreur"><strong>Erreur a eviter :</strong> un fond charge et encombre qui detourne l'attention de votre visage.</div></div>
+
+<div class="fiche"><h3>9. Le lever / coucher de soleil</h3>
+<div class="row"><span class="lab">Effet :</span> votre silhouette se decoupe devant le soleil tandis que le drone orbite lentement et que la lumiere doree defile. Un plan spectaculaire et emouvant.</div>
+<div class="row"><span class="lab">Placement :</span> placez-vous entre le drone et le soleil pour obtenir une belle silhouette.</div>
+<div class="row"><span class="lab">Tags :</span> Orbite (41), en rotation lente, pendant la golden hour (juste apres le lever ou avant le coucher).</div>
+<div class="astuce"><strong>Astuce de pro :</strong> le contre-jour cree une silhouette nette et dramatique, tres graphique.</div>
+<div class="erreur"><strong>Erreur a eviter :</strong> attendre la nuit. La lumiere chute tres vite a ces heures : filmez tot, sans trainer.</div></div>
+
+<div class="fiche"><h3>10. Le pull-back dramatique</h3>
+<div class="row"><span class="lab">Effet :</span> le drone recule et monte rapidement pour reveler l'immensite qui vous entoure. Un effet "waouh" garanti en fin de video.</div>
+<div class="row"><span class="lab">Placement :</span> tenez-vous seul dans un grand espace — une plage, une montagne, une ville vue d'en haut.</div>
+<div class="row"><span class="lab">Macro :</span> Gros plan (2 s) puis Immobilier (8 s). La montee est plus marquee que pour le dronie, pour un effet vertigineux.</div>
+<div class="astuce"><strong>Astuce de pro :</strong> gardez la pose jusqu'au bout. Le drone s'eloigne, mais vous restez le point d'ancrage immobile de l'image.</div>
+<div class="erreur"><strong>Erreur a eviter :</strong> bouger pendant le recul, ce qui casse l'effet de grandeur et de solitude.</div></div>
+
+<div class="fiche"><h3>11. Le fly-by (passage lateral)</h3>
+<div class="row"><span class="lab">Effet :</span> le drone passe sur le cote en vous gardant cadre, creant un sentiment de mouvement et d'energie.</div>
+<div class="row"><span class="lab">Placement :</span> restez immobile pendant que le drone glisse lateralement, toujours sur le cote, jamais au-dessus.</div>
+<div class="row"><span class="lab">Tags :</span> Travelling (42) ou Orbite (41). Un passage fluide et assez rapide accentue le dynamisme.</div>
+<div class="astuce"><strong>Astuce de pro :</strong> repetez le passage deux ou trois fois et gardez le meilleur au montage.</div>
+<div class="erreur"><strong>Erreur a eviter :</strong> faire passer le drone au-dessus de vous. Le passage doit toujours rester lateral, pour la securite.</div></div>
+
+<div class="fiche"><h3>12. La presentation produit / objet</h3>
+<div class="row"><span class="lab">Effet :</span> mettre en valeur un objet — un vehicule, une creation, du materiel — en le montrant sous tous ses angles.</div>
+<div class="row"><span class="lab">Placement :</span> posez l'objet dans un espace bien degage ; le drone orbite autour de lui.</div>
+<div class="row"><span class="lab">Tags :</span> Orbite (41) en cadrage Gros plan (31). Une orbite lente et un fond neutre subliment l'objet.</div>
+<div class="astuce"><strong>Astuce de pro :</strong> un objet pose sur un fond uni ressort infiniment mieux qu'au milieu du desordre.</div>
+<div class="erreur"><strong>Erreur a eviter :</strong> un fond encombre qui vole la vedette a l'objet que vous voulez mettre en avant.</div></div>
+
+<div class="fiche"><h3>13. Le before / after d'un lieu</h3>
+<div class="row"><span class="lab">Effet :</span> le meme plan large filme avant et apres une transformation — un chantier, un changement de saison, un amenagement. La comparaison est saisissante.</div>
+<div class="row"><span class="lab">Placement :</span> reperez un point de reference fixe et bien identifiable pour retrouver exactement le meme cadrage les deux fois.</div>
+<div class="row"><span class="lab">Tags :</span> Ensemble (34), au meme endroit, a deux moments differents.</div>
+<div class="astuce"><strong>Astuce de pro :</strong> notez la position et l'altitude exactes du premier vol pour pouvoir reproduire le second a l'identique.</div>
+<div class="erreur"><strong>Erreur a eviter :</strong> des cadrages differents entre les deux prises ; la comparaison perd alors tout son impact.</div></div>
+
+<div class="fiche"><h3>14. Le groupe / l'equipe</h3>
+<div class="row"><span class="lab">Effet :</span> un plan large d'un groupe de personnes, le drone se tenant a distance et de cote.</div>
+<div class="row"><span class="lab">Placement :</span> rassemblez le groupe ; le drone reste bien en retrait, a une hauteur securitaire.</div>
+<div class="row"><span class="lab">Tags :</span> Ensemble (34), avec une distance suffisante pour cadrer tout le monde sans jamais survoler.</div>
+<div class="astuce"><strong>Astuce de pro :</strong> faites faire un geste collectif au groupe — un saut, un signe de la main — pour animer le plan.</div>
+<div class="erreur"><strong>Erreur a eviter :</strong> s'approcher ou survoler le groupe, ce qui est formellement interdit. Le drone reste toujours a distance et de cote.</div></div>
+
+<div class="fiche"><h3>15. Le suivi velo / rando</h3>
+<div class="row"><span class="lab">Effet :</span> le drone vous accompagne sur un sentier ou une route, transmettant une sensation d'aventure et de liberte.</div>
+<div class="row"><span class="lab">Placement :</span> une trajectoire degagee et previsible ; le drone vous suit de cote.</div>
+<div class="row"><span class="lab">Tags :</span> Sport (4) pour le velo rapide, Travelling (42) pour la randonnee. Adaptez la vitesse a la votre et anticipez les virages.</div>
+<div class="astuce"><strong>Astuce de pro :</strong> un sentier qui serpente donne un suivi bien plus vivant et interessant qu'une longue ligne droite.</div>
+<div class="erreur"><strong>Erreur a eviter :</strong> les sous-bois denses, ou le drone risque de vous perdre de vue ou de heurter une branche.</div></div>
+
+<div class="fiche"><h3>16. Le teaser reseaux sociaux</h3>
+<div class="row"><span class="lab">Effet :</span> un format court et percutant pour Reels ou TikTok : un mouvement marquant condense en quelques secondes.</div>
+<div class="row"><span class="lab">Placement :</span> un seul lieu, un seul geste fort et lisible.</div>
+<div class="row"><span class="lab">Macro (tag 12) :</span> Gros plan (1 s), puis Orbite (4 s), puis Plan large (2 s) — sept secondes qui accrochent l'oeil.</div>
+<div class="astuce"><strong>Astuce de pro :</strong> placez le mouvement le plus fort dans les deux premieres secondes, car c'est la que se joue l'attention sur les reseaux.</div>
+<div class="erreur"><strong>Erreur a eviter :</strong> faire trop long. Au-dela de dix secondes, l'attention decroche sur les reseaux sociaux.</div></div>
+
+<div class="tip"><strong>Le conseil de pro qui change tout :</strong> filmez la meme action plusieurs fois de suite avec des tags differents — une fois en orbite, une fois en suivi, une fois en plan large. Au montage, vous disposerez ainsi de plusieurs angles de la meme scene, ce qui donne un resultat infiniment plus riche et professionnel qu'un plan unique.</div>
+
+<h2 id="captureauto">12. Capture Auto Intelligente</h2>
+<div class="image"><strong>Comme un photographe invisible</strong> qui se tiendrait a vos cotes et declencherait tout seul des qu'il vous voit parfaitement place. Vous bougez, le drone cadre, et il prend la photo au bon moment, sans que vous ayez a y penser. C'est la photographie sans les mains.</div>
+<p>La Capture Auto Intelligente prend des photos toute seule, aux moments ou la composition est belle, pendant que le drone vous suit. Son interet est de vous liberer completement : vous vous concentrez sur votre activite, et le drone moissonne pour vous une serie de beaux cliches que vous n'auriez jamais eu le temps de declencher manuellement.</p>
+<p><strong>Comment l'activer :</strong> faites un appui long sur le bouton photo. Il devient vert et affiche un compteur du nombre de photos prises. Pour la desactiver, refaites un appui long. Un simple appui court sur ce meme bouton prend, lui, une photo manuelle, comme d'habitude — les deux fonctions cohabitent.</p>
+<p><strong>Quand declenche-t-elle ?</strong> Le drone choisit ses moments selon deux criteres precis :</p>
+<ul>
+  <li><strong>Une belle composition :</strong> quand vous etes bien centre dans l'image et a bonne distance, ni trop loin ni trop pres. C'est l'instant ou le cadrage est naturellement reussi.</li>
+  <li><strong>La fin d'un mouvement :</strong> juste apres une orbite, une revelation ou une approche, au moment ou le drone se stabilise. C'est tres souvent la que se trouve le plus beau cadre de toute la sequence.</li>
+</ul>
+<div class="scene"><div class="titre">Le bon moment pour l'utiliser</div>
+<p>Vous etes sur un point de vue et vous voulez quelques beaux portraits de vous dans le decor. Plutot que de jongler entre la pose et le telephone, vous activez la Capture Auto, puis vous lancez une orbite. Pendant que le drone tourne lentement autour de vous, il declenche tout seul aux meilleurs instants. Quand l'orbite est finie, vous avez une serie de portraits sous differents angles, et vous n'avez pas touche le telephone une seule fois. Il ne vous reste qu'a choisir les meilleurs.</p></div>
+<div class="tip">Un delai minimum de trois secondes separe deux photos automatiques, ce qui evite les rafales inutiles. Et la Capture Auto ne se declenche jamais pendant un enregistrement video, pour ne pas perturber votre film.</div>
+
+<h2 id="carte">13. Carte et navigation</h2>
+<p>Une carte vous montre en temps reel la position du drone et celle du point de decollage. C'est un repere precieux pour garder conscience de l'endroit ou se trouve votre appareil, surtout quand il s'eloigne ou qu'il est haut dans le ciel.</p>
+<ul>
+  <li><strong>La mini-carte :</strong> le bouton MAP, dans la barre du haut, affiche une petite carte sur le cote de l'ecran de vol, sans masquer l'image. Re-appuyez sur MAP pour la cacher quand vous n'en avez plus besoin.</li>
+  <li><strong>Le plein ecran :</strong> la petite fleche dans le coin de la mini-carte l'ouvre en grand. Vous disposez alors d'un bouton pour recentrer instantanement la vue sur le drone, pratique s'il s'est eloigne.</li>
+</ul>
+<p>La carte a besoin d'une connexion Internet la premiere fois pour telecharger les fonds de carte de la region. Une fois charges, ils sont conserves en memoire et s'affichent ensuite meme sans reseau.</p>
+
+<h2 id="album">14. Album du drone (photos)</h2>
+<p>Apres le tournage, vous pouvez recuperer les photos prises par le drone directement sur votre telephone, puis les partager, sans passer par un ordinateur.</p>
+<p><strong>Pour ouvrir l'album :</strong> touchez le bouton engrenage, puis Album. La phototheque affiche alors la liste des photos stockees sur la carte du drone, avec leurs apercus, pour que vous puissiez les parcourir.</p>
+<p><strong>Pour telecharger et partager :</strong> touchez une photo. Elle se telecharge sur votre telephone (en pleine resolution, ce qui prend quelques secondes selon sa taille), puis le menu de partage Android s'ouvre automatiquement. Vous choisissez alors la destination : reseaux sociaux, courriel, messagerie, impression, etc.</p>
+<div class="warn"><strong>Un point important a comprendre :</strong> ouvrir l'album fait passer le drone en mode lecture, ce qui <strong>coupe le flux video en direct</strong>. C'est pourquoi l'album s'utilise apres le vol, une fois le drone pose, et non pendant que vous filmez. Pensez a fermer l'album pour retrouver le pilotage et l'image en direct.</div>
+
+<h2 id="perso">15. Sujet personnalise</h2>
+<p>Dans les Reglages, sous "Sujet a suivre", au-dela des choix rapides (Personne, Animal, Vehicule, Tout) presentes a la section 3, vous disposez d'un mode <strong>Personnalise</strong> plus fin. Il vous permet de cocher exactement, dans une liste, ce que le drone doit chercher automatiquement : personne, velo, voiture, moto, bus, camion, bateau, chat, chien, cheval.</p>
+<p>L'interet est de concentrer l'attention du drone sur un type precis de sujet, en ignorant tout le reste.</p>
+<div class="scene"><div class="titre">Un exemple concret</div>
+<p>Vous filmez une course de motos sur un circuit. Si vous laissez le reglage par defaut, le drone risque de s'accrocher aux spectateurs ou aux commissaires de piste. En passant en mode Personnalise et en cochant uniquement "moto", vous lui dites de ne s'interesser qu'aux motos : il ignore tout le reste et reste concentre sur l'action qui vous interesse. Et bien sur, comme toujours, vous pouvez a tout instant toucher du doigt une cible precise a l'ecran, quel que soit le reglage choisi.</p></div>
+
+<h2 id="montage">16. Montage automatique (IA)</h2>
+<div class="image"><strong>Comme un monteur professionnel qui regarderait toutes vos rushes a votre place :</strong> l'intelligence artificielle analyse vos plans, repere les meilleurs moments — ceux ou votre sujet est bien present et bien cadre — et les assemble en un clip rythme. Vous obtenez une video montee sans avoir a apprendre un logiciel de montage.</p></div>
+<p>CineFlight Solo peut donc monter vos videos tout seul. Mais avant de pouvoir monter, il faut d'abord amener les videos du drone sur le telephone. Voici les deux methodes, de la plus rapide a la plus universelle.</p>
+
+<h3>D'abord : recuperer vos videos sur le telephone</h3>
+<p>Les videos tournees par le drone sont enregistrees sur sa carte memoire. Le moyen le plus rapide de les transferer est <strong>QuickTransfer</strong>, une fonction de l'application DJI Fly : le telephone se connecte alors directement au drone en Wi-Fi, a tres haut debit, bien plus vite que par le canal de la radiocommande. Concretement : drone pose et allume, ouvrez DJI Fly, allez dans l'album, lancez QuickTransfer, et telechargez vos videos. Elles arrivent dans la galerie du telephone, et vous revenez ensuite dans CineFlight Solo pour les monter.</p>
+<p><strong>Autre methode, par les fichiers :</strong> dans l'ecran Montage, le bouton "Importer des videos" ouvre le selecteur de fichiers du telephone. Vous pouvez y choisir des videos depuis n'importe quelle source — la galerie, le dossier Telechargements, ou une carte memoire branchee sur le telephone via un petit adaptateur microSD vers USB-C. Pour de longues videos ou de gros fichiers, cette methode par carte est souvent la plus rapide de toutes.</p>
+
+<h3>Creer le montage</h3>
+<p>Ouvrez l'engrenage puis Montage. Cochez les videos que vous voulez monter : le numero qui apparait a cote de chacune indique son ordre dans le clip final, donc cochez-les dans l'ordre souhaite. Donnez un nom si vous le voulez, choisissez un style, puis lancez "Creer le montage". Une barre de progression vous indique l'avancement, car l'analyse prend un moment selon la longueur des videos.</p>
+<table>
+<tr><th>Style</th><th>Ce qu'il produit</th></tr>
+<tr><td>Best-of</td><td>Les meilleurs moments de tous vos clips, condenses en un seul clip rythme.</td></tr>
+<tr><td>Un par clip</td><td>Le meilleur passage de chaque clip choisi, pour que chacun soit represente.</td></tr>
+<tr><td>Adaptatif</td><td>Garde tout ce qui est de bonne qualite ; la duree finale s'adapte a vos images.</td></tr>
+</table>
+<p>Dans les trois cas, l'intelligence artificielle cherche les passages ou votre sujet est bien visible et bien cadre. Une fois le montage termine, vous pouvez le lire directement, le partager, et il s'ajoute a votre galerie. Vous retrouvez tous vos montages dans engrenage puis "Mes montages".</p>
+<div class="tip"><strong>Pour un montage plus pousse :</strong> CineFlight Solo fait l'assemblage automatique, mais si vous voulez retoucher finement — couper a l'image pres, ajouter des transitions, du texte anime, de la musique synchronisee ou des effets — partagez votre montage vers une application de montage dediee. CapCut est le plus complet et tres populaire, VN Video Editor est puissant et sans filigrane, InShot est simple et rapide pour les reseaux. Le bouton Partager envoie directement votre montage vers ces applications, toutes gratuites.</div>
+
+<h2 id="cablecam">17. Rail Cable-Cam et Hyperlapse</h2>
+<div class="image"><strong>Le Rail Cable-Cam, c'est une tyrolienne invisible :</strong> le drone glisse en ligne droite parfaite d'un point A a un point B, comme s'il etait suspendu a un cable tendu entre les deux, qu'on ne verrait pas. Le resultat est un travelling d'une regularite impossible a obtenir a la main, et qui plus est parfaitement repetable.</div>
+<p>C'est l'outil de choix pour un mouvement lateral lisse et elegant. Vous definissez vous-meme les deux extremites du "cable", et le drone se charge de glisser entre elles de facon impeccable.</p>
+
+<h3>Les trois boutons du rail</h3>
+<table>
+<tr><th>Bouton</th><th>Ce qu'il fait</th></tr>
+<tr><td>Rail A</td><td>Memorise le point de DEPART. Placez d'abord le drone la ou vous voulez que le mouvement commence, puis touchez Rail A : le bouton devient vert pour confirmer.</td></tr>
+<tr><td>Rail B</td><td>Memorise le point d'ARRIVEE. Deplacez le drone jusqu'a l'endroit ou le mouvement doit finir, puis touchez Rail B : il devient vert.</td></tr>
+<tr><td>Go</td><td>Lance le mouvement : le drone glisse tout seul de A vers B. Le bouton devient rouge (Stop). Touchez-le a nouveau pour arreter a tout moment.</td></tr>
+</table>
+
+<h3>Le suivi pendant le rail</h3>
+<p>Le rail devient vraiment cinematographique grace au suivi. Si une personne (ou le sujet que vous avez choisi) est detectee a l'image pendant que le drone glisse, il la garde automatiquement cadree : il tourne son nez et incline sa camera pour la suivre, tout en continuant sa course vers B. Vous obtenez ainsi un travelling lateral ou le sujet reste au centre du cadre pendant que le decor defile — un effet tres professionnel. L'ecran affiche alors "RAIL + SUIVI". S'il n'y a aucun sujet, il affiche simplement "RAIL A vers B" et pointe vers la destination. La distance restante jusqu'a B s'affiche aussi et diminue a mesure que le drone approche ; il ralentit tout seul dans les derniers metres et s'arrete en douceur a l'arrivee.</p>
+
+<h3>L'Hyperlapse (timelapse en mouvement)</h3>
+<p>L'Hyperlapse est une fonction qui se greffe sur le rail. Pendant que le drone glisse, il prend une serie de photos a intervalle regulier. Accelerees ensuite en video, ces photos donnent l'effet spectaculaire du monde qui s'anime et se deforme autour de votre sujet, avec une fluidite impossible autrement.</p>
+<ul>
+  <li><strong>Armer :</strong> faites un appui long sur Go. Le bouton devient violet : l'Hyperlapse est arme pour le prochain rail.</li>
+  <li><strong>Lancer :</strong> touchez Go normalement (appui court). Le rail demarre et, en meme temps, une photo est prise toutes les deux secondes. Le compteur s'affiche sur le bouton photo.</li>
+  <li><strong>Recuperer :</strong> les photos sont sur la carte du drone. Ouvrez l'Album pour les telecharger, ou, plus rapide pour les series nombreuses, sortez la carte et branchez-la sur le telephone via un adaptateur.</li>
+</ul>
+<p>Pour assembler le timelapse final, utilisez une application gratuite comme CapCut ou l'application Photos de votre telephone : selectionnez la serie de photos, choisissez la vitesse, et exportez la video.</p>
+<div class="scene"><div class="titre">Recette : le travelling de presentation</div>
+<p>Vous voulez un plan d'ouverture digne du cinema. Placez le drone a une extremite de la scene et touchez Rail A. Deplacez-le a l'autre extremite et touchez Rail B. Cadrez votre sujet, puis touchez Go : le drone glisse lentement d'un bout a l'autre en gardant le sujet bien au centre. En un seul geste, vous obtenez un mouvement d'une elegance que meme un operateur experimente aurait du mal a reproduire a la main.</p></div>
+<div class="warn"><strong>Securite — la priorite du retour maison :</strong> si le retour automatique (RTH) s'enclenche pendant un rail, qu'il soit declenche par vous ou par une batterie faible, le rail et l'Hyperlapse s'arretent immediatement et le drone reprend sa route vers la maison sans interference. L'ecran affiche "RTH - rail interrompu". C'est une securite voulue : le retour a la maison passe toujours avant tout le reste.</div>
+
+<h2 id="reco">18. Reconnaissance d'un sujet (menu "Preparer un tournage")</h2>
+<div class="image"><strong>Changement complet de role :</strong> dans toutes les sections precedentes, le drone vous filmait <em>vous</em>, une personne en mouvement. Ici, il devient un arpenteur. Il fait methodiquement le tour d'un <em>objet</em> precis et immobile — un batiment, un pont, une berge, un barrage — pour le photographier sous tous ses angles. Ensuite, l'application calcule la position exacte de cet objet et prepare des plans de tournage adaptes. C'est un usage de reperage et de cartographie, a faire en exterieur avec un bon signal GPS.</div>
+<div class="tip"><strong>Suivi ou reconnaissance : quelle difference ?</strong> Le suivi (sections 1 a 17) sert a filmer une <em>personne</em> qui bouge, en restant braque sur elle. La reconnaissance (cette section) sert a cartographier un <em>objet</em> fixe, en tournant autour. Ce sont deux metiers distincts du meme drone, et ils se completent : l'un pour les gens, l'autre pour les lieux et les structures.</div>
+
+<h3>Etape 1 — Definir un sujet (menu "Preparer un tournage")</h3>
+<p>Tout commence par dire au drone ce qu'il doit reconnaitre, en le dessinant sur une carte.</p>
+<div class="step"><span class="step-num">1</span><span class="step-txt">Ouvrez le menu <strong>Preparer un tournage</strong> puis <strong>Definir un sujet</strong>, et choisissez un type : Batiment, Pont, Berge ou ligne, ou Barrage. Notez qu'<strong>aucun type n'est selectionne par defaut</strong> : vous devez en choisir un explicitement. C'est voulu, pour vous obliger a confirmer ce que vous reconnaissez et eviter toute erreur de manipulation.</span></div>
+<div class="step"><span class="step-num">2</span><span class="step-txt">Touchez la carte pour dessiner le sujet, comme on entoure une zone au crayon sur un plan. Pour un batiment, vous tracez un contour ferme (au moins trois points). Pour un pont, une berge ou un barrage, vous tracez une ligne (au moins deux points).</span></div>
+<div class="step"><span class="step-num">3</span><span class="step-txt">Si vous vous trompez, <strong>Annuler</strong> retire le dernier point pose, et <strong>Effacer</strong> recommence le trace a zero.</span></div>
+<div class="step"><span class="step-num">4</span><span class="step-txt">Touchez <strong>Generer</strong>. La mission de reconnaissance est creee. Point important : la hauteur du sujet est <strong>mesuree automatiquement</strong> a partir de donnees d'altitude (Google 3D Tiles). Vous n'avez aucune hauteur a deviner ni a saisir vous-meme, ce qui evite toute erreur dangereuse.</span></div>
+<div class="scene"><div class="titre">A quoi sert le "Decollage prevu" (optionnel mais tres utile)</div>
+<p>Avant meme de vous deplacer sur le terrain, vous aimeriez savoir si la mission sera realisable avec votre batterie. C'est exactement ce que permet le decollage prevu. Touchez le bouton <strong>Decollage</strong> — il passe au vert pour indiquer qu'il est arme — puis touchez la carte a l'endroit d'ou vous comptez faire decoller le drone.</p>
+<p>Au moment de generer, l'application calcule alors toute la mission : le trajet pour aller jusqu'au sujet, le tour complet du sujet, et le retour jusqu'au point de decollage. Elle compare ce total a ce que votre batterie peut faire en securite, et vous donne un verdict franc : <strong>"ca passe"</strong> ou <strong>"trop loin"</strong>. Vous savez ainsi, depuis chez vous, si l'operation est faisable, et vous evitez de vous deplacer pour rien.</p></div>
+
+<h3>Etape 2 — Verifier la mission sur place (menu "Preparer un tournage")</h3>
+<p>Une fois arrive sur le terrain, vous decollez manuellement et vous stabilisez le drone juste au-dessus de votre point de depart. C'est a ce moment precis que la verification prend tout son sens, car le drone connait alors sa vraie position.</p>
+<div class="step"><span class="step-num">1</span><span class="step-txt">Dans le menu <strong>Preparer un tournage</strong>, touchez <strong>Verifier et lancer</strong>. L'application releve la position reelle du drone — ce point devient la "maison", l'endroit ou il devra revenir — et calcule la mission complete a partir de la.</span></div>
+<div class="step"><span class="step-num">2</span><span class="step-txt">Le resultat s'affiche : soit <strong>"Mission complete - OK"</strong>, accompagne des distances et de la duree estimee, soit <strong>"REFUSEE"</strong> si le sujet se revele trop eloigne du point de decollage pour garantir un retour en securite avec la batterie disponible.</span></div>
+<div class="warn"><strong>Pour que VERIF fonctionne, trois conditions doivent etre reunies :</strong> une reconnaissance doit avoir ete chargee, le drone doit etre en vol, et son GPS doit etre fiable. Si l'une manque, l'application vous le dira : decollez et stabilisez le drone au-dessus du point de depart avant de relancer la verification.</div>
+
+<h3>Etape 3 — Lancer le vol</h3>
+<p>Si la mission est validee, le bouton "Lancer le vol" apparait. C'est le moment ou le drone va voler de facon autonome, alors prenez ces verifications au serieux.</p>
+<div class="step"><span class="step-num">1</span><span class="step-txt">Touchez <strong>"Lancer le vol"</strong>, puis confirmez les points de securite affiches : l'espace est-il degage et le vol legal ? Le retour maison est-il arme ? Avez-vous un doigt pret sur l'arret d'urgence ?</span></div>
+<div class="step"><span class="step-num">2</span><span class="step-txt">Touchez <strong>"DECOLLER"</strong>. Le drone execute alors la mission tout seul. Sa progression s'affiche en continu ("Waypoint X en cours"), et le bouton <strong>ARRET / RTH</strong> reste accessible a tout instant pour reprendre la main immediatement.</span></div>
+<div class="warn"><strong>Securite du vol autonome — a lire absolument.</strong> Avant tout premier vol reel de ce type, testez la mission en simulateur DJI : cela valide tout le deroulement sans aucun risque physique. Pour le vol reel, choisissez un lieu degage et legal, armez le retour maison, gardez un doigt sur l'arret d'urgence, respectez le plafond legal de 120 m, et conservez le drone a vue en permanence.</div>
+
+<h3>Etape 4 — Recuperer et analyser les photos (option avancee)</h3>
+<p>Le vol termine, les photos de reconnaissance sont sur la carte du drone. C'est l'ecran de mesure par photos qui les exploite. Cette mesure est desormais une <strong>option avancee</strong> : dans le menu "Preparer un tournage", depliez <strong>Avance</strong> puis <strong>Mesurer la scene avec des photos</strong>. La voie normale reste "Definir un sujet" sur la carte, qui donne deja la position et la hauteur.</p>
+<div class="step"><span class="step-num">1</span><span class="step-txt"><strong>Charger tout le dossier (100MEDIA) :</strong> mettez la carte du drone dans un lecteur branche au telephone, puis pointez une seule fois le dossier <strong>100MEDIA</strong> — toutes les photos du dossier se chargent alors d'un coup, sans avoir a les cocher une par une. Le bouton <strong>Choisir les photos</strong> reste disponible si vous preferez une selection manuelle.</span></div>
+<div class="step"><span class="step-num">2</span><span class="step-txt">La position du sujet se remplit <strong>automatiquement</strong> a partir des coordonnees GPS inscrites dans les photos. Si elles en sont depourvues, vous pouvez la saisir a la main.</span></div>
+<div class="step"><span class="step-num">3</span><span class="step-txt">Touchez <strong>Calculer la position</strong> (il faut au moins six photos). Les photos partent vers le serveur en pleine resolution ; celui-ci calcule la position exacte du sujet, puis prepare la mission de tournage correspondante.</span></div>
+<div class="warn"><strong>Une condition incontournable : l'exterieur.</strong> La mesure par photos a besoin de photos comportant des coordonnees GPS, donc prises dehors avec un signal actif. A l'interieur, sans GPS, elle ne peut pas fonctionner — ce n'est pas un defaut de l'application, c'est une limite physique de la methode, au meme titre qu'un GPS de voiture ne fonctionne pas dans un tunnel.</div>
+
+<h3>Effacer les photos de la carte</h3>
+<p>Une fois les photos correctement envoyees au serveur, le bouton "Effacer les photos de la carte SD" devient actif. Pour eviter toute suppression accidentelle, une <strong>double confirmation</strong> est demandee : d'abord "les photos ont-elles bien ete envoyees ?", puis "supprimer definitivement ?". Tant que l'envoi n'a pas reussi, le bouton reste grise : il est tout simplement impossible d'effacer la carte avant d'avoir mis vos photos en securite sur le serveur.</p>
+
+<h2 id="mouvements">19. Mouvements cinematographiques (CineFlight Explorer)</h2>
+<p>CineFlight Explorer planifie pour vous des <strong>mouvements de camera professionnels</strong> a partir d'un lieu sur la carte. Vous choisissez un mouvement, vous designez le sujet, et l'application genere une mission de vol prete a executer. Le terrain reel est verifie (Google 3D Tiles) avant validation : si un mouvement n'est pas sur a cet endroit, il est refuse avec une explication.</p>
+
+<div class="tip"><strong>Trois familles.</strong> Les mouvements <em>paysage</em> exploitent l'espace ouvert et le relief (grands rayons, montagnes, lacs). Les mouvements <em>urbain</em> travaillent pres des facades et dans les rues (courte portee). Les mouvements <em>mixte</em> fonctionnent dans les deux. Avant de filmer, l'analyse d'environnement vous indique quelle famille convient au lieu vise.</div>
+
+<h3>Les reveals - faire apparaitre un paysage</h3>
+
+<div class="fiche">
+<div class="titre">Reveal de facade <span class="tag-id">mixte</span></div>
+<p>Le drone monte le long d'un batiment : sol &rarr; facade &rarr; toit &rarr; leger recul.</p>
+<div class="row"><span class="lab">Pour quoi</span> Eglise, immeuble patrimonial, tour, hotel de ville : montrer un edifice du pied au sommet.</div>
+<div class="row"><span class="lab">Effet</span> On decouvre l'architecture verticale, puis le recul replace le batiment dans son contexte.</div>
+</div>
+
+<div class="fiche">
+<div class="titre">Reveal d'avant-plan <span class="tag-id">paysage</span></div>
+<p>Le sujet est cache par un element proche (arbres, rocher, colline), puis le drone se deplace et le sujet apparait.</p>
+<div class="row"><span class="lab">Pour quoi</span> Phare derriere des arbres, chateau derriere une rangee d'arbres, chalet devoile.</div>
+<div class="row"><span class="lab">3 variantes</span> Lateral (translation), montee (passe au-dessus du masque), avancee (contourne).</div>
+</div>
+
+<div class="fiche">
+<div class="titre">Reveal celeste <span class="tag-id">mixte</span></div>
+<p>Montee verticale pure pendant que la camera se releve (-90&deg; vers -15&deg;).</p>
+<div class="scene">Au debut, la camera regarde le sol : on ne voit qu'un detail. Le drone monte, la camera se releve, et l'horizon, le lac, les montagnes apparaissent. Mystere &rarr; decouverte &rarr; grandeur.</div>
+<div class="row"><span class="lab">Pour quoi</span> Lac, belvedere, phare, sommet : l'un des plans les plus epiques.</div>
+</div>
+
+<div class="fiche">
+<div class="titre">Double reveal <span class="tag-id">paysage</span></div>
+<p>Deux decouvertes successives : un premier masque revele le sujet, un second revele l'arriere-plan.</p>
+<div class="scene">Foret devant &rarr; le phare apparait &rarr; l'ocean et le littoral apparaissent. Le spectateur decouvre en deux temps.</div>
+<div class="row"><span class="lab">Pour quoi</span> Sites a deux plans naturels : foret + crete + sujet, comme dans les documentaires haut de gamme.</div>
+</div>
+
+<div class="fiche">
+<div class="titre">Reveal miroir <span class="tag-id">paysage</span></div>
+<p>Au-dessus d'une eau calme : la camera regarde d'abord le reflet, puis se releve pour reveler le sujet reel.</p>
+<div class="scene">On croit regarder des montagnes - c'etait leur reflet dans le lac. La camera se releve : le sujet reel et le paysage se devoilent.</div>
+<div class="warn"><strong>Securite eau :</strong> Google 3D Tiles n'est pas fiable sur l'eau. Vous fournissez le niveau de l'eau (ou un point sur la rive). Le drone garde toujours une marge au-dessus de la surface.</div>
+</div>
+
+<h3>Les orbites et courbes - tourner, traverser, contourner</h3>
+<p>Ces mouvements jouent sur la parallaxe : en se deplacant autour du sujet, l'arriere-plan change en continu, ce qui cree une profondeur. Camera toujours verrouillee sur le sujet.</p>
+
+<div class="fiche">
+<div class="titre">Arc panoramique <span class="tag-id">paysage</span></div>
+<p>Un grand arc lateral (90&deg; a 180&deg;) autour du sujet, qui reste centre.</p>
+<div class="row"><span class="lab">Pour quoi</span> Montagne, falaise, phare, chateau, grand batiment isole.</div>
+</div>
+
+<div class="fiche">
+<div class="titre">Orbite elliptique <span class="tag-id">paysage</span></div>
+<p>Une ellipse autour du sujet : la distance varie en continu, loin &rarr; proche &rarr; loin.</p>
+<div class="row"><span class="lab">Pour quoi</span> Phare (cote mer loin, facade proche, cote terre loin), chateau (cour, facade, vallee).</div>
+<div class="row"><span class="lab">Effet</span> Variation naturelle de cadrage sans zoom : le sujet grossit puis rapetisse.</div>
+</div>
+
+<div class="fiche">
+<div class="titre">S-curve cinematique <span class="tag-id">paysage</span></div>
+<p>Une courbe en S ouverte devant le sujet : arrivee loin d'un cote, passage proche au centre, sortie loin de l'autre cote.</p>
+<div class="row"><span class="lab">Pour quoi</span> Donner l'impression que la camera traverse et decouvre le lieu, plutot que de tourner autour.</div>
+<div class="row"><span class="lab">Difference</span> Mouvement ouvert (entree et sortie distinctes), tres organique.</div>
+</div>
+
+<div class="fiche">
+<div class="titre">Figure en huit panoramique <span class="tag-id">paysage</span></div>
+<p>Le drone decrit un huit autour du sujet : lobe gauche, croisement, lobe droit.</p>
+<div class="row"><span class="lab">Pour quoi</span> Voir le sujet sous plusieurs angles (gauche, face, droite) dans un mouvement continu.</div>
+<div class="warn"><strong>Securite :</strong> au croisement, le drone reste a une distance de securite du sujet.</div>
+</div>
+
+<div class="fiche">
+<div class="titre">Spiral reveal <span class="tag-id">paysage</span></div>
+<p>Une helice : le drone tourne autour du sujet tout en montant (le paysage devient la vedette).</p>
+<div class="row"><span class="lab">Reglages</span> Rayon constant (cylindrique) ou croissant (evasee), nombre de tours (1/2 a 2).</div>
+</div>
+
+<div class="fiche">
+<div class="titre">Orbite ascendante <span class="tag-id">mixte</span></div>
+<p>Une orbite a rayon constant avec une montee legere : le sujet reste dominant.</p>
+<div class="row"><span class="lab">Difference</span> Ici le sujet reste la vedette (montee discrete) ; dans Spiral, c'est le paysage.</div>
+<div class="row"><span class="lab">Pour quoi</span> Eglise, phare : sujet en orbite pendant que le contexte apparait doucement.</div>
+</div>
+
+<h3>Les approches et grues - avancer, reculer, s'elever</h3>
+
+<div class="fiche">
+<div class="titre">Approche monumentale <span class="tag-id">mixte</span></div>
+<p>Le drone avance lentement en ligne droite vers le sujet, qui grossit dans l'image.</p>
+<div class="row"><span class="lab">Pour quoi</span> Montagne, phare, eglise, chateau, barrage, belvedere : puissance, echelle, suspense.</div>
+<div class="row"><span class="lab">Arret</span> A la distance que vous fixez, jamais plus pres que la distance de securite.</div>
+</div>
+
+<div class="fiche">
+<div class="titre">Grue naturelle (jib) <span class="tag-id">paysage</span></div>
+<p>Recul + montee simultanes, comme une grue de cinema. Camera verrouillee sur le sujet.</p>
+<div class="scene">Depart pres d'un chalet &rarr; le drone recule en montant &rarr; apparaissent le lac, puis la foret, puis les montagnes. Translation + elevation = volume et profondeur.</div>
+<div class="row"><span class="lab">Pour quoi</span> Tres reutilisable : chalet, phare, monument, belvedere - presque partout en espace ouvert.</div>
+</div>
+
+<div class="fiche">
+<div class="titre">Travelling de crete <span class="tag-id">paysage</span></div>
+<p>Le drone suit une ligne de crete a distance laterale constante.</p>
+<div class="row"><span class="lab">Pour quoi</span> Montagnes, collines, falaises : sensation d'exploration le long du relief.</div>
+<div class="row"><span class="lab">3 regards</span> Vallee (vers le bas), sommet (vers la crete), oblique (entre les deux).</div>
+<div class="warn"><strong>Securite pente :</strong> au-dela de 50 % de pente, refus. Entre 35 et 50 %, l'altitude est lissee et un avertissement s'affiche.</div>
+</div>
+
+<div class="fiche">
+<div class="titre">Roller landscape <span class="tag-id">paysage</span></div>
+<p>Le drone suit le relief comme des montagnes russes, en gardant une marge constante au-dessus du sol et des arbres.</p>
+<div class="row"><span class="lab">Pour quoi</span> Vallees, collines, reliefs : surprise, profondeur, sensation de vitesse.</div>
+</div>
+
+<h3>En ville - courte portee, facades, edifices</h3>
+<p>En milieu urbain dense, les grands rayons ne conviennent pas. Les mouvements urbains exploitent les facades a courte portee, avec une securite fondee sur la distance horizontale au batiment.</p>
+
+<div class="fiche">
+<div class="titre">Grue urbaine <span class="tag-id">urbain</span></div>
+<p>La grue en version courte : devant une facade, le drone monte en reculant legerement, revele le toit puis l'horizon.</p>
+<div class="row"><span class="lab">Pour quoi</span> Eglise, hotel de ville, tour, immeuble historique. Tres sure, tres efficace.</div>
+<div class="row"><span class="lab">Distances</span> Depart 8-15 m de la facade, recul jusqu'a 20-40 m.</div>
+<div class="warn"><strong>Securite facade :</strong> distance minimale de 10 m recommandee ; refus en deca de 8 m. Le drone reste devant la facade, jamais au-dessus du volume du batiment.</div>
+</div>
+
+<h3>Mouvement avance - validation pilote obligatoire</h3>
+
+<div class="fiche">
+<div class="titre">Traversee de porte naturelle <span class="tag-id">avance</span></div>
+<p>Le drone franchit un passage resserre (arche, corridor d'arbres, porte monumentale, passage entre falaises) puis revele le paysage derriere.</p>
+<div class="row"><span class="lab">Pour quoi</span> Arche rocheuse &rarr; ocean, corridor forestier &rarr; lac, porte historique &rarr; chateau.</div>
+<div class="warn"><strong>Le plus conservateur de tous.</strong> Google 3D Tiles voit le dessus d'un passage, pas son ouverture. Vous declarez vous-meme la largeur et la hauteur. Refus si largeur ou hauteur &lt; 5 m, ou si le GPS / le vent ne sont pas confirmes bons. <strong>Cette recette ne valide pas physiquement le passage : vous devez confirmer visuellement qu'il est libre avant de lancer.</strong></div>
+</div>
+
+<h3>Tableau - mouvement et meilleure utilisation</h3>
+<table style="width:100%; border-collapse:collapse; margin:16px 0; font-size:14px;">
+<tr style="background:#1c1c1e; color:#fff;">
+<th style="padding:9px 11px; text-align:left;">Mouvement</th>
+<th style="padding:9px 11px; text-align:left;">Ce qu'il fait</th>
+<th style="padding:9px 11px; text-align:left;">Meilleure utilisation</th>
+<th style="padding:9px 11px; text-align:left;">Env.</th>
+</tr>
+<tr><td style="padding:8px 11px; border-bottom:1px solid #e0e0e0; font-weight:600;">Reveal de facade</td><td style="padding:8px 11px; border-bottom:1px solid #e0e0e0;">Monte le long d'un edifice, sol vers toit, recul</td><td style="padding:8px 11px; border-bottom:1px solid #e0e0e0;">Eglise, tour, immeuble vus en entier</td><td style="padding:8px 11px; border-bottom:1px solid #e0e0e0;">mixte</td></tr>
+<tr><td style="padding:8px 11px; border-bottom:1px solid #e0e0e0; font-weight:600;">Reveal d'avant-plan</td><td style="padding:8px 11px; border-bottom:1px solid #e0e0e0;">Sujet cache par un element proche, puis revele</td><td style="padding:8px 11px; border-bottom:1px solid #e0e0e0;">Phare/chateau derriere arbres ou crete</td><td style="padding:8px 11px; border-bottom:1px solid #e0e0e0;">paysage</td></tr>
+<tr><td style="padding:8px 11px; border-bottom:1px solid #e0e0e0; font-weight:600;">Reveal celeste</td><td style="padding:8px 11px; border-bottom:1px solid #e0e0e0;">Montee verticale + camera qui se releve</td><td style="padding:8px 11px; border-bottom:1px solid #e0e0e0;">Lac, belvedere, sommet : plan epique</td><td style="padding:8px 11px; border-bottom:1px solid #e0e0e0;">mixte</td></tr>
+<tr><td style="padding:8px 11px; border-bottom:1px solid #e0e0e0; font-weight:600;">Double reveal</td><td style="padding:8px 11px; border-bottom:1px solid #e0e0e0;">Deux decouvertes successives (2 masques)</td><td style="padding:8px 11px; border-bottom:1px solid #e0e0e0;">Foret vers sujet vers arriere-plan</td><td style="padding:8px 11px; border-bottom:1px solid #e0e0e0;">paysage</td></tr>
+<tr><td style="padding:8px 11px; border-bottom:1px solid #e0e0e0; font-weight:600;">Reveal miroir</td><td style="padding:8px 11px; border-bottom:1px solid #e0e0e0;">Reflet sur l'eau, puis sujet reel revele</td><td style="padding:8px 11px; border-bottom:1px solid #e0e0e0;">Lac calme avec montagne ou phare reflete</td><td style="padding:8px 11px; border-bottom:1px solid #e0e0e0;">paysage</td></tr>
+<tr><td style="padding:8px 11px; border-bottom:1px solid #e0e0e0; font-weight:600;">Arc panoramique</td><td style="padding:8px 11px; border-bottom:1px solid #e0e0e0;">Grand arc lateral, sujet centre</td><td style="padding:8px 11px; border-bottom:1px solid #e0e0e0;">Montagne, falaise, phare, batiment isole</td><td style="padding:8px 11px; border-bottom:1px solid #e0e0e0;">paysage</td></tr>
+<tr><td style="padding:8px 11px; border-bottom:1px solid #e0e0e0; font-weight:600;">Orbite elliptique</td><td style="padding:8px 11px; border-bottom:1px solid #e0e0e0;">Ellipse : distance loin-proche-loin</td><td style="padding:8px 11px; border-bottom:1px solid #e0e0e0;">Cadrage variable sans zoom</td><td style="padding:8px 11px; border-bottom:1px solid #e0e0e0;">paysage</td></tr>
+<tr><td style="padding:8px 11px; border-bottom:1px solid #e0e0e0; font-weight:600;">S-curve</td><td style="padding:8px 11px; border-bottom:1px solid #e0e0e0;">Courbe en S ouverte devant le sujet</td><td style="padding:8px 11px; border-bottom:1px solid #e0e0e0;">Traverser un lieu de facon organique</td><td style="padding:8px 11px; border-bottom:1px solid #e0e0e0;">paysage</td></tr>
+<tr><td style="padding:8px 11px; border-bottom:1px solid #e0e0e0; font-weight:600;">Figure en huit</td><td style="padding:8px 11px; border-bottom:1px solid #e0e0e0;">Huit autour du sujet, plusieurs angles</td><td style="padding:8px 11px; border-bottom:1px solid #e0e0e0;">Parallaxe riche, mouvement croise</td><td style="padding:8px 11px; border-bottom:1px solid #e0e0e0;">paysage</td></tr>
+<tr><td style="padding:8px 11px; border-bottom:1px solid #e0e0e0; font-weight:600;">Spiral reveal</td><td style="padding:8px 11px; border-bottom:1px solid #e0e0e0;">Helice : tourne en montant (paysage vedette)</td><td style="padding:8px 11px; border-bottom:1px solid #e0e0e0;">Reveler le paysage en s'elevant</td><td style="padding:8px 11px; border-bottom:1px solid #e0e0e0;">paysage</td></tr>
+<tr><td style="padding:8px 11px; border-bottom:1px solid #e0e0e0; font-weight:600;">Orbite ascendante</td><td style="padding:8px 11px; border-bottom:1px solid #e0e0e0;">Orbite + montee legere (sujet vedette)</td><td style="padding:8px 11px; border-bottom:1px solid #e0e0e0;">Sujet dominant, contexte qui apparait</td><td style="padding:8px 11px; border-bottom:1px solid #e0e0e0;">mixte</td></tr>
+<tr><td style="padding:8px 11px; border-bottom:1px solid #e0e0e0; font-weight:600;">Approche monumentale</td><td style="padding:8px 11px; border-bottom:1px solid #e0e0e0;">Ligne droite vers le sujet, qui grossit</td><td style="padding:8px 11px; border-bottom:1px solid #e0e0e0;">Montagne, barrage, monument : echelle</td><td style="padding:8px 11px; border-bottom:1px solid #e0e0e0;">mixte</td></tr>
+<tr><td style="padding:8px 11px; border-bottom:1px solid #e0e0e0; font-weight:600;">Grue naturelle</td><td style="padding:8px 11px; border-bottom:1px solid #e0e0e0;">Recul + montee simultanes (jib)</td><td style="padding:8px 11px; border-bottom:1px solid #e0e0e0;">Chalet, phare, monument : volume</td><td style="padding:8px 11px; border-bottom:1px solid #e0e0e0;">paysage</td></tr>
+<tr><td style="padding:8px 11px; border-bottom:1px solid #e0e0e0; font-weight:600;">Travelling de crete</td><td style="padding:8px 11px; border-bottom:1px solid #e0e0e0;">Suit une crete a distance laterale constante</td><td style="padding:8px 11px; border-bottom:1px solid #e0e0e0;">Montagnes, falaises : relief</td><td style="padding:8px 11px; border-bottom:1px solid #e0e0e0;">paysage</td></tr>
+<tr><td style="padding:8px 11px; border-bottom:1px solid #e0e0e0; font-weight:600;">Roller landscape</td><td style="padding:8px 11px; border-bottom:1px solid #e0e0e0;">Suit le relief (montagnes russes)</td><td style="padding:8px 11px; border-bottom:1px solid #e0e0e0;">Vallees, collines : vitesse, profondeur</td><td style="padding:8px 11px; border-bottom:1px solid #e0e0e0;">paysage</td></tr>
+<tr><td style="padding:8px 11px; border-bottom:1px solid #e0e0e0; font-weight:600;">Grue urbaine</td><td style="padding:8px 11px; border-bottom:1px solid #e0e0e0;">Devant une facade : montee + leger recul</td><td style="padding:8px 11px; border-bottom:1px solid #e0e0e0;">Eglise, tour, edifice en ville</td><td style="padding:8px 11px; border-bottom:1px solid #e0e0e0;">urbain</td></tr>
+<tr><td style="padding:8px 11px; font-weight:600;">Traversee de porte</td><td style="padding:8px 11px;">Franchit un passage resserre, puis revele</td><td style="padding:8px 11px;">Arche, corridor, faille (pilote requis)</td><td style="padding:8px 11px;">avance</td></tr>
+</table>
+
+<h3>Comment le systeme vous protege</h3>
+<p>Chaque mission est verifiee sur le terrain reel avant d'etre validee. Le systeme mesure l'altitude du sol et le sommet des obstacles (arbres, batiments) le long de toute la trajectoire.</p>
+<div class="fiche">
+<div class="titre">Avant chaque vol, le systeme verifie</div>
+<div class="row"><span class="lab">Hauteur</span> L'altitude est ajustee pour garder une marge au-dessus du sol et des obstacles ; refus si le relief force a depasser 120 m AGL.</div>
+<div class="row"><span class="lab">Distance</span> Un plancher de securite empeche de s'approcher trop pres (jamais moins de 20 m sur les orbites et courbes).</div>
+<div class="row"><span class="lab">Couverture</span> Si le terrain n'est pas cartographie a cet endroit, le systeme refuse plutot que de voler a l'aveugle.</div>
+<div class="row"><span class="lab">Environnement</span> L'analyse du lieu (urbain ou paysage) vous oriente vers les mouvements adaptes.</div>
+</div>
+<div class="tip"><strong>Un refus est une information, pas une panne.</strong> Quand un mouvement est refuse, le message explique pourquoi et l'analyse d'environnement propose des alternatives adaptees au lieu. Gardez toujours le drone a vue.</div>
+<h2 id="tournage-auto">20. Tournage automatique (reconnaissance et realisateur)</h2>
+<p>CineFlight peut composer un tournage complet a votre place. Vous faites un vol de reconnaissance, l'application localise le sujet, puis un "realisateur" choisit et enchaine les meilleurs plans selon ce que vous voulez raconter et le temps dont vous disposez. Vous n'avez que deux choix a faire ; l'application decide le reste.</p>
+
+<div class="tip"><strong>Le principe.</strong> Vous dites <em>ce que vous voulez obtenir</em> et <em>combien de temps</em> vous avez. Le realisateur analyse le sujet et son environnement (hauteur, espace disponible, urbain ou paysage) et compose la sequence : quels mouvements, dans quel ordre, et la duree de chaque plan, calculee sur le sujet reel.</p></div>
+
+<h3>Etape 1 - Le vol de reconnaissance</h3>
+<div class="fiche">
+<div class="titre">Localiser le sujet</div>
+<p>Avec la carte SD du drone branchee, vous chargez les photos de reperage (une douzaine prises sous des angles differents autour du sujet). L'application les envoie au serveur, qui detecte le sujet et calcule sa position 3D precise a partir des photos.</p>
+<div class="row"><span class="lab">Resultat</span> "Sujet localise" avec la position (lat, lon, altitude), la confiance et la marge d'erreur.</div>
+<div class="row"><span class="lab">Minimum</span> Au moins 6 photos exploitables, prises sous des angles repartis autour du sujet.</div>
+</div>
+
+<h3>Etape 2 - Que voulez-vous obtenir ?</h3>
+<p>Une fois le sujet localise, vous choisissez une intention en langage simple. L'application traduit ce choix en mouvements concrets adaptes au lieu.</p>
+<div class="fiche">
+<div class="titre">Mettre le sujet en valeur</div>
+<p>Le sujet est la vedette : orbites, approches, grues qui le mettent au centre. Pour un monument, un edifice, un phare que vous voulez sublimer.</p>
+</div>
+<div class="fiche">
+<div class="titre">Montrer le sujet dans son environnement</div>
+<p>Le contexte raconte : reculs, montees, revelations qui devoilent le paysage autour du sujet. Pour situer un chalet dans sa vallee, un phare sur son littoral.</p>
+</div>
+<div class="fiche">
+<div class="titre">Effet spectaculaire</div>
+<p>Le plan choc : revelations, traversees, mouvements organiques. Pour une ouverture de video qui marque.</p>
+</div>
+
+<h3>Etape 3 - Temps de tournage</h3>
+<p>Vous indiquez le temps disponible. Le realisateur remplit ce budget avec les meilleurs plans pour ce sujet.</p>
+<div class="fiche">
+<div class="titre">Quatre durees</div>
+<div class="row"><span class="lab">Rapide</span> environ 2 minutes : un seul plan, l'essentiel.</div>
+<div class="row"><span class="lab">Standard</span> environ 5 minutes : deux a trois plans complementaires.</div>
+<div class="row"><span class="lab">Complet</span> environ 10 minutes : couverture variee du sujet.</div>
+<div class="row"><span class="lab">Premium</span> environ 15 minutes : couverture riche, plusieurs angles.</div>
+</div>
+
+<h3>Ce que le realisateur decide automatiquement</h3>
+<div class="fiche">
+<div class="titre">Une sequence sur mesure</div>
+<div class="row"><span class="lab">Les plans</span> les mouvements au meilleur rendu pour CE sujet, dans cet environnement (les mouvements paysage sont ecartes en ville, et inversement).</div>
+<div class="row"><span class="lab">Les durees</span> chaque plan est cale sur le volume reel : un plan vertical dure selon la hauteur du sujet, une orbite selon sa circonference.</div>
+<div class="row"><span class="lab">L'amplitude</span> en espace degage, les mouvements sont amples ; en espace serre (ville), ils sont courts et surs.</div>
+<div class="row"><span class="lab">L'ordre</span> les plans sont enchaines pour limiter les deplacements entre eux.</div>
+</div>
+
+<h3>Le resultat</h3>
+<p>L'application enregistre un dossier compresse (zip) contenant un fichier de vol (KMZ) par plan, plus une fiche decrivant la sequence (mouvements, durees, raisons du choix). Les fichiers sont dans le dossier <strong>Downloads/CineFlight</strong> du telephone.</p>
+<div class="warn"><strong>Chaque plan est une mission distincte.</strong> Pour le Mini 3, il est plus sur de tourner un plan a la fois : vous lancez le plan 1, vous filmez, vous revenez, puis le plan 2. Entre les plans, verifiez la batterie et l'espace. Chaque plan a ete verifie sur le terrain reel (Google 3D Tiles), mais gardez toujours le drone a vue.</div>
+
+<h3>Le point de decollage</h3>
+<div class="fiche">
+<div class="titre">Vous decollez, le drone revient chez vous</div>
+<p>Les fichiers de vol contiennent uniquement le mouvement autour du sujet. Le point de decollage n'a pas a etre defini dans l'application : c'est le drone (DJI) qui fixe automatiquement le "point de retour" la ou vous l'allumez, au moment du decollage.</p>
+<div class="row"><span class="lab">Important</span> Votre position de decollage est aussi votre point de retour automatique (en cas de batterie faible ou de perte de signal). Decollez d'un endroit degage, a vue du sujet.</div>
+<div class="row"><span class="lab">Transit</span> Le drone rejoint seul le premier point du mouvement depuis votre position, puis revient. Gardez une distance raisonnable au sujet pour preserver la batterie et rester a vue.</div>
+</div>
+
+<div class="tip"><strong>Un refus est une information.</strong> Si un mouvement ne convient pas a l'endroit (relief trop haut, passage trop etroit), il est ecarte avec une raison claire, et le realisateur le remplace par un plan adapte. Vous obtenez toujours une sequence realisable.</div>
+
+<h2 id="vehicule">21. Suivre un vehicule (le drone filme une voiture)</h2>
+<div class="image"><strong>Imaginez un cadreur assis sur une moto</strong> qui roule a cote d'une voiture pour la filmer sous le plus bel angle, en restant toujours a la bonne distance. C'est exactement ce que fait ici le drone, tout seul : il suit une voiture en mouvement et la filme, guide par la position que la voiture lui envoie en direct.</div>
+<p>Cet ecran sert a filmer un <strong>vehicule qui roule</strong>. Il fonctionne autrement que le suivi visuel de la section 3 : ici, la voiture est equipee d'un petit <strong>boitier GPS</strong> qui envoie sa position au drone en permanence. Le drone ne se contente donc pas de "voir" la voiture avec sa camera — il sait a chaque instant, au metre pres, ou elle se trouve. C'est ce qui lui permet de la suivre meme quand elle va vite, qu'elle s'eloigne, ou qu'elle passe une seconde derriere un obstacle.</p>
+<div class="tip"><strong>Suivi visuel ou suivi par GPS : quelle difference ?</strong> Le suivi visuel (section 3, mode "Personne + Vehicule") demande au drone de reconnaitre la voiture dans l'image de sa camera : pratique de pres, mais il peut la perdre de vue. Le suivi par GPS (cette section) s'appuie sur la position que la voiture emet elle-meme : bien plus fiable et precis, ideal pour une voiture qui roule sur une route. Deux methodes pour deux situations.</div>
+
+<h3>Ouvrir l'ecran de suivi</h3>
+<p>Depuis le menu <strong>"Que voulez-vous filmer ?"</strong>, touchez la carte <strong>Suivre un vehicule</strong>. L'ecran s'ouvre en mode paysage (comme le poste de pilotage), et se partage en deux zones : a gauche, l'<strong>image en direct</strong> de la camera du drone ; a droite, un panneau qui regroupe toutes les commandes.</p>
+<p>Tout en haut de ce panneau, une <strong>barre d'infos</strong> vous renseigne en permanence sur l'etat du drone, exactement comme sur l'ecran d'ouverture : niveau de batterie, altitude, qualite du signal GPS (precis, moyen ou faible), cap (la direction vers laquelle le drone pointe), position, et modele du drone. Un simple coup d'oeil suffit pour verifier que tout va bien avant et pendant le vol.</p>
+
+<h3>Lancer le suivi, pas a pas</h3>
+<div class="step"><span class="step-num">1</span><span class="step-txt"><strong>Verifiez que la voiture est captee.</strong> L'ecran affiche "voiture OK" quand il recoit bien sa position, ou "voiture non captee" si le boitier de la voiture n'est pas allume ou pas connecte. Attendez le "voiture OK" avant d'aller plus loin.</span></div>
+<div class="step"><span class="step-num">2</span><span class="step-txt"><strong>Choisissez un parcours (facultatif).</strong> Le bouton "Choisir un parcours" affiche la liste des trajets enregistres sur le serveur. Vous pouvez en selectionner un, ou rester en suivi direct. Sans parcours choisi, le drone suit simplement la voiture la ou elle va.</span></div>
+<div class="step"><span class="step-num">3</span><span class="step-txt"><strong>Faites decoller le drone</strong> avec le bouton Decoller. Il monte a environ un metre et demi et reste immobile, en attente, comme sur l'ecran de vol habituel.</span></div>
+<div class="step"><span class="step-num">4</span><span class="step-txt"><strong>Demarrez le suivi.</strong> Le drone se cale derriere la voiture et commence a la filmer. Vous pouvez ensuite changer d'angle ou de mouvement a tout moment, en direct.</span></div>
+<div class="warn"><strong>Votre tout premier essai : voiture a l'arret.</strong> Pour la premiere fois, faites l'essai avec la <strong>voiture immobile</strong>. Vous verifiez ainsi tranquillement que le drone se place bien derriere elle et tient sa position. Ce n'est qu'une fois ce calage valide que vous faites rouler la voiture, doucement d'abord, puis un peu plus vite.</div>
+
+<h3>Choisir l'angle de prise de vue</h3>
+<p>Ces boutons decident depuis quel cote le drone filme la voiture. Vous pouvez en changer <strong>en direct</strong> pendant le vol, autant de fois que vous voulez.</p>
+<table>
+<tr><th>Angle</th><th>Ce que fait le drone</th></tr>
+<tr><td>Derriere</td><td>Il suit la voiture par l'arriere (la position de depart). Le plan de poursuite classique.</td></tr>
+<tr><td>Devant</td><td>Il precede la voiture et la filme de face, comme s'il reculait devant elle.</td></tr>
+<tr><td>Gauche</td><td>Il se place sur le cote gauche et filme la voiture de profil.</td></tr>
+<tr><td>Droite</td><td>Il se place sur le cote droit et filme la voiture de profil.</td></tr>
+<tr><td>Plongee</td><td>Il se place au-dessus de la voiture et regarde droit vers le bas, pour une vue plongeante.</td></tr>
+</table>
+
+<h3>Ajouter un mouvement cinematographique</h3>
+<p>En plus de l'angle, vous pouvez demander un vrai mouvement de camera autour de la voiture, lui aussi changeable en direct :</p>
+<table>
+<tr><th>Mouvement</th><th>Effet</th></tr>
+<tr><td>Orbite</td><td>Le drone tourne autour de la voiture pendant qu'elle avance. Spectaculaire.</td></tr>
+<tr><td>Reveal</td><td>Le drone recule et monte pour devoiler le decor autour de la voiture.</td></tr>
+<tr><td>Rapproche</td><td>Le drone se rapproche doucement de la voiture, pour creer de la tension.</td></tr>
+</table>
+<p>A tout moment, vous pouvez revenir a un simple angle (Derriere, Devant...) ou passer a un autre mouvement. Le drone effectue la transition tout seul, en douceur.</p>
+<div class="warn"><strong>Des transitions toujours securitaires.</strong> Quand vous changez de cote — par exemple de gauche a droite — le drone ne coupe jamais au-dessus de la voiture et ne lui passe pas devant. Il <strong>contourne toujours par l'arriere</strong>, a vitesse douce, exactement comme on ferait le tour d'une voiture a pied en passant derriere elle. C'est le trajet le plus sur, et cela respecte la regle d'or : jamais de survol.</div>
+
+<h3>Le mode manuel : reprendre les commandes</h3>
+<div class="image"><strong>Comme reprendre le volant :</strong> a tout instant, vous pouvez reprendre le pilotage du drone avec la telecommande DJI, puis le rendre a l'application quand vous le souhaitez.</div>
+<p>Le bouton <strong>Mode manuel</strong> confie le pilotage a la telecommande DJI : l'application lache completement le drone, et c'est vous, le pilote, qui commandez avec les manettes. C'est utile pour reprendre la main sur un imprevu, replacer le drone, ou composer vous-meme un plan de vol.</p>
+<p>Le meme bouton sert ensuite a <strong>rendre le controle a l'application</strong> : un appui, et l'application reprend la main en douceur — le drone se stabilise sur place, et vous pouvez rechoisir un angle ou relancer le suivi. Bon a savoir : apres un arret d'urgence, le drone passe automatiquement en mode manuel, pour que la telecommande soit deja prete dans votre main.</p>
+<div class="tip">Gardez toujours la telecommande DJI a portee de main. En mode manuel, c'est elle qui pilote : c'est votre filet de securite pour reprendre le controle a tout instant.</div>
+
+<div class="scene"><div class="titre">Une prise en situation, du debut a la fin</div>
+<p>Vous voulez filmer une voiture sur une petite route degagee. Le boitier GPS de la voiture est allume ; sur l'ecran, "voiture OK" s'affiche. Vous faites decoller le drone et vous verifiez d'abord, voiture a l'arret, qu'il se place bien derriere elle. Puis vous demandez a la voiture de rouler doucement : le drone la suit par l'arriere. Apres quelques secondes, vous touchez "Gauche" : le drone contourne par l'arriere et vient filmer la voiture de profil. Pour finir, vous lancez une "Orbite" : il tourne autour de la voiture pendant qu'elle roule, avec le paysage qui defile en fond. Vous n'avez jamais touche la telecommande — et si besoin, un seul bouton vous la rendait.</p></div>
+
+<div class="warn"><strong>Securite, comme pour tout vol.</strong> Espace bien degage, drone a vue en permanence, telecommande dans la main, et un doigt pret sur l'arret d'urgence. Le drone filme la voiture de cote, de face, de dos ou de dessus, mais il ne survole jamais les personnes. Faites toujours votre premier essai voiture a l'arret, puis augmentez la vitesse progressivement.</div>
+
+<p style="text-align:center; color:#8e8e93; font-size:12px; margin-top:40px;">CineFlight Solo — Guide de l'utilisateur</p>
+
+</div>
+</body>
+</html>

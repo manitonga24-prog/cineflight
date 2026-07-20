@@ -1,0 +1,75 @@
+# ============================================================
+#  CineFlight Solo — .gitignore
+#  On suit le CODE SOURCE. On EXCLUT les artefacts lourds,
+#  generes, telecharges, et les SECRETS.
+# ============================================================
+
+# --- SECRETS / config locale (NE JAMAIS committer) ---
+local.properties
+
+# --- Sorties de build Android ---
+/build/
+app/build/
+app/.cxx/
+.gradle/
+.cxx/
+*.apk
+*.aar
+*.ap_
+*.dex
+
+# --- IDE / outils ---
+.idea/
+.kotlin/
+*.iml
+.DS_Store
+Thumbs.db
+
+# --- Python (tes scripts outils restent suivis, pas le cache) ---
+__pycache__/
+*.pyc
+*.pyo
+
+# --- Modeles ML lourds (geres hors Git) ---
+*.pt
+*.onnx
+*.ncnn.bin
+
+# --- Bibliotheques natives compilees ---
+*.so
+*.a
+*.o
+
+# --- SDK / dependances telechargees (volumineux) ---
+*.zip
+app/src/main/jni/OpenCV-android-sdk/
+app/src/main/jni/ncnn-*/
+app/src/main/jni/opencv-mobile-*/
+
+# --- Menage / sauvegardes (deja deplacees) ---
+_corbeille_*/
+_backup_*/
+_to_delete/
+*.bak
+*.bak_*
+*.avant_*
+*.ok_*
+*.backup_*
+*.sdk510_backup
+*.setaside
+
+# --- Fichiers temporaires / parasites ---
+commit_msg.txt
+adsac*
+
+# --- Scripts et notes de dev (clicker) non versionnes ---
+patch_clicker_*.ps1
+clicker_*.txt
+extrait_annonces_clicker.txt
+verification_degagement_clicker.txt
+
+# --- Logs d'observation du gate obstacle (captures de vol/sol, volumineux) ---
+# Le script capture_vol.ps1 EST versionne (outil) ; ses SORTIES ne le sont pas.
+gate_vol_*.txt
+gate_full.txt
+gate_hover_observation.txt

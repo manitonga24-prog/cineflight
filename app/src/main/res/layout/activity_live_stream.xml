@@ -1,0 +1,287 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Ecran minimal de diffusion en direct (prototype vertical V1 YouTube).
+  Base : Views + Material3, thème CineFlight (aucune dependance ajoutee).
+  La cle de diffusion reste dans un champ mot de passe et n'est jamais reaffichee
+  apres enregistrement.
+-->
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:fillViewport="true"
+    android:padding="24dp">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical">
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Diffusion en direct"
+            android:textAppearance="?attr/textAppearanceHeadline6"
+            android:layout_marginBottom="4dp" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Destination"
+            android:textAppearance="?attr/textAppearanceSubtitle2"
+            android:layout_marginBottom="4dp" />
+
+        <!-- Choix de destination : YouTube ou Regie/distributeur personnalise. -->
+        <com.google.android.material.button.MaterialButtonToggleGroup
+            android:id="@+id/groupeDestination"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            app:singleSelection="true"
+            app:selectionRequired="true"
+            android:layout_marginBottom="12dp">
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnDestYoutube"
+                style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="YouTube" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnDestRegie"
+                style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="Régie / distributeur" />
+        </com.google.android.material.button.MaterialButtonToggleGroup>
+
+        <!-- Nom de la destination (regie seulement). -->
+        <com.google.android.material.textfield.TextInputLayout
+            android:id="@+id/blocNomDest"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="Nom de la destination (ex. Régie du match)"
+            android:visibility="gone"
+            style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox">
+
+            <com.google.android.material.textfield.TextInputEditText
+                android:id="@+id/champNomDest"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:inputType="text" />
+        </com.google.android.material.textfield.TextInputLayout>
+
+        <!-- URL du serveur RTMPS (prerempli, modifiable) -->
+        <com.google.android.material.textfield.TextInputLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="URL du serveur RTMPS"
+            style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox">
+
+            <com.google.android.material.textfield.TextInputEditText
+                android:id="@+id/champUrlServeur"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:inputType="textUri"
+                android:text="rtmps://a.rtmps.youtube.com/live2" />
+        </com.google.android.material.textfield.TextInputLayout>
+
+        <!-- Cle de diffusion (masquee) -->
+        <com.google.android.material.textfield.TextInputLayout
+            android:id="@+id/blocCle"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="Cle de diffusion"
+            app:endIconMode="password_toggle"
+            style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox">
+
+            <com.google.android.material.textfield.TextInputEditText
+                android:id="@+id/champCle"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:inputType="textPassword" />
+        </com.google.android.material.textfield.TextInputLayout>
+
+        <TextView
+            android:id="@+id/etatCle"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Aucune cle enregistree"
+            android:textAppearance="?attr/textAppearanceCaption"
+            android:layout_marginBottom="8dp" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:layout_marginBottom="16dp">
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnEnregistrerCle"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:layout_marginEnd="8dp"
+                android:text="Enregistrer la cle" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnSupprimerCle"
+                style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="Supprimer" />
+        </LinearLayout>
+
+        <!-- Resolution (comme l'app DJI) -->
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Resolution"
+            android:textAppearance="?attr/textAppearanceSubtitle2"
+            android:layout_marginBottom="4dp" />
+
+        <com.google.android.material.button.MaterialButtonToggleGroup
+            android:id="@+id/groupeResolution"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            app:singleSelection="true"
+            app:selectionRequired="true"
+            android:layout_marginBottom="12dp">
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnRes1080"
+                style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="1080p" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnRes720"
+                style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="720p" />
+        </com.google.android.material.button.MaterialButtonToggleGroup>
+
+        <!-- Debit video (bitrate) : Auto ou valeur fixe, comme l'app DJI -->
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Debit video"
+            android:textAppearance="?attr/textAppearanceSubtitle2"
+            android:layout_marginBottom="4dp" />
+
+        <com.google.android.material.button.MaterialButtonToggleGroup
+            android:id="@+id/groupeDebit"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            app:singleSelection="true"
+            app:selectionRequired="true"
+            android:layout_marginBottom="16dp">
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnDebitAuto"
+                style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="Auto" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnDebit2"
+                style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="2 Mbps" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnDebit4"
+                style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="4 Mbps" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnDebit6"
+                style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="6 Mbps" />
+        </com.google.android.material.button.MaterialButtonToggleGroup>
+
+        <!-- Test de la connexion actuelle : peut-elle soutenir la qualite choisie ? -->
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnTesterConnexion"
+            style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Tester ma connexion"
+            android:layout_marginBottom="4dp" />
+
+        <TextView
+            android:id="@+id/txtResultatTest"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text=""
+            android:textAppearance="?attr/textAppearanceCaption"
+            android:layout_marginBottom="16dp" />
+
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:background="?android:attr/listDivider"
+            android:layout_marginBottom="16dp" />
+
+        <!-- Etat DJI + telemetrie -->
+        <TextView
+            android:id="@+id/txtEtat"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Etat : Arrete"
+            android:textAppearance="?attr/textAppearanceSubtitle1"
+            android:layout_marginBottom="4dp" />
+
+        <TextView
+            android:id="@+id/txtResolution"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Resolution : —" />
+
+        <TextView
+            android:id="@+id/txtFps"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="FPS : —" />
+
+        <TextView
+            android:id="@+id/txtDebit"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Debit : —"
+            android:layout_marginBottom="16dp" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnDemarrer"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Demarrer le direct"
+            android:layout_marginBottom="8dp" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnArreter"
+            style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:enabled="false"
+            android:text="Arreter" />
+
+    </LinearLayout>
+</ScrollView>

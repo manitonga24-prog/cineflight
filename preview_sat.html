@@ -1,0 +1,375 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CineFlight — Satellite</title>
+<link href="https://api.mapbox.com/mapbox-gl-js/v3.9.0/mapbox-gl.css" rel="stylesheet">
+<script src="https://api.mapbox.com/mapbox-gl-js/v3.9.0/mapbox-gl.js"></script>
+<style>
+  :root {
+    --bg: #0e1116;
+    --panel: #161b23;
+    --border: #2a323d;
+    --text: #e6e9ee;
+    --text-dim: #8b95a3;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    font-family: "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+    background: var(--bg);
+    color: var(--text);
+    overflow: hidden;
+  }
+  #map { position: absolute; inset: 0; }
+
+  .hud {
+    position: absolute;
+    top: 14px; left: 14px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 14px 16px;
+    max-width: 340px;
+    z-index: 5;
+    box-shadow: 0 8px 24px rgba(0,0,0,.55);
+  }
+  .hud h1 {
+    font-size: 13px; font-weight: 600;
+    letter-spacing: .04em; text-transform: uppercase;
+    margin-bottom: 3px;
+  }
+  .hud .sub {
+    font-size: 11px; color: var(--text-dim); margin-bottom: 12px;
+  }
+  .legend-item {
+    display: flex; align-items: center; gap: 8px;
+    font-size: 12px; padding: 3px 0;
+  }
+  .swatch { width: 16px; height: 4px; border-radius: 2px; flex-shrink: 0; }
+  .swatch.dash {
+    height: 0; border-top: 3px dashed currentColor; background: none;
+  }
+  .dot {
+    width: 11px; height: 11px; border-radius: 50%;
+    flex-shrink: 0; border: 1.5px solid rgba(255,255,255,.7);
+  }
+  .legend-sep { height: 1px; background: var(--border); margin: 9px 0; }
+  .stat { font-size: 11px; color: var(--text-dim); line-height: 1.85; }
+  .stat b { color: var(--text); font-weight: 600; }
+  .stat .route-name { display: inline-block; min-width: 8px; }
+
+  .wp-popup {
+    font-family: "SF Mono", Menlo, Consolas, monospace;
+    font-size: 11px; line-height: 1.6;
+    color: #EAEef3;
+  }
+  .wp-popup .wp-title {
+    font-weight: 700; font-size: 12px; margin-bottom: 4px;
+    color: #FFFFFF;
+  }
+  .wp-popup .wp-role {
+    display: inline-block; font-size: 9px; font-weight: 700;
+    padding: 1px 5px; border-radius: 3px; margin-bottom: 4px;
+    text-transform: uppercase; letter-spacing: .03em;
+    color: #0e1116;
+  }
+  .wp-popup .wp-adj { color: #FF6B6B; font-weight: 700; margin-top: 3px; }
+  /* la bulle Mapbox : fond sombre, texte clair, bien contrastés */
+  .mapboxgl-popup-content {
+    border-radius: 6px; padding: 10px 13px;
+    background: #1A2230;
+    border: 1px solid #3A4456;
+    box-shadow: 0 8px 24px rgba(0,0,0,.6);
+  }
+  /* la pointe de la bulle, adaptée au fond sombre */
+  .mapboxgl-popup-anchor-top .mapboxgl-popup-tip { border-bottom-color: #1A2230; }
+  .mapboxgl-popup-anchor-bottom .mapboxgl-popup-tip { border-top-color: #1A2230; }
+  .mapboxgl-popup-anchor-left .mapboxgl-popup-tip { border-right-color: #1A2230; }
+  .mapboxgl-popup-anchor-right .mapboxgl-popup-tip { border-left-color: #1A2230; }
+  .mapboxgl-popup-anchor-top-left .mapboxgl-popup-tip,
+  .mapboxgl-popup-anchor-top-right .mapboxgl-popup-tip { border-bottom-color: #1A2230; }
+  .mapboxgl-popup-anchor-bottom-left .mapboxgl-popup-tip,
+  .mapboxgl-popup-anchor-bottom-right .mapboxgl-popup-tip { border-top-color: #1A2230; }
+  /* bouton de fermeture lisible sur fond sombre */
+  .mapboxgl-popup-close-button { color: #AAB2C0; font-size: 16px; }
+  .mapboxgl-popup-close-button:hover {
+    background: transparent; color: #FFFFFF;
+  }
+</style>
+</head>
+<body>
+<div id="map"></div>
+<div class="hud">
+  <h1>CineFlight — Satellite</h1>
+  <div class="sub">60 wp</div>
+  <div id="legend"></div>
+  <div class="legend-sep"></div>
+  <div class="stat" id="stats"></div>
+</div>
+
+<script>
+const DATA = {"layers": [{"name": "Mission cinema", "kind": "mission", "colour": "#FFB020", "points": [{"index": 0, "milestone": true, "lat": 45.5045, "lon": -73.5874, "alt": 60.0, "speed": 8.0, "gimbal_yaw": 0.0, "gimbal_pitch": -45.0, "action": "fly_to", "adjusted": false, "role": "start"}, {"index": 1, "milestone": false, "lat": 45.5035012862069, "lon": -73.58705155172414, "alt": 60.0, "speed": 8.0, "gimbal_yaw": 0.0, "gimbal_pitch": -45.0, "action": "fly_to", "adjusted": false, "role": "mid"}, {"index": 2, "milestone": false, "lat": 45.50260196460098, "lon": -73.58705155172414, "alt": 90.0, "speed": 4.0, "gimbal_yaw": 0.0, "gimbal_pitch": -15.0, "action": "hover", "adjusted": false, "role": "mid"}, {"index": 3, "milestone": false, "lat": 45.5032494, "lon": -73.5868612, "alt": 60.0, "speed": 8.0, "gimbal_yaw": 0.0, "gimbal_pitch": -45.0, "action": "fly_to", "adjusted": false, "role": "mid"}, {"index": 4, "milestone": false, "lat": 45.50235007839408, "lon": -73.5868612, "alt": 90.0, "speed": 4.0, "gimbal_yaw": 0.0, "gimbal_pitch": -15.0, "action": "hover", "adjusted": false, "role": "mid"}, {"index": 5, "milestone": false, "lat": 45.5025286, "lon": -73.5838568, "alt": 60.0, "speed": 8.0, "gimbal_yaw": 0.0, "gimbal_pitch": -45.0, "action": "fly_to", "adjusted": false, "role": "mid"}, {"index": 6, "milestone": false, "lat": 45.5055406, "lon": -73.5839013, "alt": 60.0, "speed": 8.0, "gimbal_yaw": 0.0, "gimbal_pitch": -45.0, "action": "fly_to", "adjusted": false, "role": "mid"}, {"index": 7, "milestone": false, "lat": 45.50585536256207, "lon": -73.5839013, "alt": 45.0, "speed": 2.5, "gimbal_yaw": 180.0, "gimbal_pitch": -30.0, "action": "gimbal_point", "adjusted": false, "role": "mid"}, {"index": 8, "milestone": false, "lat": 45.50584463728786, "lon": -73.58378505875774, "alt": 45.0, "speed": 2.5, "gimbal_yaw": 195.0, "gimbal_pitch": -30.0, "action": "gimbal_point", "adjusted": false, "role": "mid"}, {"index": 9, "milestone": false, "lat": 45.505813192374916, "lon": -73.58367673916406, "alt": 45.0, "speed": 2.5, "gimbal_yaw": 210.0, "gimbal_pitch": -30.0, "action": "gimbal_point", "adjusted": false, "role": "mid"}, {"index": 10, "milestone": false, "lat": 45.50576317074211, "lon": -73.58358372302024, "alt": 45.0, "speed": 2.5, "gimbal_yaw": 225.0, "gimbal_pitch": -30.0, "action": "gimbal_point", "adjusted": false, "role": "mid"}, {"index": 11, "milestone": false, "lat": 45.50569798128104, "lon": -73.58351234922277, "alt": 45.0, "speed": 2.5, "gimbal_yaw": 240.0, "gimbal_pitch": -30.0, "action": "gimbal_point", "adjusted": false, "role": "mid"}, {"index": 12, "milestone": false, "lat": 45.505622066545754, "lon": -73.583467481778, "alt": 45.0, "speed": 2.5, "gimbal_yaw": 255.0, "gimbal_pitch": -30.0, "action": "gimbal_point", "adjusted": false, "role": "mid"}, {"index": 13, "milestone": false, "lat": 45.5055406, "lon": -73.58345217832813, "alt": 45.0, "speed": 2.5, "gimbal_yaw": 270.0, "gimbal_pitch": -30.0, "action": "gimbal_point", "adjusted": false, "role": "mid"}, {"index": 14, "milestone": false, "lat": 45.50545913345425, "lon": -73.583467481778, "alt": 45.0, "speed": 2.5, "gimbal_yaw": 285.0, "gimbal_pitch": -30.0, "action": "gimbal_point", "adjusted": false, "role": "mid"}, {"index": 15, "milestone": false, "lat": 45.50538321871897, "lon": -73.58351234922277, "alt": 45.0, "speed": 2.5, "gimbal_yaw": 300.0, "gimbal_pitch": -30.0, "action": "gimbal_point", "adjusted": false, "role": "mid"}, {"index": 16, "milestone": false, "lat": 45.5053180292579, "lon": -73.58358372302024, "alt": 45.0, "speed": 2.5, "gimbal_yaw": 315.0, "gimbal_pitch": -30.0, "action": "gimbal_point", "adjusted": false, "role": "mid"}, {"index": 17, "milestone": false, "lat": 45.50526800762509, "lon": -73.58367673916406, "alt": 45.0, "speed": 2.5, "gimbal_yaw": 330.0, "gimbal_pitch": -30.0, "action": "gimbal_point", "adjusted": false, "role": "mid"}, {"index": 18, "milestone": false, "lat": 45.50523656271215, "lon": -73.58378505875774, "alt": 45.0, "speed": 2.5, "gimbal_yaw": 345.0, "gimbal_pitch": -30.0, "action": "gimbal_point", "adjusted": false, "role": "mid"}, {"index": 19, "milestone": false, "lat": 45.50522583743793, "lon": -73.5839013, "alt": 45.0, "speed": 2.5, "gimbal_yaw": 0.0, "gimbal_pitch": -30.0, "action": "gimbal_point", "adjusted": false, "role": "mid"}, {"index": 20, "milestone": false, "lat": 45.50523656271215, "lon": -73.58401754124225, "alt": 45.0, "speed": 2.5, "gimbal_yaw": 15.0, "gimbal_pitch": -30.0, "action": "gimbal_point", "adjusted": false, "role": "mid"}, {"index": 21, "milestone": false, "lat": 45.50526800762509, "lon": -73.58412586083593, "alt": 45.0, "speed": 2.5, "gimbal_yaw": 30.0, "gimbal_pitch": -30.0, "action": "gimbal_point", "adjusted": false, "role": "mid"}, {"index": 22, "milestone": false, "lat": 45.5053180292579, "lon": -73.58421887697975, "alt": 45.0, "speed": 2.5, "gimbal_yaw": 45.0, "gimbal_pitch": -30.0, "action": "gimbal_point", "adjusted": false, "role": "mid"}, {"index": 23, "milestone": false, "lat": 45.50538321871897, "lon": -73.58429025077722, "alt": 45.0, "speed": 2.5, "gimbal_yaw": 60.0, "gimbal_pitch": -30.0, "action": "gimbal_point", "adjusted": false, "role": "mid"}, {"index": 24, "milestone": false, "lat": 45.50545913345425, "lon": -73.58433511822199, "alt": 45.0, "speed": 2.5, "gimbal_yaw": 75.0, "gimbal_pitch": -30.0, "action": "gimbal_point", "adjusted": false, "role": "mid"}, {"index": 25, "milestone": false, "lat": 45.5055406, "lon": -73.58435042167186, "alt": 45.0, "speed": 2.5, "gimbal_yaw": 90.0, "gimbal_pitch": -30.0, "action": "gimbal_point", "adjusted": false, "role": "mid"}, {"index": 26, "milestone": false, "lat": 45.505622066545754, "lon": -73.58433511822199, "alt": 45.0, "speed": 2.5, "gimbal_yaw": 105.0, "gimbal_pitch": -30.0, "action": "gimbal_point", "adjusted": false, "role": "mid"}, {"index": 27, "milestone": false, "lat": 45.50569798128104, "lon": -73.58429025077722, "alt": 45.0, "speed": 2.5, "gimbal_yaw": 120.0, "gimbal_pitch": -30.0, "action": "gimbal_point", "adjusted": false, "role": "mid"}, {"index": 28, "milestone": false, "lat": 45.50576317074211, "lon": -73.58421887697975, "alt": 45.0, "speed": 2.5, "gimbal_yaw": 135.0, "gimbal_pitch": -30.0, "action": "gimbal_point", "adjusted": false, "role": "mid"}, {"index": 29, "milestone": false, "lat": 45.505813192374916, "lon": -73.58412586083593, "alt": 45.0, "speed": 2.5, "gimbal_yaw": 150.0, "gimbal_pitch": -30.0, "action": "gimbal_point", "adjusted": false, "role": "mid"}, {"index": 30, "milestone": false, "lat": 45.50584463728786, "lon": -73.58401754124225, "alt": 45.0, "speed": 2.5, "gimbal_yaw": 165.0, "gimbal_pitch": -30.0, "action": "gimbal_point", "adjusted": false, "role": "mid"}, {"index": 31, "milestone": false, "lat": 45.50585536256207, "lon": -73.5839013, "alt": 45.0, "speed": 2.5, "gimbal_yaw": 180.0, "gimbal_pitch": -30.0, "action": "gimbal_point", "adjusted": false, "role": "mid"}, {"index": 32, "milestone": false, "lat": 45.5028063, "lon": -73.5788434, "alt": 60.0, "speed": 8.0, "gimbal_yaw": 0.0, "gimbal_pitch": -45.0, "action": "fly_to", "adjusted": false, "role": "mid"}, {"index": 33, "milestone": false, "lat": 45.50312106256207, "lon": -73.5788434, "alt": 45.0, "speed": 2.5, "gimbal_yaw": 180.0, "gimbal_pitch": -30.0, "action": "gimbal_point", "adjusted": false, "role": "mid"}, {"index": 34, "milestone": false, "lat": 45.50311033728786, "lon": -73.57872716440343, "alt": 45.0, "speed": 2.5, "gimbal_yaw": 195.0, "gimbal_pitch": -30.0, "action": "gimbal_point", "adjusted": false, "role": "mid"}, {"index": 35, "milestone": false, "lat": 45.503078892374916, "lon": -73.5786188500707, "alt": 45.0, "speed": 2.5, "gimbal_yaw": 210.0, "gimbal_pitch": -30.0, "action": "gimbal_point", "adjusted": false, "role": "mid"}, {"index": 36, "milestone": false, "lat": 45.50302887074211, "lon": -73.57852583844455, "alt": 45.0, "speed": 2.5, "gimbal_yaw": 225.0, "gimbal_pitch": -30.0, "action": "gimbal_point", "adjusted": false, "role": "mid"}, {"index": 37, "milestone": false, "lat": 45.50296368128104, "lon": -73.5784544681136, "alt": 45.0, "speed": 2.5, "gimbal_yaw": 240.0, "gimbal_pitch": -30.0, "action": "gimbal_point", "adjusted": false, "role": "mid"}, {"index": 38, "milestone": false, "lat": 45.502887766545754, "lon": -73.57840960284798, "alt": 45.0, "speed": 2.5, "gimbal_yaw": 255.0, "gimbal_pitch": -30.0, "action": "gimbal_point", "adjusted": false, "role": "mid"}, {"index": 39, "milestone": false, "lat": 45.5028063, "lon": -73.5783943001414, "alt": 45.0, "speed": 2.5, "gimbal_yaw": 270.0, "gimbal_pitch": -30.0, "action": "gimbal_point", "adjusted": false, "role": "mid"}, {"index": 40, "milestone": false, "lat": 45.50272483345425, "lon": -73.57840960284798, "alt": 45.0, "speed": 2.5, "gimbal_yaw": 285.0, "gimbal_pitch": -30.0, "action": "gimbal_point", "adjusted": false, "role": "mid"}, {"index": 41, "milestone": false, "lat": 45.50264891871897, "lon": -73.5784544681136, "alt": 45.0, "speed": 2.5, "gimbal_yaw": 300.0, "gimbal_pitch": -30.0, "action": "gimbal_point", "adjusted": false, "role": "mid"}, {"index": 42, "milestone": false, "lat": 45.5025837292579, "lon": -73.57852583844455, "alt": 45.0, "speed": 2.5, "gimbal_yaw": 315.0, "gimbal_pitch": -30.0, "action": "gimbal_point", "adjusted": false, "role": "mid"}, {"index": 43, "milestone": false, "lat": 45.50253370762509, "lon": -73.5786188500707, "alt": 45.0, "speed": 2.5, "gimbal_yaw": 330.0, "gimbal_pitch": -30.0, "action": "gimbal_point", "adjusted": false, "role": "mid"}, {"index": 44, "milestone": false, "lat": 45.50250226271215, "lon": -73.57872716440343, "alt": 45.0, "speed": 2.5, "gimbal_yaw": 345.0, "gimbal_pitch": -30.0, "action": "gimbal_point", "adjusted": false, "role": "mid"}, {"index": 45, "milestone": false, "lat": 45.50249153743793, "lon": -73.5788434, "alt": 45.0, "speed": 2.5, "gimbal_yaw": 0.0, "gimbal_pitch": -30.0, "action": "gimbal_point", "adjusted": false, "role": "mid"}, {"index": 46, "milestone": false, "lat": 45.50250226271215, "lon": -73.57895963559656, "alt": 45.0, "speed": 2.5, "gimbal_yaw": 15.0, "gimbal_pitch": -30.0, "action": "gimbal_point", "adjusted": false, "role": "mid"}, {"index": 47, "milestone": false, "lat": 45.50253370762509, "lon": -73.5790679499293, "alt": 45.0, "speed": 2.5, "gimbal_yaw": 30.0, "gimbal_pitch": -30.0, "action": "gimbal_point", "adjusted": false, "role": "mid"}, {"index": 48, "milestone": false, "lat": 45.5025837292579, "lon": -73.57916096155544, "alt": 45.0, "speed": 2.5, "gimbal_yaw": 45.0, "gimbal_pitch": -30.0, "action": "gimbal_point", "adjusted": false, "role": "mid"}, {"index": 49, "milestone": false, "lat": 45.50264891871897, "lon": -73.57923233188639, "alt": 45.0, "speed": 2.5, "gimbal_yaw": 60.0, "gimbal_pitch": -30.0, "action": "gimbal_point", "adjusted": false, "role": "mid"}, {"index": 50, "milestone": false, "lat": 45.50272483345425, "lon": -73.57927719715201, "alt": 45.0, "speed": 2.5, "gimbal_yaw": 75.0, "gimbal_pitch": -30.0, "action": "gimbal_point", "adjusted": false, "role": "mid"}, {"index": 51, "milestone": false, "lat": 45.5028063, "lon": -73.5792924998586, "alt": 45.0, "speed": 2.5, "gimbal_yaw": 90.0, "gimbal_pitch": -30.0, "action": "gimbal_point", "adjusted": false, "role": "mid"}, {"index": 52, "milestone": false, "lat": 45.502887766545754, "lon": -73.57927719715201, "alt": 45.0, "speed": 2.5, "gimbal_yaw": 105.0, "gimbal_pitch": -30.0, "action": "gimbal_point", "adjusted": false, "role": "mid"}, {"index": 53, "milestone": false, "lat": 45.50296368128104, "lon": -73.57923233188639, "alt": 45.0, "speed": 2.5, "gimbal_yaw": 120.0, "gimbal_pitch": -30.0, "action": "gimbal_point", "adjusted": false, "role": "mid"}, {"index": 54, "milestone": false, "lat": 45.50302887074211, "lon": -73.57916096155544, "alt": 45.0, "speed": 2.5, "gimbal_yaw": 135.0, "gimbal_pitch": -30.0, "action": "gimbal_point", "adjusted": false, "role": "mid"}, {"index": 55, "milestone": false, "lat": 45.503078892374916, "lon": -73.5790679499293, "alt": 45.0, "speed": 2.5, "gimbal_yaw": 150.0, "gimbal_pitch": -30.0, "action": "gimbal_point", "adjusted": false, "role": "mid"}, {"index": 56, "milestone": false, "lat": 45.50311033728786, "lon": -73.57895963559656, "alt": 45.0, "speed": 2.5, "gimbal_yaw": 165.0, "gimbal_pitch": -30.0, "action": "gimbal_point", "adjusted": false, "role": "mid"}, {"index": 57, "milestone": false, "lat": 45.50312106256207, "lon": -73.5788434, "alt": 45.0, "speed": 2.5, "gimbal_yaw": 180.0, "gimbal_pitch": -30.0, "action": "gimbal_point", "adjusted": false, "role": "mid"}, {"index": 58, "milestone": false, "lat": 45.5045, "lon": -73.5874, "alt": 60.0, "speed": 8.0, "gimbal_yaw": 0.0, "gimbal_pitch": -45.0, "action": "fly_to", "adjusted": false, "role": "mid"}, {"index": 59, "milestone": true, "lat": 45.5045, "lon": -73.5874, "alt": 2.0, "speed": 2.0, "gimbal_yaw": 0.0, "gimbal_pitch": 0.0, "action": "fly_to", "adjusted": false, "role": "end"}], "length_m": 2670, "duration_s": 839}], "center": [-73.5820874083908, 45.50408967090544], "adjustedColour": "#FF4D4D", "startColour": "#34C759", "endColour": "#FF453A", "targetColour": "#FFFFFF", "target": {"lat": 45.5045, "lon": -73.5874, "label": "Mont-Royal"}};
+mapboxgl.accessToken = "VOTRE_TOKEN_MAPBOX_ICI";
+
+const map = new mapboxgl.Map({
+  container: "map",
+  style: "mapbox://styles/mapbox/satellite-streets-v12",
+  center: DATA.center,
+  zoom: 16,
+  pitch: 60.0,
+});
+map.addControl(new mapboxgl.NavigationControl(), "bottom-right");
+map.addControl(new mapboxgl.ScaleControl({ unit: "metric" }), "bottom-left");
+
+function actionLabel(a) {
+  const m = {
+    fly_to: "Vol vers le point",
+    hover: "Vol stationnaire",
+    gimbal_point: "Visee camera",
+    thermal_scan: "Balayage thermique",
+    zoom_inspect: "Inspection zoom",
+    return_to_home: "Retour au point de depart",
+  };
+  return m[a] || a || "";
+}
+
+function fmtDuration(s) {
+  if (s < 60) return s + " s";
+  const m = Math.floor(s / 60), r = s % 60;
+  return m + " min " + (r < 10 ? "0" : "") + r + " s";
+}
+
+// construit une icone de waypoint
+//   - repere (depart, fin, debut de prise) : grand marqueur numerote
+//   - waypoint courant : petit point sur la trajectoire
+// Tous restent survolables pour afficher le detail.
+function makeWpMarker(p, layer) {
+  const el = document.createElement("div");
+  el.style.borderRadius = "50%";
+  el.style.cursor = "pointer";
+  el.style.boxSizing = "border-box";
+
+  // couleur de fond selon le role
+  let bg = layer.colour;
+  let ring = "rgba(255,255,255,.85)";
+  if (p.role === "start") { bg = DATA.startColour; ring = "#fff"; }
+  else if (p.role === "end") { bg = DATA.endColour; ring = "#fff"; }
+  if (p.adjusted) { bg = DATA.adjustedColour; }
+
+  if (!p.milestone) {
+    // --- waypoint courant : petit point discret ---
+    el.style.width = "7px";
+    el.style.height = "7px";
+    el.style.background = bg;
+    el.style.border = "1px solid rgba(255,255,255,.55)";
+    el.style.opacity = "0.85";
+    return el;
+  }
+
+  // --- repere : grand marqueur numerote ---
+  const isEnd = (p.role === "start" || p.role === "end");
+  const size = isEnd ? 26 : 21;
+  el.style.width = size + "px";
+  el.style.height = size + "px";
+  el.style.display = "flex";
+  el.style.alignItems = "center";
+  el.style.justifyContent = "center";
+  el.style.fontSize = (isEnd ? 11 : 10) + "px";
+  el.style.fontWeight = "700";
+  el.style.boxShadow = "0 1px 4px rgba(0,0,0,.5)";
+  el.style.zIndex = isEnd ? "20" : "10";
+  el.textContent = p.index;
+
+  let fg = "#0e1116";
+  if (p.role === "start" || p.role === "end") { fg = "#ffffff"; }
+  el.style.color = fg;
+  el.style.background = bg;
+  el.style.border = (isEnd ? 3 : 2) + "px solid " + ring;
+  return el;
+}
+
+map.on("load", () => {
+  if (!map.getSource("mapbox-dem")) {
+    map.addSource("mapbox-dem", {
+      type: "raster-dem",
+      url: "mapbox://mapbox.mapbox-terrain-dem-v1",
+      tileSize: 512, maxzoom: 14
+    });
+  }
+  map.setTerrain({ source: "mapbox-dem", exaggeration: 1.3 });
+  try { map.setFog({}); } catch (e) {}
+  const bounds = new mapboxgl.LngLatBounds();
+  let legendHtml = "";
+  let statsHtml = "";
+
+  DATA.layers.forEach((layer, li) => {
+    const coords = layer.points.map(p => [p.lon, p.lat]);
+    coords.forEach(c => bounds.extend(c));
+
+    // --- trace de la trajectoire ---
+    const lineId = "line-" + li;
+    map.addSource(lineId, {
+      type: "geojson",
+      data: { type: "Feature",
+              geometry: { type: "LineString", coordinates: coords } },
+    });
+    map.addLayer({
+      id: lineId, type: "line", source: lineId,
+      paint: {
+        "line-color": layer.colour,
+        "line-width": 2.5,
+        "line-opacity": 0.9,
+        "line-dasharray": (layer.kind === "recon" || layer.kind === "link") ? [2, 1.5] : [1],
+      },
+    });
+
+    // --- fleches de direction le long de la trajectoire ---
+    const arrowFeatures = [];
+    for (let i = 1; i < layer.points.length; i++) {
+      const a = layer.points[i - 1], b = layer.points[i];
+      const ang = Math.atan2(b.lon - a.lon, b.lat - a.lat) * 180 / Math.PI;
+      arrowFeatures.push({
+        type: "Feature",
+        geometry: { type: "Point",
+                    coordinates: [(a.lon + b.lon) / 2, (a.lat + b.lat) / 2] },
+        properties: { bearing: ang },
+      });
+    }
+    const arrowId = "arrows-" + li;
+    map.addSource(arrowId, {
+      type: "geojson",
+      data: { type: "FeatureCollection", features: arrowFeatures },
+    });
+    map.addLayer({
+      id: arrowId, type: "symbol", source: arrowId,
+      layout: {
+        "text-field": "\u25B2",
+        "text-size": 11,
+        "text-rotate": ["get", "bearing"],
+        "text-rotation-alignment": "map",
+        "text-allow-overlap": true,
+      },
+      paint: { "text-color": layer.colour, "text-opacity": 0.85 },
+    });
+
+    // --- waypoints ---
+    layer.points.forEach(p => {
+      const el = makeWpMarker(p, layer);
+      let roleTag = "";
+      if (p.role === "start") {
+        roleTag = '<span class="wp-role" style="background:' +
+          DATA.startColour + ';color:#04210d">Depart</span><br>';
+      } else if (p.role === "end") {
+        roleTag = '<span class="wp-role" style="background:' +
+          DATA.endColour + ';color:#2a0604">Arrivee</span><br>';
+      }
+      let adjLine = "";
+      if (p.adjusted) {
+        adjLine = '<div class="wp-adj">Altitude remontee par l analyse '
+                + 'd obstacles</div>';
+      }
+      const popupHtml =
+        '<div class="wp-popup">' +
+        '<div class="wp-title">' + layer.name + ' - waypoint ' + p.index +
+        '</div>' + roleTag +
+        '<div>Altitude : ' + p.alt + ' m AGL</div>' +
+        '<div>Vitesse : ' + p.speed + ' m/s</div>' +
+        '<div>Camera : cap ' + p.gimbal_yaw + ' deg, ' +
+        'inclinaison ' + p.gimbal_pitch + ' deg</div>' +
+        '<div>' + actionLabel(p.action) + '</div>' +
+        adjLine + '</div>';
+
+      new mapboxgl.Marker({ element: el })
+        .setLngLat([p.lon, p.lat])
+        .setPopup(new mapboxgl.Popup({ offset: 14 }).setHTML(popupHtml))
+        .addTo(map);
+    });
+
+    // --- legende ---
+    const dashClass = layer.kind === "recon" ? " dash" : "";
+    legendHtml +=
+      '<div class="legend-item">' +
+      '<span class="swatch' + dashClass + '" style="color:' + layer.colour +
+      ';background:' + (layer.kind === "recon" ? "none" : layer.colour) +
+      '"></span>' +
+      '<span>' + layer.name + ' (' + layer.points.length + ' wp)</span>' +
+      '</div>';
+
+    // --- stats ---
+    let altMin = Infinity, altMax = -Infinity, adjCount = 0;
+    layer.points.forEach(p => {
+      altMin = Math.min(altMin, p.alt);
+      altMax = Math.max(altMax, p.alt);
+      if (p.adjusted) adjCount++;
+    });
+    const altTxt = (altMin === altMax) ? (altMin + " m")
+                   : (altMin + "-" + altMax + " m");
+    statsHtml +=
+      '<div><b>' + layer.name + '</b><br>' +
+      '&nbsp;&nbsp;parcours ' + layer.length_m + ' m' +
+      ' &middot; ~' + fmtDuration(layer.duration_s) + '<br>' +
+      '&nbsp;&nbsp;altitude ' + altTxt + ' AGL' +
+      (adjCount > 0 ? ' &middot; ' + adjCount + ' remonte(s)' : '') +
+      '</div>';
+  });
+
+  // --- marqueur de cible ---
+  if (DATA.target) {
+    const t = document.createElement("div");
+    t.style.width = "16px";
+    t.style.height = "16px";
+    t.style.borderRadius = "50%";
+    t.style.background = "transparent";
+    t.style.border = "2px solid " + DATA.targetColour;
+    t.style.boxShadow = "0 0 0 1px rgba(0,0,0,.6), 0 0 10px rgba(255,255,255,.4)";
+    const dotIn = document.createElement("div");
+    dotIn.style.width = "4px";
+    dotIn.style.height = "4px";
+    dotIn.style.borderRadius = "50%";
+    dotIn.style.background = DATA.targetColour;
+    dotIn.style.margin = "4px auto";
+    t.appendChild(dotIn);
+    new mapboxgl.Marker({ element: t })
+      .setLngLat([DATA.target.lon, DATA.target.lat])
+      .setPopup(new mapboxgl.Popup({ offset: 12 }).setHTML(
+        '<div class="wp-popup"><div class="wp-title">' +
+        DATA.target.label + '</div><div>Centre de la zone</div></div>'))
+      .addTo(map);
+    bounds.extend([DATA.target.lon, DATA.target.lat]);
+  }
+
+  // --- legende : reperes depart / arrivee / remonte / cible ---
+  legendHtml += '<div class="legend-sep"></div>';
+  legendHtml +=
+    '<div class="legend-item"><span class="dot" style="background:' +
+    DATA.startColour + '"></span><span>Point de depart</span></div>';
+  legendHtml +=
+    '<div class="legend-item"><span class="dot" style="background:' +
+    DATA.endColour + '"></span><span>Point d arrivee</span></div>';
+  const anyAdjusted = DATA.layers.some(l =>
+    l.points.some(p => p.adjusted));
+  if (anyAdjusted) {
+    legendHtml +=
+      '<div class="legend-item"><span class="dot" style="background:' +
+      DATA.adjustedColour + '"></span>' +
+      '<span>Waypoint remonte (obstacle)</span></div>';
+  }
+  if (DATA.target) {
+    legendHtml +=
+      '<div class="legend-item"><span class="dot" style="background:' +
+      'transparent;border-color:' + DATA.targetColour +
+      '"></span><span>Cible</span></div>';
+  }
+
+  document.getElementById("legend").innerHTML = legendHtml;
+  document.getElementById("stats").innerHTML = statsHtml;
+
+  if (!bounds.isEmpty()) {
+    map.fitBounds(bounds, { padding: 90, pitch: 60.0, maxZoom: 18 });
+  }
+});
+</script>
+</body>
+</html>

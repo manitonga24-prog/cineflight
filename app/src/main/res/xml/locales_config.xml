@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Langues supportees par l'app (per-app language, Android 13+ et backport
+     AppCompat). Ajouter ici chaque nouvelle langue (ex. <locale android:name="es"/>). -->
+<locale-config xmlns:android="http://schemas.android.com/apk/res/android">
+    <locale android:name="en" />
+    <locale android:name="fr" />
+</locale-config>

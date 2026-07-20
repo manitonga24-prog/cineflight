@@ -1,0 +1,125 @@
+// build.gradle (module: app) - CineFlight Solo (drone + YOLO embarque)
+// Le bloc plugins doit rester le premier bloc executable du script Gradle.
+plugins {
+    id 'com.android.application'
+    id 'org.jetbrains.kotlin.android'
+}
+
+def localProperties = new java.util.Properties()
+def localPropertiesFile = rootProject.file("local.properties")
+if (localPropertiesFile.exists()) {
+    localPropertiesFile.withInputStream { localProperties.load(it) }
+}
+def rtkV4ConsumerToken = localProperties.getProperty("CINEFLIGHT_RTK_V4_CONSUMER_TOKEN", "")
+def rtkV4WsUrl = localProperties.getProperty(
+    "CINEFLIGHT_RTK_V4_WS_URL",
+    "wss://cineflight.ca/api/v4/rtk/ws/consumer"
+)
+def rtkV4DeviceId = localProperties.getProperty(
+    "CINEFLIGHT_RTK_V4_DEVICE_ID",
+    "cineflight-subject-01"
+)
+
+def escapeBuildConfig = { String value ->
+    value.replace("\\", "\\\\").replace('"', '\\"')
+}
+
+android {
+    buildFeatures {
+        buildConfig true
+    }
+    namespace 'ca.cineflight.stage'
+    compileSdk 34
+    ndkVersion "29.0.14206865"
+    defaultConfig {
+        applicationId "ca.cineflight.solo"
+        minSdk 24
+        targetSdk 33
+        versionCode 42
+        versionName "4.2.0"
+        buildConfigField "String", "CINEFLIGHT_RTK_V4_CONSUMER_TOKEN", "\"${escapeBuildConfig(rtkV4ConsumerToken)}\""
+        buildConfigField "String", "CINEFLIGHT_RTK_V4_WS_URL", "\"${escapeBuildConfig(rtkV4WsUrl)}\""
+        buildConfigField "String", "CINEFLIGHT_RTK_V4_DEVICE_ID", "\"${escapeBuildConfig(rtkV4DeviceId)}\""
+        ndk {
+            abiFilters 'arm64-v8a', 'armeabi-v7a'
+        }
+        externalNativeBuild {
+            cmake {
+                arguments "-DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES=ON"
+            }
+        }
+    }
+    externalNativeBuild {
+        cmake {
+            version "3.22.1"
+            path file('src/main/jni/CMakeLists.txt')
+        }
+    }
+    buildTypes {
+        release {
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'),
+                          'proguard-rules.pro'
+        }
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+    kotlinOptions { jvmTarget = '17' }
+
+    testOptions {
+        unitTests.returnDefaultValues = true
+        // Robolectric : charge les ressources Android (R.string) dans les tests JVM qui
+        // construisent PiloteDrone (ctx.getString). Requis par ApplicationProvider.
+        unitTests.includeAndroidResources = true
+        // Transmet les interrupteurs de la ligne de commande (-Dsoak=1,
+        // -Dendurance=1, -Dsoak.minutes=N) au JVM des tests. Sans ceci,
+        // System.getProperty(...) est toujours null cote test et les tests
+        // d'endurance se sautent en silence (SKIPPED).
+        unitTests.all { test ->
+            test.systemProperty 'soak', System.getProperty('soak', '')
+            test.systemProperty 'soak.minutes', System.getProperty('soak.minutes', '')
+            test.systemProperty 'endurance', System.getProperty('endurance', '')
+        }
+    }
+    packagingOptions {
+        jniLibs {
+            useLegacyPackaging true
+            pickFirsts += ['lib/*/libstlport_shared.so',
+                           'lib/*/libDJIFlySafeCore.so',
+                           'lib/*/libdjifs_jni.so',
+                           'lib/*/libsfjni.so',
+                           'lib/*/libc++_shared.so',
+                           'lib/*/libomp.so']
+        }
+        resources {
+            excludes += ['META-INF/rxjava.properties', 'assets/location_map_gloffline_*']
+        }
+    }
+}
+dependencies {
+
+    testImplementation 'junit:junit:4.13.2'
+    // Robolectric : Context Android reel en test JVM (pour les tests qui construisent
+    // PiloteDrone, dont le constructeur appelle ctx.getString). Compatible compileSdk 34.
+    testImplementation 'org.robolectric:robolectric:4.11.1'
+    testImplementation 'androidx.test:core:1.5.0'
+    implementation 'androidx.exifinterface:exifinterface:1.3.7'
+    implementation 'androidx.core:core-ktx:1.13.1'
+    implementation 'androidx.appcompat:appcompat:1.7.0'
+    implementation 'androidx.print:print:1.0.0'
+    implementation 'androidx.cardview:cardview:1.0.0'
+    implementation 'com.google.android.material:material:1.12.0'
+    implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1'
+    implementation 'com.squareup.okhttp3:okhttp:4.12.0'
+    implementation 'com.dji:dji-sdk-v5-aircraft:5.18.0'
+    implementation 'org.osmdroid:osmdroid-android:6.1.18'
+    // Media3 Transformer - montage video (assemblage automatique)
+    implementation 'androidx.media3:media3-transformer:1.4.1'
+    implementation 'androidx.media3:media3-effect:1.4.1'
+    implementation 'androidx.media3:media3-common:1.4.1'
+    implementation 'androidx.media3:media3-exoplayer:1.4.1'
+    compileOnly 'com.dji:dji-sdk-v5-aircraft-provided:5.18.0'
+    runtimeOnly 'com.dji:dji-sdk-v5-networkImp:5.18.0'
+}

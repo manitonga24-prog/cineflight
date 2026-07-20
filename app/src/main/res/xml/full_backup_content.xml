@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Regles de sauvegarde complete (Android 11- / API <= 30).
+  Meme objectif que data_extraction_rules.xml : exclure le fichier des secrets de
+  diffusion (cle YouTube chiffree) de l'Auto Backup. minSdk=24 => ce format est
+  necessaire pour les appareils sous Android 11 et anterieurs.
+-->
+<full-backup-content>
+    <exclude
+        domain="sharedpref"
+        path="youtube_live_secrets.xml" />
+</full-backup-content>

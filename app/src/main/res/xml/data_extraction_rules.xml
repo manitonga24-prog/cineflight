@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Regles d'extraction de donnees (Android 12+ / API 31+).
+  On EXCLUT le fichier des secrets de diffusion (cle YouTube chiffree) de :
+    - cloud-backup  : sauvegarde Google Drive (Auto Backup) ;
+    - device-transfer : transfert d'appareil a appareil.
+  La cle de diffusion ne doit jamais quitter cet appareil par une sauvegarde.
+-->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude
+            domain="sharedpref"
+            path="youtube_live_secrets.xml" />
+    </cloud-backup>
+    <device-transfer>
+        <exclude
+            domain="sharedpref"
+            path="youtube_live_secrets.xml" />
+    </device-transfer>
+</data-extraction-rules>

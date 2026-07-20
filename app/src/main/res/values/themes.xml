@@ -1,0 +1,45 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Style des AlertDialog Material de CineFlight : sombre, coins arrondis, boutons accent. -->
+    <style name="DialogCineFlight" parent="ThemeOverlay.Material3.MaterialAlertDialog">
+        <item name="alertDialogStyle">@style/DialogCineFlight.Fond</item>
+        <item name="materialAlertDialogTitleTextStyle">@style/DialogCineFlight.Titre</item>
+        <item name="colorPrimary">#3A9BFF</item>
+        <item name="colorSurface">#1C2126</item>
+        <item name="colorOnSurface">#ECEFF1</item>
+        <item name="colorOnSurfaceVariant">#B0BEC5</item>
+        <item name="android:textAppearanceMedium">@style/DialogCineFlight.Item</item>
+        <item name="textAppearanceBodyMedium">@style/DialogCineFlight.Item</item>
+        <item name="buttonBarPositiveButtonStyle">@style/DialogCineFlight.Bouton</item>
+        <item name="buttonBarNegativeButtonStyle">@style/DialogCineFlight.Bouton</item>
+        <item name="buttonBarNeutralButtonStyle">@style/DialogCineFlight.Bouton</item>
+    </style>
+
+    <style name="DialogCineFlight.Fond" parent="MaterialAlertDialog.Material3">
+        <item name="shapeAppearanceOverlay">@style/DialogCineFlight.Forme</item>
+        <item name="backgroundTint">#1C2126</item>
+    </style>
+
+    <style name="DialogCineFlight.Forme" parent="">
+        <item name="cornerFamily">rounded</item>
+        <item name="cornerSize">18dp</item>
+    </style>
+
+    <style name="DialogCineFlight.Titre" parent="MaterialAlertDialog.Material3.Title.Text">
+        <item name="android:textColor">#ECEFF1</item>
+        <item name="android:textStyle">bold</item>
+        <item name="android:textSize">22sp</item>
+    </style>
+
+    <style name="DialogCineFlight.Bouton" parent="Widget.Material3.Button.TextButton.Dialog">
+        <item name="android:textColor">#3A9BFF</item>
+        <item name="android:textStyle">bold</item>
+        <item name="android:textSize">18sp</item>
+        <item name="android:minWidth">100dp</item>
+        <item name="android:padding">12dp</item>
+    </style>
+    <style name="DialogCineFlight.Item" parent="TextAppearance.Material3.BodyMedium">
+        <item name="android:textSize">18sp</item>
+        <item name="android:textColor">#ECEFF1</item>
+    </style>
+</resources>

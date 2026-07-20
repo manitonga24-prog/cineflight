@@ -1,0 +1,4 @@
+# RENOMME ce fichier en "local.properties" et ajuste le chemin du SDK Android.
+# Android Studio le génère normalement tout seul ; ceci est un exemple au cas où.
+# Windows (échappe les backslashes ou utilise des slashes) :
+sdk.dir=C\:\\Users\\Admin\\AppData\\Local\\Android\\Sdk

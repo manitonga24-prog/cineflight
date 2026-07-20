@@ -1,0 +1,138 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
+    package="ca.cineflight.stage">
+
+    <!-- Reseau : reception UDP des commandes du bridge -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
+
+    <!-- DJI SDK : USB (lien telecommande RC-N1) + etat -->
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
+    <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
+    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.BLUETOOTH" />
+    <uses-permission android:name="android.permission.VIBRATE" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-feature android:name="android.hardware.usb.host" android:required="false" />
+    <uses-feature android:name="android.hardware.usb.accessory" android:required="true" />
+
+    <application
+        android:name=".StageApplication"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:allowBackup="true"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:fullBackupContent="@xml/full_backup_content"
+        android:label="@string/app_name"
+        android:theme="@style/Theme.MaterialComponents.DayNight.NoActionBar"
+        android:usesCleartextTraffic="true"
+        android:localeConfig="@xml/locales_config"
+        tools:replace="android:usesCleartextTraffic"
+        tools:targetApi="33">
+
+        <!-- CLE D'API DJI : a remplacer par TA cle du portail developpeur DJI.
+             Doit etre liee au package ca.cineflight.stage. -->
+        <meta-data
+            android:name="com.dji.sdk.API_KEY"
+            android:value="6a7e85e2cf5cc343f7990238" />
+
+        <!-- POINT D'ENTREE : splash anime, puis lance MainActivity -->
+        <activity
+            android:name=".SplashActivity"
+            android:exported="true"
+            android:screenOrientation="landscape"
+            android:theme="@style/Theme.MaterialComponents.DayNight.NoActionBar"
+            android:configChanges="orientation|keyboardHidden|screenSize">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:screenOrientation="landscape"
+            android:configChanges="orientation|keyboardHidden|screenSize">
+            <!-- accessoire USB : la connexion a la RC-N1 reveille l'app -->
+            <intent-filter>
+                <action android:name="android.hardware.usb.action.USB_ACCESSORY_ATTACHED" />
+            </intent-filter>
+            <meta-data
+                android:name="android.hardware.usb.action.USB_ACCESSORY_ATTACHED"
+                android:resource="@xml/accessory_filter" />
+        </activity>
+
+
+        <activity
+            android:name=".MissionActivity"
+            android:exported="false"
+            android:screenOrientation="landscape"
+            android:configChanges="orientation|keyboardHidden|screenSize" />
+
+        <activity
+            android:name=".PlacementActivity"
+            android:exported="false"
+            android:screenOrientation="landscape"
+            android:configChanges="orientation|keyboardHidden|screenSize" />
+        <activity android:name=".TagsActivity" android:exported="false" android:screenOrientation="landscape" />
+        <activity android:name=".EditeurMacrosActivity" android:exported="false" android:screenOrientation="landscape" />
+        <activity android:name=".GuideActivity" android:exported="false" android:screenOrientation="landscape" />
+        <activity android:name=".FeedbackActivity" android:exported="false" android:screenOrientation="landscape" />
+        <activity android:name=".ReglagesActivity" android:exported="false" android:screenOrientation="landscape" />
+        <activity android:name=".DisclaimerActivity" android:exported="false" android:screenOrientation="landscape" />
+        <activity android:name=".CarteActivity" android:exported="false" android:screenOrientation="landscape" />
+        <activity android:name=".CartePointsActivity" android:exported="false" android:screenOrientation="landscape" />
+        <activity android:name=".CarteMissionActivity" android:exported="false" android:screenOrientation="landscape" />
+        <activity android:name=".TelemetrieActivity" android:exported="false" android:screenOrientation="portrait" />
+        <activity android:name=".voice.FlightVoiceTestActivity" android:exported="false" android:screenOrientation="portrait" />
+        <activity android:name=".Phase2Activity" android:exported="false" android:screenOrientation="portrait" />
+        <activity android:name=".MomentsJourneeActivity" android:exported="false" android:screenOrientation="landscape" />
+        <activity android:name=".Phase2bActivity" android:exported="false" android:screenOrientation="portrait" />
+        <activity android:name=".Phase3Activity" android:exported="false" android:screenOrientation="landscape" />
+        <activity android:name=".PhototequeActivity" android:exported="false" android:screenOrientation="landscape" />
+        <activity android:name=".VideosSDActivity" android:exported="false" android:screenOrientation="landscape" />
+        <activity android:name=".MontageActivity" android:exported="false" android:screenOrientation="landscape" />
+        <activity android:name=".MesMontagesActivity" android:exported="false" android:screenOrientation="landscape" />
+        <activity android:name=".ReconnaissanceActivity" android:exported="false" android:screenOrientation="landscape" />
+        <activity android:name=".TournageActivity" android:exported="false" android:screenOrientation="portrait" />
+        <activity android:name=".DefinitionSujetActivity" android:exported="false" android:screenOrientation="landscape" />
+        <activity android:name=".LoginActivity" android:exported="false" android:screenOrientation="landscape" />
+        <activity android:name=".LiveStreamActivity" android:exported="false" android:screenOrientation="landscape" />
+        <activity android:name=".MesMissionsActivity" android:exported="false" android:screenOrientation="landscape" />
+        <activity android:name="ca.cineflight.stage.sentinelle.SentinelleTestActivity" android:exported="true" android:screenOrientation="landscape" />
+        <activity android:name="ca.cineflight.stage.control.SuiviTestActivity" android:exported="true" android:screenOrientation="portrait" />
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
+        <activity
+            android:name="ca.cineflight.stage.control.CarteSujetRtkActivity"
+            android:exported="true"
+            android:screenOrientation="portrait" />
+
+        <!-- i18n : memorise automatiquement la langue choisie via AppCompatDelegate
+             (per-app language, retro-compatible en dessous d'Android 13). -->
+        <service
+            android:name="androidx.appcompat.app.AppLocalesMetadataHolderService"
+            android:enabled="false"
+            android:exported="false">
+            <meta-data
+                android:name="autoStoreLocales"
+                android:value="true" />
+        </service>
+        <activity android:name=".PremierVolActivity" android:exported="false" android:screenOrientation="landscape" />
+        </application>
+</manifest>

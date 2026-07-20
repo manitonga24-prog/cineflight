@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Filtre USB accessory : déclare les VID/PID des télécommandes DJI pour que
+     la connexion de la RC-N1 (via USB-C) réveille l'app. DJI publie la liste
+     à jour ; ces entrées couvrent les RC courantes. -->
+<resources>
+    <usb-accessory model="DJI" manufacturer="DJI" />
+    <usb-accessory model="WM160" manufacturer="DJI" />
+    <usb-accessory model="RM330" manufacturer="DJI" />
+</resources>

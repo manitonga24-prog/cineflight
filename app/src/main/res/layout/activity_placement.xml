@@ -1,0 +1,127 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#0d0f14">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="18dp">
+
+        <TextView
+            android:layout_width="wrap_content" android:layout_height="wrap_content"
+            android:text="@string/pl_lay_titre"
+            android:textSize="20sp" android:textStyle="bold"
+            android:textColor="#e8ecf2" android:paddingBottom="12dp" />
+
+        <!-- serveur -->
+        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:orientation="horizontal">
+            <EditText android:id="@+id/inpServeur"
+                android:layout_width="0dp" android:layout_height="wrap_content"
+                android:layout_weight="1" android:textColor="#e8ecf2"
+                android:hint="http://192.168.50.118:8095" android:textColorHint="#6b7280"
+                android:inputType="textUri" android:textSize="14sp" />
+            <Button android:id="@+id/btnRecharger"
+                android:layout_width="wrap_content" android:layout_height="wrap_content"
+                android:text="↻" android:textSize="18sp" android:backgroundTint="#26a69a" />
+        </LinearLayout>
+
+        <!-- tracker -->
+        <Button android:id="@+id/btnVerifTracker"
+            android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:text="@string/pl_lay_verifier" android:layout_marginTop="8dp"
+            android:backgroundTint="#5C6BC0" android:textColor="#ffffff" />
+        <TextView android:id="@+id/txtEtatTracker"
+            android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:text="—" android:textColor="#e8ecf2" android:textSize="14sp"
+            android:padding="10dp" android:background="#1d222c" android:layout_marginTop="6dp" />
+        <TextView android:id="@+id/txtCalib"
+            android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:text="—" android:textColor="#ffd699" android:textSize="13sp"
+            android:padding="10dp" android:background="#1a1410" android:layout_marginTop="6dp" />
+
+        <!-- CALIBRAGE -->
+        <TextView
+            android:layout_width="wrap_content" android:layout_height="wrap_content"
+            android:text="@string/pl_lay_calibrage"
+            android:textColor="#8b95a5" android:textSize="13sp"
+            android:paddingTop="16dp" android:paddingBottom="4dp" />
+        <TextView
+            android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:text="@string/pl_lay_calib_expl"
+            android:textColor="#8b95a5" android:textSize="12sp" android:paddingBottom="6dp" />
+
+        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:orientation="horizontal" android:gravity="center_vertical">
+            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+                android:text="@string/pl_lay_a_x" android:textColor="#e8ecf2" android:paddingEnd="4dp"/>
+            <EditText android:id="@+id/inpAx" android:layout_width="60dp" android:layout_height="wrap_content"
+                android:text="0" android:inputType="numberDecimal|numberSigned" android:textColor="#e8ecf2"/>
+            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+                android:text="@string/pl_lay_z" android:textColor="#e8ecf2" android:paddingStart="8dp" android:paddingEnd="4dp"/>
+            <EditText android:id="@+id/inpAz" android:layout_width="60dp" android:layout_height="wrap_content"
+                android:text="0" android:inputType="numberDecimal|numberSigned" android:textColor="#e8ecf2"/>
+            <Button android:id="@+id/btnCalibA" android:layout_width="0dp" android:layout_weight="1"
+                android:layout_height="wrap_content" android:text="@string/pl_lay_capturer_a"
+                android:layout_marginStart="8dp" android:backgroundTint="#37474F" android:textColor="#ffffff"/>
+        </LinearLayout>
+
+        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginTop="6dp">
+            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+                android:text="@string/pl_lay_b_x" android:textColor="#e8ecf2" android:paddingEnd="4dp"/>
+            <EditText android:id="@+id/inpBx" android:layout_width="60dp" android:layout_height="wrap_content"
+                android:text="2" android:inputType="numberDecimal|numberSigned" android:textColor="#e8ecf2"/>
+            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+                android:text="@string/pl_lay_z" android:textColor="#e8ecf2" android:paddingStart="8dp" android:paddingEnd="4dp"/>
+            <EditText android:id="@+id/inpBz" android:layout_width="60dp" android:layout_height="wrap_content"
+                android:text="0" android:inputType="numberDecimal|numberSigned" android:textColor="#e8ecf2"/>
+            <Button android:id="@+id/btnCalibB" android:layout_width="0dp" android:layout_weight="1"
+                android:layout_height="wrap_content" android:text="@string/pl_lay_capturer_b"
+                android:layout_marginStart="8dp" android:backgroundTint="#37474F" android:textColor="#ffffff"/>
+        </LinearLayout>
+
+        <Button android:id="@+id/btnCalibrer"
+            android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:text="@string/pl_lay_calibrer" android:layout_marginTop="6dp"
+            android:backgroundTint="#26a69a" android:textColor="#ffffff" />
+
+        <!-- PLACEMENT -->
+        <TextView
+            android:layout_width="wrap_content" android:layout_height="wrap_content"
+            android:text="@string/pl_lay_placement"
+            android:textColor="#8b95a5" android:textSize="13sp"
+            android:paddingTop="18dp" android:paddingBottom="4dp" />
+        <Spinner android:id="@+id/spFormation"
+            android:layout_width="match_parent" android:layout_height="48dp"
+            android:backgroundTint="#4db6ac" />
+        <Spinner android:id="@+id/spMusicien"
+            android:layout_width="match_parent" android:layout_height="48dp"
+            android:backgroundTint="#4db6ac" android:layout_marginTop="6dp" />
+        <TextView android:id="@+id/txtPosition"
+            android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:text="—" android:textColor="#e8ecf2" android:textSize="15sp"
+            android:padding="12dp" android:background="#1d222c" android:layout_marginTop="6dp"
+            android:fontFamily="monospace" />
+
+        <Button android:id="@+id/btnCapturer"
+            android:layout_width="match_parent" android:layout_height="56dp"
+            android:text="@string/pl_lay_capturer_pos"
+            android:textStyle="bold" android:textColor="#ffffff"
+            android:backgroundTint="#2E7D32" android:layout_marginTop="10dp" />
+        <Button android:id="@+id/btnSauver"
+            android:layout_width="match_parent" android:layout_height="56dp"
+            android:text="@string/pl_lay_sauver"
+            android:textStyle="bold" android:textColor="#ffffff"
+            android:backgroundTint="#1565C0" android:layout_marginTop="8dp" />
+
+        <TextView android:id="@+id/txtResultat"
+            android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:text="" android:textColor="#a5d6a7" android:textSize="14sp"
+            android:padding="12dp" android:background="#10261a" android:layout_marginTop="12dp" />
+
+    </LinearLayout>
+</ScrollView>

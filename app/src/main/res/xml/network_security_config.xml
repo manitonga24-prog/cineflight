@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Autorise le trafic HTTP EN CLAIR uniquement vers le serveur Explorer
+  (161.35.188.68). Tout le reste reste en HTTPS securise par defaut.
+
+  A placer dans : app/src/main/res/xml/network_security_config.xml
+  Puis referencer dans AndroidManifest.xml, dans la balise <application ...> :
+      android:networkSecurityConfig="@xml/network_security_config"
+-->
+<network-security-config>
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">161.35.188.68</domain>
+    </domain-config>
+</network-security-config>
