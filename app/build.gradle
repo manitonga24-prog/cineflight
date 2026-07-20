@@ -3,6 +3,11 @@
 plugins {
     id 'com.android.application'
     id 'org.jetbrains.kotlin.android'
+    id 'jacoco'   // couverture de code (preuve pour le dossier de securite)
+}
+
+jacoco {
+    toolVersion = "0.8.12"
 }
 
 def localProperties = new java.util.Properties()
@@ -56,6 +61,10 @@ android {
         }
     }
     buildTypes {
+        debug {
+            // Active la collecte de couverture JaCoCo lors des tests unitaires debug.
+            enableUnitTestCoverage true
+        }
         release {
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'),
@@ -122,4 +131,40 @@ dependencies {
     implementation 'androidx.media3:media3-exoplayer:1.4.1'
     compileOnly 'com.dji:dji-sdk-v5-aircraft-provided:5.18.0'
     runtimeOnly 'com.dji:dji-sdk-v5-networkImp:5.18.0'
+}
+
+// ============================================================================
+//  RAPPORT DE COUVERTURE JaCoCo — preuve chiffree pour le dossier de securite.
+//  Lancer :  .\gradlew jacocoSoccerReport
+//  Rapport HTML : app/build/reports/jacoco/jacocoSoccerReport/html/index.html
+//  Rapport XML  : app/build/reports/jacoco/jacocoSoccerReport/jacocoSoccerReport.xml
+//  Cible : le package pur ca.cineflight.stage.sport.soccer (composants testables).
+// ============================================================================
+tasks.register('jacocoSoccerReport', JacocoReport) {
+    dependsOn 'testDebugUnitTest'
+    group = 'verification'
+    description = 'Rapport de couverture JaCoCo du package soccer (dossier securite).'
+    // Toujours regenerer (sinon Gradle peut considerer la tache "up-to-date" et
+    // ne pas ecrire le rapport HTML/XML).
+    outputs.upToDateWhen { false }
+
+    reports {
+        html.required = true
+        xml.required = true
+        csv.required = false
+    }
+
+    // Classes compilees a mesurer : uniquement le package soccer (composants purs).
+    def kotlinClasses = fileTree(dir: "${buildDir}/tmp/kotlin-classes/debug",
+        includes: ['ca/cineflight/stage/sport/soccer/**'])
+    def javaClasses = fileTree(dir: "${buildDir}/intermediates/javac/debug/classes",
+        includes: ['ca/cineflight/stage/sport/soccer/**'])
+    classDirectories.setFrom(files(kotlinClasses, javaClasses))
+
+    // Sources correspondantes (pour l'affichage annote dans le rapport HTML).
+    sourceDirectories.setFrom(files(['src/main/java']))
+
+    // Donnees d'execution produites par les tests unitaires debug.
+    executionData.setFrom(fileTree(dir: buildDir,
+        includes: ['jacoco/testDebugUnitTest.exec', 'outputs/unit_test_code_coverage/**/*.ec']))
 }
