@@ -255,8 +255,11 @@ class Phase3Activity : AppCompatActivity() {
     // Tout est BORNE : meme si YOLO se trompe, il ne peut qu'appliquer une petite
     // correction de pointage, jamais un deplacement du drone.
     private val CONFIRM_YOLO       = true              // couche YOLO active ?
-    private val YOLO_CONF_MIN      = 0.35f             // confiance mini pour se fier a YOLO
-    private val YOLO_FRAIS_MS      = 600L              // detection consideree "fraiche" (ms)
+    // MIGRATION SafetyLimits (v54) : seuils de securite consommes depuis la SOURCE UNIQUE
+    // (ca.cineflight.stage.control.SafetyLimits). Ne PAS redeclarer de litteraux ici —
+    // garde anti-reintroduction : SafetyLimitsSourceGuardTest.
+    private val YOLO_CONF_MIN      = ca.cineflight.stage.control.SafetyLimits.YOLO_CONF_MIN
+    private val YOLO_FRAIS_MS      = ca.cineflight.stage.control.SafetyLimits.YOLO_FRAIS_MS
     private val GAIN_YAW_YOLO      = 40f               // deg/s par unite d'ecart image (borne ↓)
     private val YAW_YOLO_MAX_DPS   = 10f               // le nudge yaw YOLO ne depasse jamais ca
 
@@ -287,8 +290,8 @@ class Phase3Activity : AppCompatActivity() {
     // Flags derives du flag maitre TEST_E01_SIGNE_THROTTLE (declare plus haut, avant profilSujet).
     private val SOCCER_2D_REAL_ENABLED = TEST_E01_SIGNE_THROTTLE
     private val SOCCER_2D_MAX_VSPEED_MPS = if (TEST_E01_SIGNE_THROTTLE) 0.2f else 0f
-    private val SOCCER_BATT_MIN_PCT = 40           // batterie mini operationnelle pour le mode soccer
-    private val SOCCER_DIST_MAX_M = 200.0          // distance max operateur (decollage) <-> rail
+    private val SOCCER_BATT_MIN_PCT = ca.cineflight.stage.control.SafetyLimits.BATTERIE_MIN_PCT  // source unique (v54)
+    private val SOCCER_DIST_MAX_M = ca.cineflight.stage.control.SafetyLimits.DIST_OPERATEUR_MAX_M // source unique (v54)
     // ARMEMENT runtime : le mode soccer n'est "arme" que si l'operateur l'a active ET
     // que le flag reel l'autorise. Toute reprise pilote / arret d'urgence le desarme.
     // TEST E-01 : auto-arme le mode soccer quand le flag de test est actif (le bouton
@@ -409,9 +412,9 @@ class Phase3Activity : AppCompatActivity() {
     private val V_MAX_VERT   = 2.0f         // m/s vertical max
     private val GAIN_P       = 0.6f         // gain proportionnel (vitesse = P * ecart)
     private val ZONE_MORTE_M = 1.0          // en-deca, on ne bouge pas (anti-oscillation)
-    private val RTK_AGE_MAX_S = 2.0         // au-dela : HOVER (position perimee)
-    private val DIST_MAX_M   = 120.0        // decrochage : HOVER si drone trop loin
-    private val ALT_MAX_M    = 60.0         // plafond AGL
+    private val RTK_AGE_MAX_S = ca.cineflight.stage.control.SafetyLimits.RTK_AGE_MAX_S   // source unique (v54) ; au-dela : commande neutralisee/bloquee (E-03)
+    private val DIST_MAX_M   = ca.cineflight.stage.control.SafetyLimits.DIST_DECROCHAGE_M // source unique (v54)
+    private val ALT_MAX_M    = ca.cineflight.stage.control.SafetyLimits.ALT_MAX_M         // source unique (v54)
 
     // Serveur relais RTK (meme hote que CineFlight)
     private val URL_RTK = "http://161.35.188.68:8095/api/rtk/sujet"
@@ -2134,6 +2137,9 @@ class Phase3Activity : AppCompatActivity() {
             soccerWatchdogIndep.reset()
             soccerWatchdogIndep.armer()
             soccerWatchdogIndep.demarrer()
+            // TRAÇABILITÉ (v54) : identifiant de la configuration de sécurité qui gouverne
+            // cet armement (empreinte des seuils SafetyLimits) — exigence du dossier.
+            logSecuTest("SAFETYLIMITS ts=${System.currentTimeMillis()} config_id=${ca.cineflight.stage.control.SafetyLimits.CONFIG_ID} armement=soccer")
             majBoutonSoccer()
         }
     }

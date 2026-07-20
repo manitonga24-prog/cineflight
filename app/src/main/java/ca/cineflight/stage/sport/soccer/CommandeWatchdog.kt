@@ -74,6 +74,7 @@ class CommandeWatchdog(private val timeoutMs: Long = DEFAUT_TIMEOUT_MS) {
 
     companion object {
         /** 500 ms : couvre 5 periodes de la boucle 10 Hz avant de declarer le cycle mort. */
-        const val DEFAUT_TIMEOUT_MS: Long = 500L
+        // MIGRATION SafetyLimits (v54) : source unique — plus de littéral local.
+        val DEFAUT_TIMEOUT_MS: Long = ca.cineflight.stage.control.SafetyLimits.WATCHDOG_TIMEOUT_MS
     }
 }

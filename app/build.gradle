@@ -168,3 +168,33 @@ tasks.register('jacocoSoccerReport', JacocoReport) {
     executionData.setFrom(fileTree(dir: buildDir,
         includes: ['jacoco/testDebugUnitTest.exec', 'outputs/unit_test_code_coverage/**/*.ec', 'outputs/unit_test_code_coverage/**/*.exec']))
 }
+
+//  PERIMETRE SECURITE COMPLET (v54, audit V53-D03) : couverture soccer + control.
+//  Le package control contient des elements critiques de la chaine (mapping Virtual
+//  Stick, surveillance RC, SafetyLimits, snapshot, adaptateurs). Rapport separe pour
+//  pouvoir citer les deux perimetres dans le dossier.
+//  Lancer :  .\gradlew jacocoSecurityReport
+//  Rapport : app/build/reports/jacoco/jacocoSecurityReport/html/index.html (+ .xml)
+tasks.register('jacocoSecurityReport', JacocoReport) {
+    dependsOn 'testDebugUnitTest'
+    group = 'verification'
+    description = 'Rapport JaCoCo du perimetre securite complet : sport.soccer + control.'
+    outputs.upToDateWhen { false }
+
+    reports {
+        html.required = true
+        xml.required = true
+        csv.required = false
+    }
+
+    def kotlinClassesSec = fileTree(dir: "${buildDir}/tmp/kotlin-classes/debug",
+        includes: ['ca/cineflight/stage/sport/soccer/**', 'ca/cineflight/stage/control/**'])
+    def javaClassesSec = fileTree(dir: "${buildDir}/intermediates/javac/debug/classes",
+        includes: ['ca/cineflight/stage/sport/soccer/**', 'ca/cineflight/stage/control/**'])
+    classDirectories.setFrom(files(kotlinClassesSec, javaClassesSec))
+
+    sourceDirectories.setFrom(files(['src/main/java']))
+
+    executionData.setFrom(fileTree(dir: buildDir,
+        includes: ['jacoco/testDebugUnitTest.exec', 'outputs/unit_test_code_coverage/**/*.ec', 'outputs/unit_test_code_coverage/**/*.exec']))
+}

@@ -22,7 +22,8 @@ object SafetyLimits {
     /** Détection YOLO considérée « fraîche » (ms). Au-delà : action jugée non fiable → throttle 0. */
     const val YOLO_FRAIS_MS: Long = 600L
 
-    /** Position RTK considérée valide (s). Au-delà : HOVER immédiat (position périmée). */
+    /** Position RTK considérée valide (s). Au-delà : commande automatisée neutralisée/bloquée
+     *  (position périmée ; la réaction physique de l'aéronef est à caractériser par E-03). */
     const val RTK_AGE_MAX_S: Double = 2.0
 
     /** Confiance YOLO minimale pour se fier à une détection [0,1]. En dessous : non fiable. */
@@ -66,7 +67,28 @@ object SafetyLimits {
     /** Distance max opérateur (décollage) ↔ rail, garantie VLOS (m). */
     const val DIST_OPERATEUR_MAX_M: Double = 200.0
 
-    // ── CONFINEMENT (m) — buffer de contingence (dossier §4.2quater) ─────────────
-    /** Buffer de confinement robuste à vMax 2 m/s, pire cas (m). Majorant défendable. */
+    // ── CONFINEMENT (m) — buffer de contingence (dossier §4.2) ──────────────────
+    /** Buffer de confinement PROVISOIRE calculé à vMax 2 m/s (m). VALEUR DE CONCEPTION
+     *  non démontrée — ni « robuste » ni majorant tant que E-03/E-12/freinage/latences/
+     *  position/vent ne sont pas mesurés ; la mesure peut la confirmer, la réduire OU
+     *  l'augmenter (dossier §4.2.2, valeur maîtresse CONF-BUFFER-001). */
     const val BUFFER_CONFINEMENT_M: Double = 16.2
+
+    // ── IDENTIFIANT DE CONFIGURATION ────────────────────────────────────────────
+    /**
+     * Empreinte STABLE de l'ensemble des seuils ci-dessus (hex). Journalisée à l'armement
+     * (traçabilité dossier : quelle configuration de sécurité gouvernait ce vol). Toute
+     * modification d'une constante change cette empreinte → revue + re-test exigés.
+     */
+    val CONFIG_ID: String = run {
+        val valeurs = listOf(
+            YOLO_FRAIS_MS, RTK_AGE_MAX_S, YOLO_CONF_MIN, WATCHDOG_TIMEOUT_MS,
+            WATCHDOG_INDEP_PERIODE_MS, BOUCLE_PILOTE_HZ, BOUCLE_TEST_AXES_HZ, POLLER_RTK_HZ,
+            BATTERIE_MIN_PCT, V_MAX_HORIZ_MPS, V_MAX_VERT_MPS, SOCCER_2D_VMAX_MPS,
+            ALT_MAX_M, ALT_OP_MAX_M, DIST_DECROCHAGE_M, DIST_OPERATEUR_MAX_M,
+            BUFFER_CONFINEMENT_M,
+        ).joinToString("|") { it.toString() }
+        val md = java.security.MessageDigest.getInstance("SHA-256").digest(valeurs.toByteArray(Charsets.UTF_8))
+        md.take(8).joinToString("") { "%02x".format(it) }   // 16 hex = suffisant pour tracer
+    }
 }
