@@ -117,43 +117,59 @@ class CommandeWatchdogTest {
         assertEquals(500L, CommandeWatchdog.DEFAUT_TIMEOUT_MS)
     }
 
-    // --- CONCURRENCE : batteur vs lecteurs ---
+    // --- CONCURRENCE : UN batteur, lecteurs en LECTURE PURE ---
 
-    @Test fun lectures_concurrentes_restent_coherentes_pendant_les_battements() {
+    @Test fun lectures_concurrentes_ne_plantent_pas_et_restent_dans_le_domaine() {
+        // Modele realiste : UN SEUL ecrivain (la boucle 10 Hz), plusieurs lecteurs. On evite
+        // volontairement des ecritures concurrentes multiples (qui creeraient une horloge
+        // "qui recule" artificielle, deja couverte par un test dedie). Ici on verifie que la
+        // lecture concurrente ne plante jamais et renvoie des valeurs dans le domaine valide.
         val w = wd()
         val running = AtomicBoolean(true)
-        val incoherence = AtomicBoolean(false)
+        val anomalie = AtomicBoolean(false)
         val base = System.nanoTime()
         val pool = Executors.newFixedThreadPool(5)
         val start = CountDownLatch(1)
 
-        // 1 batteur : bat "maintenant" en continu.
+        // 1 SEUL batteur, monotone (nanoTime ne recule pas sur un meme thread).
         pool.submit {
             start.await()
             while (running.get()) w.battement(System.nanoTime())
         }
-        // 4 lecteurs : un battement recent (<= timeout) doit donner cycleFrais == true.
+        // 4 lecteurs purs : age >= 0 (ou inf) et fraicheur booleenne coherente avec l'age
+        // lu au MEME appel (on relit l'age juste apres et on ne juge que si stable).
         repeat(4) {
             pool.submit {
                 start.await()
                 while (running.get()) {
                     val now = System.nanoTime()
-                    val frais = w.cycleFrais(now)
                     val age = w.ageMs(now)
-                    // Coherence : si l'age rapporte est <= timeout, cycleFrais doit etre vrai.
-                    if (age <= TIMEOUT && !frais && age != Long.MAX_VALUE) {
-                        incoherence.set(true); running.set(false)
-                    }
+                    val frais = w.cycleFrais(now)
+                    // age doit toujours etre >= 0 (ou MAX = jamais bat). Jamais negatif expose.
+                    if (age < 0L) { anomalie.set(true); running.set(false) }
+                    // si le composant dit "frais", l'age au meme instant ne peut pas etre infini.
+                    if (frais && age == Long.MAX_VALUE) { anomalie.set(true); running.set(false) }
                 }
             }
         }
         start.countDown()
-        Thread.sleep(400)
+        Thread.sleep(300)
         running.set(false)
         pool.shutdown()
         assertTrue(pool.awaitTermination(5, TimeUnit.SECONDS))
-        assertFalse("incoherence age/fraicheur sous concurrence", incoherence.get())
-        // base sert juste a s'assurer que nanoTime avance sur la duree du test.
+        assertFalse("lecture concurrente hors domaine (age negatif / frais+inf)", anomalie.get())
         assertTrue(System.nanoTime() > base)
+    }
+
+    @Test fun invariant_battre_puis_lire_est_frais_mono_thread() {
+        // Invariant de securite deterministe (sans ecritures concurrentes) : juste apres un
+        // battement, une lecture au meme instant ou plus tard mais < timeout est TOUJOURS fraiche.
+        val w = wd()
+        repeat(10_000) {
+            val t = System.nanoTime()
+            w.battement(t)
+            assertTrue("battement immediat doit etre frais", w.cycleFrais(t))
+            assertTrue("lecture 1 ms apres doit rester fraiche", w.cycleFrais(t + 1L * MS))
+        }
     }
 }

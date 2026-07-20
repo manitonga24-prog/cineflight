@@ -1415,24 +1415,48 @@ class Phase3Activity : AppCompatActivity() {
      * Conditions cumulatives pour emettre : mode 2D actif + operateur arme + flag reel +
      * vMax>0 + SafetySnapshot valide + arbitre retient SoccerRail. Un seul manquant -> 0.
      */
-    private fun emettre2DSoccer(throttleMps: Float): String {
+    private fun emettre2DSoccer(throttleDemandeMps: Float, throttleSurveilleMps: Float): String {
         try {
+            val nowNanos = System.nanoTime()
             // CAPTURE ATOMIQUE (NC-T2-001) : un seul point de lecture des signaux bruts.
             // L'action est fiable en 2D si la confiance suffit OU si des joueurs sont vus.
             val actionFiable2D = (yoloConf >= YOLO_CONF_MIN || soccerNbJoueurs > 0)
-            val safety = capturerSnapshotSecurite(actionFiable = actionFiable2D).snapshot
+            val pub = capturerSnapshotSecurite(actionFiable = actionFiable2D)
+            val safety = pub.snapshot
             // DECISION : source UNIQUE du double verrou 2D + arbitre (Emission2DGuard, teste).
+            // Le throttle passe a l'arbitre est celui DEJA surveille par le watchdog.
             val r = ca.cineflight.stage.sport.soccer.Emission2DGuard.decider(
-                throttleMps = throttleMps,
+                throttleMps = throttleSurveilleMps,
                 flagReel = SOCCER_2D_REAL_ENABLED,
                 operateurArme = soccerArme,
                 vMaxMps = SOCCER_2D_MAX_VSPEED_MPS,
                 safety = safety,
             )
+            val throttleEmis = if (r.emettre) r.command.throttle else 0f
             if (r.emettre) {
                 // EMISSION REELLE : throttle seul (roll/pitch/yaw = 0).
                 pont.envoyerVitesses(0f, 0f, r.command.throttle, 0f,
                     ca.cineflight.stage.control.CommandOrigin.AUTOMATIC)
+            }
+            // JOURNALISATION HAUTE FREQUENCE (Phase 1.4) : trace generation + 11 conditions +
+            // etat watchdog + les 3 throttles (demande/surveille/emis) + verdict guard.
+            android.util.Log.i(
+                ca.cineflight.stage.sport.soccer.Soccer2DEmissionLog.TAG,
+                ca.cineflight.stage.sport.soccer.Soccer2DEmissionLog.ligne(
+                    tsMs = System.currentTimeMillis(),
+                    generation = pub.generation,
+                    throttleDemandeMps = throttleDemandeMps,
+                    throttleSurveilleMps = throttleSurveilleMps,
+                    throttleEmisMps = throttleEmis,
+                    watchdogFrais = soccerWatchdog.cycleFrais(nowNanos),
+                    watchdogAgeMs = soccerWatchdog.ageMs(nowNanos),
+                    etat = r.etat,
+                    raison = r.raison,
+                    snapshot = safety,
+                    emis = r.emettre,
+                )
+            )
+            if (r.emettre) {
                 return "ACTIVE throttle=%.2f m/s (%s)".format(r.command.throttle, r.raison)
             }
             return when (r.etat) {
@@ -1695,7 +1719,9 @@ class Phase3Activity : AppCompatActivity() {
                 // trop vieux), on force le throttle a 0 AVANT l'arbitre. Barriere independante
                 // du double verrou : un cycle mort ne peut plus commander de mouvement.
                 val throttle2DSurveille = soccerWatchdog.filtrerThrottle(throttle2D, System.nanoTime())
-                val emis2D = emettre2DSoccer(throttle2DSurveille)
+                // On transmet le throttle DEMANDE et le throttle SURVEILLE : le journal 1.4
+                // trace les deux (plus l'emis) pour reconstituer la decision apres coup.
+                val emis2D = emettre2DSoccer(throttle2D, throttle2DSurveille)
 
                 if (t != null) {
                     val srcTxt = if (multi) "%d joueurs".format(nbJoueurs) else "mono-cible"
