@@ -367,15 +367,19 @@ class PontDjiReel(private val obstacleGateWiring: ObstacleGateWiring) : PiloteDr
         // expose soit des setters, soit des champs directs. Le repère choisi est BODY
         // (drone) : on fournit pitch/roll déjà tournés. Modes en VITESSE.
         // Le SDK est alimente par cmdAEnvoyer (== cmdAssainie en Off/Mirror) : flux explicite.
-        val pPitch: Double
-        val pRoll: Double
-        if (INVERSER_ROLL_PITCH) { pPitch = cmdAEnvoyer.roll.toDouble(); pRoll = cmdAEnvoyer.pitch.toDouble() }
-        else { pPitch = cmdAEnvoyer.pitch.toDouble(); pRoll = cmdAEnvoyer.roll.toDouble() }
+        // MAPPING SDK (extrait dans MappingSdkVirtualStick, pur/testable — test "faux drone").
+        val map = MappingSdkVirtualStick.versParam(
+            pitch = cmdAEnvoyer.pitch, roll = cmdAEnvoyer.roll,
+            throttle = cmdAEnvoyer.throttle, yaw = cmdAEnvoyer.yaw,
+            inverserRollPitch = INVERSER_ROLL_PITCH,
+        )
+        val pPitch: Double = map.pitch
+        val pRoll: Double = map.roll
         val param = VirtualStickFlightControlParam().apply {
-            this.pitch = pPitch                                      // avant/arriere (m/s)
-            this.roll = pRoll                                        // gauche/droite (m/s)
-            this.yaw = cmdAEnvoyer.yaw.toDouble()                    // rotation (deg/s)
-            this.verticalThrottle = cmdAEnvoyer.throttle.toDouble()  // montee/descente (m/s)
+            this.pitch = map.pitch                                   // avant/arriere (m/s)
+            this.roll = map.roll                                     // gauche/droite (m/s)
+            this.yaw = map.yaw                                       // rotation (deg/s)
+            this.verticalThrottle = map.verticalThrottle            // montee/descente (m/s)
             this.verticalControlMode = VerticalControlMode.VELOCITY
             this.rollPitchControlMode = RollPitchControlMode.VELOCITY
             this.yawControlMode = YawControlMode.ANGULAR_VELOCITY
