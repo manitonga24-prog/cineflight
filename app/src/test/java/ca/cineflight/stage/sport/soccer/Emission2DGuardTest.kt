@@ -142,4 +142,105 @@ class Emission2DGuardTest {
         val r = G.decider(0.4f, flagReel = false, operateurArme = true, vMaxMps = 0f, safety = okSnapshot())
         assertNeutre(r)
     }
+
+    // ========================================================================
+    //  PREUVE DE COUVERTURE DU CHEMIN 2D PAR CONDITION (Phase 1.3, NC-T2).
+    //  Le test 2^9 prouve "aucune emission sauf tout-vrai" mais ne trace PAS
+    //  quelle condition a bloque. Ci-dessous : pour CHACUNE des 9 conditions
+    //  d'armement + les 2 conditions prioritaires, verrous 2D grands ouverts,
+    //  on prouve que ce SEUL faux bloque le chemin 2D REEL avec la bonne raison.
+    //  Cela demontre que les conditions de l'arbitre couvrent bien le chemin 2D
+    //  (et pas seulement le mode rail).
+    // ========================================================================
+
+    /** Decide sur le chemin 2D avec TOUS les verrous 2D ouverts (flag+arme+vMax>0). */
+    private fun decider2D(safety: FlightCommandArbiter.SafetySnapshot) =
+        G.decider(0.4f, flagReel = true, operateurArme = true, vMaxMps = 0.5f, safety = safety)
+
+    /** Prouve : ce snapshot bloque le chemin 2D, sans emission, avec la raison attendue. */
+    private fun assertBloque2D(safety: FlightCommandArbiter.SafetySnapshot, raisonAttendue: String) {
+        val r = decider2D(safety)
+        assertNeutre(r)
+        assertEquals(Emission2DGuard.Etat.BLOQUE_ARBITRE, r.etat)
+        assertEquals("raison arbitre inattendue", raisonAttendue, r.raison)
+    }
+
+    @Test fun c2d_virtualStick_indisponible_bloque_le_2D() {
+        assertBloque2D(okSnapshot().copy(virtualStickAvailable = false), "soccer bloque : virtual_stick_indisponible")
+    }
+
+    @Test fun c2d_etat_vol_incompatible_bloque_le_2D() {
+        assertBloque2D(okSnapshot().copy(inFlightCompatible = false), "soccer bloque : etat_vol_incompatible")
+    }
+
+    @Test fun c2d_rail_non_valide_bloque_le_2D() {
+        assertBloque2D(okSnapshot().copy(railLoadedAndValid = false), "soccer bloque : rail_non_valide")
+    }
+
+    @Test fun c2d_position_drone_perimee_bloque_le_2D() {
+        assertBloque2D(okSnapshot().copy(dronePositionFresh = false), "soccer bloque : position_drone_perimee")
+    }
+
+    @Test fun c2d_action_yolo_non_fiable_bloque_le_2D() {
+        assertBloque2D(okSnapshot().copy(actionFreshAndConfident = false), "soccer bloque : action_yolo_non_fiable")
+    }
+
+    @Test fun c2d_gate_obstacle_refuse_bloque_le_2D() {
+        // Cas special : soccerModeArmed + gate refuse est intercepte AVANT la liste des
+        // conditions -> raison "gate obstacle refuse" (etat BLOQUE_ARBITRE, pas d'emission).
+        val r = decider2D(okSnapshot().copy(obstacleGateAllows = false))
+        assertNeutre(r)
+        assertEquals(Emission2DGuard.Etat.BLOQUE_ARBITRE, r.etat)
+        assertEquals("gate obstacle refuse", r.raison)
+    }
+
+    @Test fun c2d_batterie_insuffisante_bloque_le_2D() {
+        assertBloque2D(okSnapshot().copy(batteryOk = false), "soccer bloque : batterie_insuffisante")
+    }
+
+    @Test fun c2d_corridor_occupe_bloque_le_2D() {
+        assertBloque2D(okSnapshot().copy(corridorClear = false), "soccer bloque : corridor_occupe")
+    }
+
+    @Test fun c2d_operateur_trop_loin_bloque_le_2D() {
+        assertBloque2D(okSnapshot().copy(operatorNearRail = false), "soccer bloque : operateur_trop_loin_du_rail")
+    }
+
+    // Conditions PRIORITAIRES sur le chemin 2D (interceptees avant la liste d'armement).
+
+    @Test fun c2d_pilote_override_ecarte_le_soccer_2D() {
+        val r = decider2D(okSnapshot().copy(pilotOverride = true))
+        assertFalse("pilote prioritaire -> pas d'emission soccer 2D", r.emettre)
+        assertEquals(Emission2DGuard.Etat.BLOQUE_ARBITRE, r.etat)
+    }
+
+    @Test fun c2d_urgence_bloque_le_soccer_2D() {
+        val r = decider2D(okSnapshot().copy(emergencyStop = true))
+        assertNeutre(r)
+        assertEquals(Emission2DGuard.Etat.BLOQUE_ARBITRE, r.etat)
+    }
+
+    @Test fun c2d_les_9_conditions_couvrent_le_chemin_2D_une_a_une() {
+        // Synthese : partant d'un snapshot parfait, invalider CHAQUE condition une a une
+        // bloque le 2D. Prouve qu'aucune condition n'est "morte" sur le chemin 2D.
+        val invalidations: List<(FlightCommandArbiter.SafetySnapshot) -> FlightCommandArbiter.SafetySnapshot> = listOf(
+            { it.copy(virtualStickAvailable = false) },
+            { it.copy(inFlightCompatible = false) },
+            { it.copy(railLoadedAndValid = false) },
+            { it.copy(dronePositionFresh = false) },
+            { it.copy(actionFreshAndConfident = false) },
+            { it.copy(obstacleGateAllows = false) },
+            { it.copy(batteryOk = false) },
+            { it.copy(corridorClear = false) },
+            { it.copy(operatorNearRail = false) },
+        )
+        assertEquals("il doit y avoir 9 conditions d'armement", 9, invalidations.size)
+        for ((i, invalide) in invalidations.withIndex()) {
+            val r = decider2D(invalide(okSnapshot()))
+            assertFalse("condition #$i invalidee mais 2D emet quand meme", r.emettre)
+            assertEquals("condition #$i : throttle doit etre 0", 0f, r.command.throttle, EPS)
+        }
+        // Et le controle positif : tout vrai emet bien.
+        assertTrue(decider2D(okSnapshot()).emettre)
+    }
 }
