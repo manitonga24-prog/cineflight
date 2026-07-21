@@ -1,14 +1,20 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  Autorise le trafic HTTP EN CLAIR uniquement vers le serveur Explorer
-  (161.35.188.68). Tout le reste reste en HTTPS securise par defaut.
+  Politique reseau CineFlight.
 
-  A placer dans : app/src/main/res/xml/network_security_config.xml
-  Puis referencer dans AndroidManifest.xml, dans la balise <application ...> :
+  Le serveur distant cineflight.ca est desormais joint UNIQUEMENT en HTTPS
+  (chiffre) : mot de passe, JWT et cle de diffusion protegees en transit.
+
+  Le trafic HTTP EN CLAIR n'est autorise QUE vers le serveur local LAN
+  192.168.50.118 (station au sol / test terrain, sans certificat public),
+  utilise par MissionActivity et PlacementActivity. Tout le reste est en
+  HTTPS securise par defaut.
+
+  Reference dans AndroidManifest.xml, balise <application ...> :
       android:networkSecurityConfig="@xml/network_security_config"
 -->
 <network-security-config>
     <domain-config cleartextTrafficPermitted="true">
-        <domain includeSubdomains="false">161.35.188.68</domain>
+        <domain includeSubdomains="false">192.168.50.118</domain>
     </domain-config>
 </network-security-config>

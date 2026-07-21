@@ -36,7 +36,7 @@ import java.net.URL
  */
 class MomentsJourneeActivity : AppCompatActivity() {
 
-    private val BASE_URL = "http://161.35.188.68:8095"
+    private val BASE_URL = "https://cineflight.ca"
 
     private lateinit var colonne: LinearLayout
     private lateinit var titreLieu: TextView

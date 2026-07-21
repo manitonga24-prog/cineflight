@@ -224,7 +224,7 @@ class PhototequeActivity : Activity() {
                 if (fichiers.size < 2) { runOnUiThread { statut.text = getString(R.string.ph_dl_echoue) }; return }
                 Thread {
                     ca.cineflight.stage.cine.PanoramaAssemblage.assembler(
-                        this, fichiers, "http://161.35.188.68:8095",
+                        this, fichiers, "https://cineflight.ca",
                         onProgres = { msg, pct -> runOnUiThread { statut.text = "$msg ($pct%)" } },
                         onFini = { f -> runOnUiThread {
                             if (f != null) { statut.text = getString(R.string.ph_pano_pret, f.name); partager(f) }

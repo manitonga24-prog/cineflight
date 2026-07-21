@@ -29,7 +29,9 @@ object CineAuth {
     private const val PREFS = "cineflight_auth"
     private const val CLE_TOKEN = "jwt_token"
     private const val CLE_USER = "username"
-    private const val BASE_URL = "http://161.35.188.68:8095"
+    // HTTPS (chiffre) : protege le JWT et la cle de diffusion en transit.
+    // Le reverse-proxy de cineflight.ca route /api/ vers uvicorn (verifie : 401 sur /api/stream_key).
+    private const val BASE_URL = "https://cineflight.ca"
 
     // ── Stockage local ──────────────────────────────────────────────
     private fun prefs(ctx: Context) =
@@ -113,7 +115,12 @@ object CineAuth {
      * Reponse serveur attendue (JSON) : { "stream_key": "xxxx-xxxx-...", "server_url": "rtmps://a.rtmps.youtube.com/live2" }
      * (server_url facultatif ; l'app garde son defaut si absent.)
      */
-    data class CleStream(val cle: String, val serveurUrl: String?)
+    /**
+     * @param cle       cle de diffusion YouTube (secret ; peut etre vide si seule la regie est configuree).
+     * @param serveurUrl URL serveur YouTube (defaut rtmps si absent).
+     * @param regieUrl  URL COMPLETE de la regie/distributeur (destination alternative ; vide si non configuree).
+     */
+    data class CleStream(val cle: String, val serveurUrl: String?, val regieUrl: String? = null)
 
     suspend fun recupererCleStream(ctx: Context): CleStream? =
         withContext(Dispatchers.IO) {
@@ -132,9 +139,11 @@ object CineAuth {
                 val texte = conn.inputStream.bufferedReader().use { it.readText() }
                 val o = JSONObject(texte)
                 val cle = o.optString("stream_key", "").trim()
-                if (cle.isBlank()) return@withContext null
+                val regie = o.optString("regie_url", "").trim().takeIf { it.isNotBlank() }
+                // Rien d'exploitable si ni cle YouTube ni URL regie.
+                if (cle.isBlank() && regie == null) return@withContext null
                 val serveur = o.optString("server_url", "").trim().takeIf { it.isNotBlank() }
-                CleStream(cle, serveur)
+                CleStream(cle, serveur, regie)
             } catch (_: Exception) {
                 null   // reseau/serveur indisponible : l'app retombe sur la saisie manuelle
             } finally {

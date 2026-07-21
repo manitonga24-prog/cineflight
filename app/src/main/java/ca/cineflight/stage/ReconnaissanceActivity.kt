@@ -26,11 +26,11 @@ import java.net.URL
  *   5. L'app affiche T (position 3D réelle du sujet) + avertissements, et propose
  *      de générer la mission de tournage autour de T (écran TournageActivity).
  *
- * Réseau : HttpURLConnection vers http://161.35.188.68:8095.
+ * Réseau : HttpURLConnection vers https://cineflight.ca.
  */
 class ReconnaissanceActivity : AppCompatActivity() {
 
-    private val BASE_URL = "http://161.35.188.68:8095"
+    private val BASE_URL = "https://cineflight.ca"
     private val CODE_CHOISIR_PHOTOS = 5001
     private val CODE_DOSSIER = 5002
 

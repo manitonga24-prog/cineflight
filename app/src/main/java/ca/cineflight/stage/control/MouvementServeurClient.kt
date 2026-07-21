@@ -42,7 +42,7 @@ data class RtkSujet(
 )
 
 class MouvementServeurClient(
-    private val baseUrl: String = "http://161.35.188.68:8095"
+    private val baseUrl: String = "https://cineflight.ca"
 ) {
     private val http = OkHttpClient()
     private val executor = Executors.newSingleThreadExecutor()

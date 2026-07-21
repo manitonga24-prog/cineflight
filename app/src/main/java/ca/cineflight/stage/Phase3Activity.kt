@@ -426,7 +426,7 @@ class Phase3Activity : AppCompatActivity() {
     private val ALT_MAX_M    = ca.cineflight.stage.control.SafetyLimits.ALT_MAX_M         // source unique (v54)
 
     // Serveur relais RTK (meme hote que CineFlight)
-    private val URL_RTK = "http://161.35.188.68:8095/api/rtk/sujet"
+    private val URL_RTK = "https://cineflight.ca/api/rtk/sujet"
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)

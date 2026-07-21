@@ -18,7 +18,7 @@ import java.net.URL
  */
 object ClientTrajectoireSuivi {
 
-    private const val BASE_URL = "http://161.35.188.68:8095"
+    private const val BASE_URL = "https://cineflight.ca"
 
     /** Trajectoire prévue + seuils + paramètres, ou present=false si aucune. */
     data class TrajectoireSuivi(

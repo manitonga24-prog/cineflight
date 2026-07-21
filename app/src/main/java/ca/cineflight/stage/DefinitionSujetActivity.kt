@@ -72,7 +72,7 @@ class DefinitionSujetActivity : AppCompatActivity() {
     private lateinit var spinnerType: Spinner
     private lateinit var info: TextView
 
-    private val baseUrl = "http://161.35.188.68:8095"
+    private val baseUrl = "https://cineflight.ca"
 
     // types : libellé visible -> est-ce un polygone fermé (true) ou polyligne (false)
     // 1re entrée = invitation vide : AUCUN type par défaut (l'usager doit choisir).

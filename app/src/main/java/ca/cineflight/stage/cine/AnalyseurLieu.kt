@@ -242,7 +242,7 @@ data class RapportLieu(
  * baseUrl par defaut = serveur DigitalOcean. Modifiable si l'adresse change.
  */
 class AnalyseurLieuServeur(
-    private val baseUrl: String = "http://161.35.188.68:8095"
+    private val baseUrl: String = "https://cineflight.ca"
 ) : AnalyseurLieu {
 
     /** Derniere erreur rencontree (pour diagnostic a l'ecran). */

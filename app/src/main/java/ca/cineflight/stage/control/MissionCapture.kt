@@ -305,7 +305,7 @@ class CaptureStore(ctx: Context) : SQLiteOpenHelper(ctx.applicationContext, BD, 
 
 object CaptureSync {
     private const val TAG = "CaptureSync"
-    private const val URL_ENVOI = "http://161.35.188.68:8095/api/mission-capture"
+    private const val URL_ENVOI = "https://cineflight.ca/api/mission-capture"
 
     /**
      * Vide la file d'attente vers le serveur, en arriere-plan. Ne fait RIEN si

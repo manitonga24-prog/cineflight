@@ -1430,7 +1430,7 @@ class MainActivity : AppCompatActivity() {
     private fun envoyerAckAndroidTest() {
         lifecycleScope.launch(Dispatchers.IO) {
             try {
-                val url = java.net.URL("http://161.35.188.68:8095/api/mouvement/ack")
+                val url = java.net.URL("https://cineflight.ca/api/mouvement/ack")
                 val connection = url.openConnection() as java.net.HttpURLConnection
 
                 connection.requestMethod = "POST"
@@ -1696,7 +1696,7 @@ class MainActivity : AppCompatActivity() {
     // --- Assemblage panorama 360 (serveur Hugin) ---
     private var mediaDronePano: ca.cineflight.stage.control.MediaDrone? = null
     private var dernierPanoramaNb: Int = 0
-    private val SERVEUR_PANO = "http://161.35.188.68:8095"
+    private val SERVEUR_PANO = "https://cineflight.ca"
 
     /** Recupere les N dernieres photos du drone (carte SD), les envoie au serveur
      *  pour assemblage 360 haute qualite, renvoie l'image finale.

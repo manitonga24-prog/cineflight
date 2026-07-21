@@ -16,7 +16,7 @@ import kotlin.math.sin
  */
 object SoloRtkPrediction {
 
-    private const val SERVER = "http://161.35.188.68:8095"
+    private const val SERVER = "https://cineflight.ca"
     private const val DEVICE_ID = "samsung_SM_A546W"
     private const val TAG = "CineFlightACK"
 

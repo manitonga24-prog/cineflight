@@ -16,7 +16,7 @@ import java.net.URL
  */
 object ClientRtkSujet {
 
-    private const val LEGACY_BASE_URL = "http://161.35.188.68:8095"
+    private const val LEGACY_BASE_URL = "https://cineflight.ca"
 
     enum class StatutRtk { FIX, FLOAT, GPS, LOST }
 

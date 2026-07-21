@@ -19,7 +19,7 @@ import java.net.URL
  */
 object ConditionsVol {
 
-    private const val BASE_URL = "http://161.35.188.68:8095"
+    private const val BASE_URL = "https://cineflight.ca"
 
     data class Facteur(val feu: String, val texte: String, val detail: String = "")
     data class Conditions(

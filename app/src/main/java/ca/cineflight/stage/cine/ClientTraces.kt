@@ -25,7 +25,7 @@ import java.net.URLEncoder
  */
 object ClientTraces {
 
-    private const val BASE_URL = "http://161.35.188.68:8095"
+    private const val BASE_URL = "https://cineflight.ca"
 
     /** Vue LEGERE d'un trace (liste). */
     data class ResumeTrace(

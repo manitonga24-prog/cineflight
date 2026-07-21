@@ -185,7 +185,7 @@ class LoginActivity : AppCompatActivity() {
     private fun envoyerAckAndroidTestLogin() {
         Thread {
             try {
-                val url = java.net.URL("http://161.35.188.68:8095/api/mouvement/ack")
+                val url = java.net.URL("https://cineflight.ca/api/mouvement/ack")
                 val connection = url.openConnection() as java.net.HttpURLConnection
 
                 connection.requestMethod = "POST"
@@ -230,7 +230,7 @@ class LoginActivity : AppCompatActivity() {
         Thread {
             try {
                 // 1) Lire la position RTK du sujet depuis le serveur
-                val rtkUrl = java.net.URL("http://161.35.188.68:8095/api/rtk/sujet")
+                val rtkUrl = java.net.URL("https://cineflight.ca/api/rtk/sujet")
                 val rtkConnection = rtkUrl.openConnection() as java.net.HttpURLConnection
                 rtkConnection.requestMethod = "GET"
                 rtkConnection.connectTimeout = 5000
@@ -276,7 +276,7 @@ class LoginActivity : AppCompatActivity() {
                 }
 
                 // 2) Renvoyer un ACK au serveur pour confirmer que Android a lu le RTK
-                val ackUrl = java.net.URL("http://161.35.188.68:8095/api/mouvement/ack")
+                val ackUrl = java.net.URL("https://cineflight.ca/api/mouvement/ack")
                 val ackConnection = ackUrl.openConnection() as java.net.HttpURLConnection
 
                 ackConnection.requestMethod = "POST"
@@ -336,7 +336,7 @@ class LoginActivity : AppCompatActivity() {
 
     private fun lireRtkEtEnvoyerVerdictPolling(iteration: Int) {
         try {
-            val rtkUrl = java.net.URL("http://161.35.188.68:8095/api/rtk/sujet")
+            val rtkUrl = java.net.URL("https://cineflight.ca/api/rtk/sujet")
             val rtkConnection = rtkUrl.openConnection() as java.net.HttpURLConnection
             rtkConnection.requestMethod = "GET"
             rtkConnection.connectTimeout = 5000
@@ -381,7 +381,7 @@ class LoginActivity : AppCompatActivity() {
                 else -> "LOW_QUALITY"
             }
 
-            val ackUrl = java.net.URL("http://161.35.188.68:8095/api/mouvement/ack")
+            val ackUrl = java.net.URL("https://cineflight.ca/api/mouvement/ack")
             val ackConnection = ackUrl.openConnection() as java.net.HttpURLConnection
 
             ackConnection.requestMethod = "POST"
@@ -427,7 +427,7 @@ class LoginActivity : AppCompatActivity() {
     private fun testerPreviewMouvement4mLogin() {
         Thread {
             try {
-                val rtkUrl = java.net.URL("http://161.35.188.68:8095/api/rtk/sujet")
+                val rtkUrl = java.net.URL("https://cineflight.ca/api/rtk/sujet")
                 val rtkConnection = rtkUrl.openConnection() as java.net.HttpURLConnection
                 rtkConnection.requestMethod = "GET"
                 rtkConnection.connectTimeout = 5000
@@ -502,7 +502,7 @@ class LoginActivity : AppCompatActivity() {
                     -Math.toDegrees(kotlin.math.atan2(verticalDeltaM, horizontalDistanceM))
                 }
 
-                val ackUrl = java.net.URL("http://161.35.188.68:8095/api/mouvement/ack")
+                val ackUrl = java.net.URL("https://cineflight.ca/api/mouvement/ack")
                 val ackConnection = ackUrl.openConnection() as java.net.HttpURLConnection
 
                 ackConnection.requestMethod = "POST"
@@ -573,7 +573,7 @@ class LoginActivity : AppCompatActivity() {
         Thread {
             try {
                 fun lireRtkJson(): org.json.JSONObject {
-                    val url = java.net.URL("http://161.35.188.68:8095/api/rtk/sujet")
+                    val url = java.net.URL("https://cineflight.ca/api/rtk/sujet")
                     val connection = url.openConnection() as java.net.HttpURLConnection
                     connection.requestMethod = "GET"
                     connection.connectTimeout = 5000
@@ -640,7 +640,7 @@ class LoginActivity : AppCompatActivity() {
                     else -> "LOW_QUALITY"
                 }
 
-                val ackUrl = java.net.URL("http://161.35.188.68:8095/api/mouvement/ack")
+                val ackUrl = java.net.URL("https://cineflight.ca/api/mouvement/ack")
                 val ackConnection = ackUrl.openConnection() as java.net.HttpURLConnection
                 ackConnection.requestMethod = "POST"
                 ackConnection.connectTimeout = 5000
@@ -698,7 +698,7 @@ class LoginActivity : AppCompatActivity() {
         Thread {
             try {
                 fun lireRtkJson(): org.json.JSONObject {
-                    val url = java.net.URL("http://161.35.188.68:8095/api/rtk/sujet")
+                    val url = java.net.URL("https://cineflight.ca/api/rtk/sujet")
                     val connection = url.openConnection() as java.net.HttpURLConnection
                     connection.requestMethod = "GET"
                     connection.connectTimeout = 5000
@@ -812,7 +812,7 @@ class LoginActivity : AppCompatActivity() {
                     -Math.toDegrees(kotlin.math.atan2(verticalDeltaM, horizontalDistanceM))
                 }
 
-                val ackUrl = java.net.URL("http://161.35.188.68:8095/api/mouvement/ack")
+                val ackUrl = java.net.URL("https://cineflight.ca/api/mouvement/ack")
                 val ackConnection = ackUrl.openConnection() as java.net.HttpURLConnection
                 ackConnection.requestMethod = "POST"
                 ackConnection.connectTimeout = 5000

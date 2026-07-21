@@ -30,7 +30,7 @@ import kotlin.concurrent.thread
  */
 class TournageActivity : AppCompatActivity() {
 
-    private val BASE_URL = "http://161.35.188.68:8095"
+    private val BASE_URL = "https://cineflight.ca"
 
     private var sujetLat = 0.0
     private var sujetLon = 0.0

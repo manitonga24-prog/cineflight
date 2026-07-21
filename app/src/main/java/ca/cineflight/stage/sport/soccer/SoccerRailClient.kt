@@ -10,14 +10,14 @@ import java.net.URL
  * SoccerRailClient — charge le profil SOCCER_RAIL depuis le serveur CineFlight Web
  * (GET /api/soccer_rail/profil), dessine dans preview3d. Le JSON est parse par
  * [SoccerRailProfileParser] (deja teste). Meme style HTTP que le reste du projet
- * (HttpURLConnection, base 161.35.188.68:8095, appel sur Dispatchers.IO).
+ * (HttpURLConnection, base cineflight.ca (HTTPS), appel sur Dispatchers.IO).
  *
  * Fail-safe : au moindre probleme (reseau, absent, JSON invalide), retourne null.
  * L'appelant garde alors son rail d'essai / n'active pas le mouvement.
  */
 object SoccerRailClient {
 
-    private const val BASE_URL = "http://161.35.188.68:8095"
+    private const val BASE_URL = "https://cineflight.ca"
 
     /** Resultat du chargement, pour distinguer les cas cote UI. */
     sealed interface Resultat {

@@ -22,7 +22,7 @@ import java.net.URL
  */
 object ClientClicker {
 
-    private const val BASE_URL = "http://161.35.188.68:8095"
+    private const val BASE_URL = "https://cineflight.ca"
 
     /** Commandes possibles (miroir de la liste blanche serveur). */
     enum class Commande {

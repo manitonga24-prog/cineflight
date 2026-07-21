@@ -115,21 +115,39 @@ class LiveStreamActivity : AppCompatActivity() {
      * SECURITE : la cle n'est jamais journalisee ni affichee ; seul l'etat "enregistree" l'est.
      */
     private fun synchroniserCleDepuisCompte() {
-        // Sur le chemin regie, la cle YouTube n'est pas pertinente : on ne synchronise pas.
-        if (destinationRegie()) return
+        // Recupere du compte web : cle YouTube ET/OU URL Regie. On applique selon la
+        // destination courante (aucun geste requis sur le telephone dans les deux cas).
         lifecycleScope.launch {
             val res = ca.cineflight.stage.cine.CineAuth.recupererCleStream(applicationContext)
             if (res != null) {
-                service.enregistrerCle(res.cle)     // stockage chiffre local (comme la saisie)
-                // Si le compte fournit aussi une URL serveur, on l'applique (sinon defaut conserve).
-                res.serveurUrl?.let { serveur ->
-                    champUrlServeur.setText(serveur)
-                    memoriserUrlServeur(serveur)
+                // 1) Cle YouTube : toujours memorisee localement (utile des qu'on repasse en YouTube).
+                if (res.cle.isNotBlank()) {
+                    service.enregistrerCle(res.cle)     // stockage chiffre local (comme la saisie)
+                }
+                // 2) URL Regie : memorisee dans PREF_URL_REGIE (comme la saisie manuelle regie).
+                res.regieUrl?.takeIf { it.isNotBlank() }?.let { regie ->
+                    memoriserUrlRegie(regie)
+                }
+
+                if (destinationRegie()) {
+                    // Destination active = Regie : on pre-remplit l'URL regie du compte.
+                    res.regieUrl?.takeIf { it.isNotBlank() }?.let { regie ->
+                        champUrlServeur.setText(regie)
+                        info("URL Regie recuperee depuis votre compte CineFlight.")
+                    }
+                } else {
+                    // Destination active = YouTube : URL serveur du compte (sinon defaut conserve).
+                    res.serveurUrl?.let { serveur ->
+                        champUrlServeur.setText(serveur)
+                        memoriserUrlServeur(serveur)
+                    }
+                    if (res.cle.isNotBlank()) {
+                        info("Cle de diffusion recuperee depuis votre compte CineFlight.")
+                    }
                 }
                 rafraichirEtatCle()
-                info("Cle de diffusion recuperee depuis votre compte CineFlight.")
             }
-            // Aucun message si echec : l'ecran reste utilisable avec la cle locale eventuelle.
+            // Aucun message si echec : l'ecran reste utilisable avec les valeurs locales eventuelles.
         }
     }
 
@@ -177,6 +195,13 @@ class LiveStreamActivity : AppCompatActivity() {
         getSharedPreferences("cineflight", MODE_PRIVATE)
             .edit()
             .putString(PREF_URL_SERVEUR, serveur.trim())
+            .apply()
+    }
+
+    private fun memoriserUrlRegie(url: String) {
+        getSharedPreferences("cineflight", MODE_PRIVATE)
+            .edit()
+            .putString(PREF_URL_REGIE, url.trim())
             .apply()
     }
 
