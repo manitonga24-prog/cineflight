@@ -100,6 +100,37 @@ class LiveStreamActivity : AppCompatActivity() {
         chargerQualite()
         rafraichirEtatCle()
         observerMoteur()
+        synchroniserCleDepuisCompte()   // recupere AUTO la cle du compte web (aucun geste requis)
+    }
+
+    /**
+     * SYNCHRONISATION AUTOMATIQUE de la cle de diffusion depuis le compte web.
+     *
+     * La cle est saisie UNE FOIS sur cineflight.ca (Parametres) puis stockee cote serveur.
+     * A l'ouverture de cet ecran, l'app la recupere (canal authentifie JWT) et l'enregistre
+     * localement, sans que l'utilisateur ait a copier-coller quoi que ce soit sur le
+     * telephone. Silencieux et non bloquant : en cas d'echec (non connecte / pas de cle /
+     * reseau), on garde simplement la cle deja presente sur l'appareil (le cas echeant).
+     *
+     * SECURITE : la cle n'est jamais journalisee ni affichee ; seul l'etat "enregistree" l'est.
+     */
+    private fun synchroniserCleDepuisCompte() {
+        // Sur le chemin regie, la cle YouTube n'est pas pertinente : on ne synchronise pas.
+        if (destinationRegie()) return
+        lifecycleScope.launch {
+            val res = ca.cineflight.stage.cine.CineAuth.recupererCleStream(applicationContext)
+            if (res != null) {
+                service.enregistrerCle(res.cle)     // stockage chiffre local (comme la saisie)
+                // Si le compte fournit aussi une URL serveur, on l'applique (sinon defaut conserve).
+                res.serveurUrl?.let { serveur ->
+                    champUrlServeur.setText(serveur)
+                    memoriserUrlServeur(serveur)
+                }
+                rafraichirEtatCle()
+                info("Cle de diffusion recuperee depuis votre compte CineFlight.")
+            }
+            // Aucun message si echec : l'ecran reste utilisable avec la cle locale eventuelle.
+        }
     }
 
     // --- Destination : YouTube ou Regie/distributeur ---

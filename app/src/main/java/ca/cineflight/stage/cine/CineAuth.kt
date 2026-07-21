@@ -100,6 +100,77 @@ object CineAuth {
             }
         }
 
+    // ── Cle de diffusion YouTube (partagee via le compte, serveur CineFlight) ──
+    /**
+     * Recupere la CLE DE DIFFUSION enregistree sur le compte via /api/stream_key.
+     * Permet de saisir la cle UNE FOIS sur le web (Parametres) et de la retrouver
+     * automatiquement dans l'app, sans copier-coller sur le telephone.
+     *
+     * SECURITE : la cle est un secret ; ne JAMAIS la journaliser. Transitee sur le
+     * canal authentifie (Bearer JWT), comme les missions. Renvoie null si absente,
+     * non connecte, ou reseau indisponible.
+     *
+     * Reponse serveur attendue (JSON) : { "stream_key": "xxxx-xxxx-...", "server_url": "rtmps://a.rtmps.youtube.com/live2" }
+     * (server_url facultatif ; l'app garde son defaut si absent.)
+     */
+    data class CleStream(val cle: String, val serveurUrl: String?)
+
+    suspend fun recupererCleStream(ctx: Context): CleStream? =
+        withContext(Dispatchers.IO) {
+            val t = token(ctx) ?: return@withContext null
+            val url = URL("$BASE_URL/api/stream_key")
+            var conn: HttpURLConnection? = null
+            try {
+                conn = (url.openConnection() as HttpURLConnection).apply {
+                    requestMethod = "GET"
+                    connectTimeout = 15000
+                    readTimeout = 20000
+                    setRequestProperty("Authorization", "Bearer $t")
+                    setRequestProperty("Accept", "application/json")
+                }
+                if (conn.responseCode != 200) return@withContext null
+                val texte = conn.inputStream.bufferedReader().use { it.readText() }
+                val o = JSONObject(texte)
+                val cle = o.optString("stream_key", "").trim()
+                if (cle.isBlank()) return@withContext null
+                val serveur = o.optString("server_url", "").trim().takeIf { it.isNotBlank() }
+                CleStream(cle, serveur)
+            } catch (_: Exception) {
+                null   // reseau/serveur indisponible : l'app retombe sur la saisie manuelle
+            } finally {
+                conn?.disconnect()
+            }
+        }
+
+    /**
+     * (Optionnel) Enregistre la cle depuis l'app vers le compte (/api/stream_key, POST).
+     * Utile si tu veux aussi pouvoir POUSSER une cle depuis le telephone. Renvoie true
+     * si le serveur a accepte. Le stockage principal reste le web (Parametres).
+     */
+    suspend fun envoyerCleStream(ctx: Context, cle: String): Boolean =
+        withContext(Dispatchers.IO) {
+            val t = token(ctx) ?: return@withContext false
+            val url = URL("$BASE_URL/api/stream_key")
+            var conn: HttpURLConnection? = null
+            try {
+                val corps = JSONObject().apply { put("stream_key", cle.trim()) }
+                conn = (url.openConnection() as HttpURLConnection).apply {
+                    requestMethod = "POST"
+                    doOutput = true
+                    connectTimeout = 15000
+                    readTimeout = 20000
+                    setRequestProperty("Authorization", "Bearer $t")
+                    setRequestProperty("Content-Type", "application/json")
+                }
+                conn.outputStream.use { it.write(corps.toString().toByteArray()) }
+                conn.responseCode in 200..299
+            } catch (_: Exception) {
+                false
+            } finally {
+                conn?.disconnect()
+            }
+        }
+
     /** Verifie que le jeton stocke est encore valide (via /api/auth/me).
      *  Utile au lancement : si false, demander une reconnexion. */
     suspend fun verifierToken(ctx: Context): Boolean =

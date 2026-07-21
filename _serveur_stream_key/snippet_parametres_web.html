@@ -1,0 +1,80 @@
+<!--
+  CINEFLIGHT — Champ "Clé de diffusion YouTube" à ajouter dans la page Paramètres du web.
+  À COLLER dans l'onglet Paramètres (par ex. sous une nouvelle section "Diffusion").
+
+  Comportement : au chargement, on récupère la clé existante (GET /api/stream_key) et on
+  affiche seulement son état (jamais la clé en clair). Au clic sur "Enregistrer", on
+  envoie la nouvelle clé (POST /api/stream_key). L'app Android la récupère ensuite
+  automatiquement au démarrage de l'écran Live.
+
+  Remplace TON_JWT_ICI() par TA façon d'obtenir le jeton de l'utilisateur connecté
+  (celle déjà utilisée par le reste de ton site pour appeler /api/...).
+-->
+
+<section id="section-diffusion" style="margin-top:24px">
+  <h3>Diffusion en direct (YouTube)</h3>
+  <p style="color:#9aa">
+    Colle ici ta <strong>clé de diffusion</strong> YouTube (YouTube Studio →
+    Paramètres du flux → Clé de flux). Elle sera récupérée automatiquement par
+    l'application Android — aucun copier-coller à faire sur le téléphone.
+  </p>
+
+  <div id="etat-cle-diffusion" style="margin:8px 0;color:#7fce7f">Chargement…</div>
+
+  <input id="champ-cle-diffusion" type="password" autocomplete="off"
+         placeholder="Clé de diffusion (xxxx-xxxx-xxxx-xxxx)"
+         style="width:100%;max-width:420px;padding:8px;border-radius:8px;border:1px solid #345" />
+
+  <div style="margin-top:8px">
+    <button id="btn-enregistrer-cle" style="padding:8px 16px;border-radius:8px;cursor:pointer">
+      Enregistrer la clé
+    </button>
+  </div>
+
+  <p style="color:#c88;font-size:12px;margin-top:8px">
+    ⚠ La clé de diffusion est un secret : ne la partage avec personne.
+    Quiconque la possède peut diffuser sur ta chaîne.
+  </p>
+</section>
+
+<script>
+(function () {
+  // >>> ADAPTE ceci : renvoie le JWT de l'utilisateur connecté (comme le reste de ton site). <<<
+  function jwt() {
+    // ex. return localStorage.getItem("token");
+    return (window.CINEFLIGHT_TOKEN || localStorage.getItem("token") || "");
+  }
+
+  const etat = document.getElementById("etat-cle-diffusion");
+  const champ = document.getElementById("champ-cle-diffusion");
+  const btn = document.getElementById("btn-enregistrer-cle");
+
+  function headers() {
+    return { "Authorization": "Bearer " + jwt(), "Content-Type": "application/json" };
+  }
+
+  // 1) Au chargement : afficher seulement l'ÉTAT (jamais la clé en clair).
+  fetch("/api/stream_key", { headers: headers() })
+    .then(function (r) {
+      if (r.status === 200) { etat.textContent = "✓ Une clé est enregistrée sur ton compte."; etat.style.color = "#7fce7f"; }
+      else if (r.status === 404) { etat.textContent = "Aucune clé enregistrée pour l'instant."; etat.style.color = "#caa"; }
+      else if (r.status === 401) { etat.textContent = "Connecte-toi pour gérer ta clé de diffusion."; etat.style.color = "#e99"; }
+      else { etat.textContent = "État indisponible (" + r.status + ")."; etat.style.color = "#e99"; }
+    })
+    .catch(function () { etat.textContent = "État indisponible (réseau)."; etat.style.color = "#e99"; });
+
+  // 2) Enregistrer la nouvelle clé.
+  btn.addEventListener("click", function () {
+    const cle = (champ.value || "").trim();
+    if (!cle) { etat.textContent = "Saisis d'abord une clé."; etat.style.color = "#e99"; return; }
+    btn.disabled = true;
+    fetch("/api/stream_key", { method: "POST", headers: headers(), body: JSON.stringify({ stream_key: cle }) })
+      .then(function (r) {
+        if (r.ok) { etat.textContent = "✓ Clé enregistrée. L'app la récupérera automatiquement."; etat.style.color = "#7fce7f"; champ.value = ""; }
+        else { etat.textContent = "Échec de l'enregistrement (" + r.status + ")."; etat.style.color = "#e99"; }
+      })
+      .catch(function () { etat.textContent = "Échec (réseau)."; etat.style.color = "#e99"; })
+      .finally(function () { btn.disabled = false; });
+  });
+})();
+</script>
