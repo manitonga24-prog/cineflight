@@ -704,24 +704,23 @@ class Phase3Activity : AppCompatActivity() {
                 setTextColor(0xFFFFCC00.toInt()); textSize = 15f
                 setPadding(0, dp(16), 0, dp(4))
             })
-            val Sc = ca.cineflight.stage.sport.soccer.EssaiE03Log.Scenario
-            val scenarios = listOf(
-                "01 Arrêt normal" to Sc.E03_01_ARRET_NORMAL,
-                "02 Zéro maintenu" to Sc.E03_02_ZERO_MAINTENU,
-                "03 Gel thread émission" to Sc.E03_03_GEL_THREAD,
-                "04 Exception" to Sc.E03_04_EXCEPTION,
-                "05 Crash processus" to Sc.E03_05_CRASH_PROCESS,
-                "06 Arrière-plan" to Sc.E03_06_ARRIERE_PLAN,
-                "07 Déconnexion USB" to Sc.E03_07_DECONNEXION_USB,
-                "08 Perte MSDK" to Sc.E03_08_PERTE_MSDK,
-                "09 Perte RC" to Sc.E03_09_PERTE_RC,
-                "10 Cmd verticale +puis cessation" to Sc.E03_10_DERNIERE_CMD_POSITIVE,
-                "11 Sortie VS explicite" to Sc.E03_11_SORTIE_VS_EXPLICITE,
-                "12 Batterie faible station" to Sc.E03_12_BATTERIE_STATION,
-                "13 Surcharge thermique" to Sc.E03_13_SURCHARGE_THERMIQUE,
-                "FS1 Perte RC (failsafe)" to Sc.E03_FS1_PERTE_RC,
-                "FS2 Perte station (failsafe)" to Sc.E03_FS2_PERTE_STATION,
-                "FS3 Cmd persistante (failsafe)" to Sc.E03_FS3_CMD_PERSISTANTE,
+            val scenarios: List<Pair<String, ca.cineflight.stage.sport.soccer.EssaiE03Log.Scenario>> = listOf(
+                "01 Arrêt normal" to ca.cineflight.stage.sport.soccer.EssaiE03Log.Scenario.E03_01_ARRET_NORMAL,
+                "02 Zéro maintenu" to ca.cineflight.stage.sport.soccer.EssaiE03Log.Scenario.E03_02_ZERO_MAINTENU,
+                "03 Gel thread émission" to ca.cineflight.stage.sport.soccer.EssaiE03Log.Scenario.E03_03_GEL_THREAD,
+                "04 Exception" to ca.cineflight.stage.sport.soccer.EssaiE03Log.Scenario.E03_04_EXCEPTION,
+                "05 Crash processus" to ca.cineflight.stage.sport.soccer.EssaiE03Log.Scenario.E03_05_CRASH_PROCESS,
+                "06 Arrière-plan" to ca.cineflight.stage.sport.soccer.EssaiE03Log.Scenario.E03_06_ARRIERE_PLAN,
+                "07 Déconnexion USB" to ca.cineflight.stage.sport.soccer.EssaiE03Log.Scenario.E03_07_DECONNEXION_USB,
+                "08 Perte MSDK" to ca.cineflight.stage.sport.soccer.EssaiE03Log.Scenario.E03_08_PERTE_MSDK,
+                "09 Perte RC" to ca.cineflight.stage.sport.soccer.EssaiE03Log.Scenario.E03_09_PERTE_RC,
+                "10 Cmd verticale +puis cessation" to ca.cineflight.stage.sport.soccer.EssaiE03Log.Scenario.E03_10_DERNIERE_CMD_POSITIVE,
+                "11 Sortie VS explicite" to ca.cineflight.stage.sport.soccer.EssaiE03Log.Scenario.E03_11_SORTIE_VS_EXPLICITE,
+                "12 Batterie faible station" to ca.cineflight.stage.sport.soccer.EssaiE03Log.Scenario.E03_12_BATTERIE_STATION,
+                "13 Surcharge thermique" to ca.cineflight.stage.sport.soccer.EssaiE03Log.Scenario.E03_13_SURCHARGE_THERMIQUE,
+                "FS1 Perte RC (failsafe)" to ca.cineflight.stage.sport.soccer.EssaiE03Log.Scenario.E03_FS1_PERTE_RC,
+                "FS2 Perte station (failsafe)" to ca.cineflight.stage.sport.soccer.EssaiE03Log.Scenario.E03_FS2_PERTE_STATION,
+                "FS3 Cmd persistante (failsafe)" to ca.cineflight.stage.sport.soccer.EssaiE03Log.Scenario.E03_FS3_CMD_PERSISTANTE,
             )
             for ((libelle, sc) in scenarios) {
                 racine.addView(bouton(libelle, 0xFF6A1B9A.toInt()) { e03Declencher(sc) }.apply {
