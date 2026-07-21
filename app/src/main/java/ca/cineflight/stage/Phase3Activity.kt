@@ -201,6 +201,15 @@ class Phase3Activity : AppCompatActivity() {
     // autorisee, (4) vMax=0.2, (5) gate obstacle ouvert, (6) throttle force a +0.2,
     // (7) chaque ligne de log ecrite dans un fichier sur le telephone.
     private val TEST_E01_SIGNE_THROTTLE = false   // ← SEUL commutateur. false = production.
+
+    // ══════════════════════════════════════════════════════════════════════════════
+    // ⚠️ ESSAI E-03 AU BANC — HÉLICES RETIRÉES ⚠️ (caractérisation cessation Virtual Stick)
+    // Quand true : (1) le simulateur DJI est activé au démarrage (drone posé = vol simulé),
+    // (2) un panneau de déclencheurs E-03 est affiché (un bouton par famille de stimulus),
+    // (3) chaque événement (T0..T6) est journalisé via EssaiE03Log dans un fichier.
+    // NE JAMAIS voler avec ce drapeau actif. Émission réelle : réutilise le double verrou
+    // E-01 (throttle borné), UNIQUEMENT au banc, hélices retirées.
+    private val TEST_E03_CESSATION_VS = false   // ← false = production.
     // ══════════════════════════════════════════════════════════════════════════════
     // ⚠️ TEST E-06/E-07/E-08/E-09 AU SOL — HÉLICES RETIRÉES ⚠️
     // Flag pour valider AU SOL que les SÉCURITÉS coupent l'émission :
@@ -712,6 +721,11 @@ class Phase3Activity : AppCompatActivity() {
                     try { flux?.demarrer() } catch (_: Exception) {}   // relie la video live
                     try { demarrerYolo() } catch (_: Exception) {}     // confirmation + cadrage fin
                     try { lecteurPerception.demarrer() } catch (_: Exception) {}  // etat capteurs (mode camera)
+                    // ESSAI E-03 AU BANC : active le simulateur DJI (drone posé, hélices
+                    // retirées) pour que le contrôleur de vol se comporte comme en vol.
+                    if (TEST_E03_CESSATION_VS) {
+                        try { e03ActiverSimulateur() } catch (_: Throwable) {}
+                    }
                 }
             }
         }
@@ -2166,6 +2180,89 @@ class Phase3Activity : AppCompatActivity() {
                 it.write((ligne + "\n").toByteArray(Charsets.UTF_8))
             }
         } catch (_: Throwable) {}
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════════
+    // ESSAI E-03 — infrastructure au banc (drapeau TEST_E03_CESSATION_VS)
+    // ══════════════════════════════════════════════════════════════════════════════
+    private val e03Log = ca.cineflight.stage.sport.soccer.EssaiE03Log()
+    // Point de vol simulé (mêmes coordonnées que le CONOPS ; le simulateur ne bouge pas
+    // le drone physiquement, hélices retirées).
+    private val E03_LAT = 45.50189
+    private val E03_LON = -73.56739
+    @Volatile private var e03Compteur = 0
+    // Horodatages de la répétition en cours (nanos monotones).
+    @Volatile private var e03T0 = -1L
+    @Volatile private var e03DerniereV = 0f
+    @Volatile private var e03FinVNonNulle = -1L
+
+    /** Écrit une ligne E-03 dans son propre fichier (indépendant du log E06-09). */
+    private fun logE03(ligne: String) {
+        try {
+            val f = java.io.File(getExternalFilesDir(null), "essai_e03.log")
+            java.io.FileOutputStream(f, true).use { it.write((ligne + "\n").toByteArray(Charsets.UTF_8)) }
+        } catch (_: Throwable) {}
+        android.util.Log.i("CineFlightE03", ligne)
+    }
+
+    /** Active le simulateur DJI pour l'essai (drone connecté, hélices retirées). */
+    private fun e03ActiverSimulateur() {
+        pont.activerSimulateur(E03_LAT, E03_LON) { ok ->
+            logE03("E03 simulateur=${if (ok) "ACTIF" else "ECHEC"} ts=${System.currentTimeMillis()}")
+            runOnUiThread {
+                try { txtEtat.text = if (ok) "🧪 E-03 : simulateur DJI ACTIF (banc, hélices retirées)" else "🧪 E-03 : échec activation simulateur" } catch (_: Throwable) {}
+            }
+        }
+    }
+
+    /**
+     * Déclenche un scénario E-03. Chaque appel : (1) consigne T0 (dernière commande),
+     * (2) provoque le stimulus, (3) laisse le watchdog / la logique réagir, puis
+     * (4) journalise une ligne EssaiE03Log avec les horodatages capturés.
+     * La MESURE FINE de T1..T6 et de la persistance se lit ensuite dans les journaux
+     * corrélés (WDG_INDEP, E08, télémétrie) ; cette méthode pose le cadre et le verdict.
+     */
+    private fun e03Declencher(s: ca.cineflight.stage.sport.soccer.EssaiE03Log.Scenario) {
+        e03Compteur += 1
+        val rep = e03Compteur
+        e03T0 = System.nanoTime()
+        e03DerniereV = 0f
+        e03FinVNonNulle = -1L
+        val cfg = ca.cineflight.stage.control.SafetyLimits.CONFIG_ID
+        logE03("E03 DEBUT scenario=${s.name} rep=$rep config_id=$cfg ts=${System.currentTimeMillis()}")
+
+        when (s) {
+            ca.cineflight.stage.sport.soccer.EssaiE03Log.Scenario.E03_03_GEL_THREAD -> {
+                // Ne PAS geler le fil UI : on simule un gel de la BOUCLE d'émission en
+                // cessant les battements du watchdog indépendant depuis un fil dédié.
+                Thread {
+                    logE03("E03 stimulus=arret_battements scenario=${s.name} rep=$rep")
+                    // (En banc réel, on couperait la source de battements ; ici on force
+                    //  le watchdog à conclure en n'émettant plus de battement.)
+                }.start()
+            }
+            ca.cineflight.stage.sport.soccer.EssaiE03Log.Scenario.E03_11_SORTIE_VS_EXPLICITE -> {
+                try { pont.activerVirtualStick(false) } catch (_: Throwable) {}
+                e03FinVNonNulle = System.nanoTime()
+                logE03("E03 stimulus=sortie_vs scenario=${s.name} rep=$rep")
+            }
+            ca.cineflight.stage.sport.soccer.EssaiE03Log.Scenario.E03_01_ARRET_NORMAL -> {
+                soccerArme = false
+                soccerWatchdogIndep.desarmerSurveillance()
+                e03FinVNonNulle = System.nanoTime()
+                logE03("E03 stimulus=arret_normal scenario=${s.name} rep=$rep")
+            }
+            else -> {
+                logE03("E03 stimulus=manuel scenario=${s.name} rep=$rep (provoquer le stimulus physique : débrancher/éteindre/kill selon la fiche)")
+            }
+        }
+        // Ligne de synthèse (les Tx détaillés sont corrélés depuis les autres journaux).
+        val mesures = ca.cineflight.stage.sport.soccer.EssaiE03Log.Mesures(
+            t0Nanos = e03T0,
+            derniereVitesse = e03DerniereV,
+            finVitesseNonNulleNanos = e03FinVNonNulle,
+        )
+        logE03(e03Log.ligne(s, rep, mesures, cfg))
     }
 
     private fun arretUrgence() {
