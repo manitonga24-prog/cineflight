@@ -1,0 +1,7 @@
+# Donnees runtime (contiennent des secrets / fichiers uploades) - NE PAS committer
+stream_keys.json
+live_images/
+__pycache__/
+*.pyc
+# Sauvegardes horodatees
+*.bak_*

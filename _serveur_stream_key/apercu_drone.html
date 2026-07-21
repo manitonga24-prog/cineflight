@@ -1,0 +1,89 @@
+<!DOCTYPE html><html lang="fr"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CineFlight - Apercu</title>
+<style>
+:root{--bg:#0a1929;--bord:#1c3a5e;--txt:#eaf2fb;--sous:#9fb3c8;--accent:#4FC3F7}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--txt);
+font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;min-height:100vh;overflow:hidden}
+.vide{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;
+justify-content:center;text-align:center;padding:24px;
+background:radial-gradient(circle at 50% 35%,#14487f 0%,#0d2f57 45%,#081b33 100%)}
+.logo{font-size:24px;font-weight:800;margin-bottom:6px}.logo .c{color:var(--accent)}
+.att{display:inline-flex;align-items:center;gap:9px;font-size:14px;font-weight:600;color:#cfe0f2;margin-bottom:6px}
+.att .pt{width:10px;height:10px;border-radius:50%;background:#4FC3F7;animation:cl 1.2s infinite}
+@keyframes cl{0%,100%{opacity:1}50%{opacity:.25}}
+h2{margin:0 0 10px;font-size:18px}
+.heure{margin:2px 0 6px;font-size:14px;color:#8fd0ff;font-weight:600}
+.rebours{display:flex;gap:10px;margin:6px 0 12px}
+.rebours .bloc{min-width:62px;padding:10px 6px;background:rgba(79,195,247,.10);
+border:1px solid rgba(79,195,247,.30);border-radius:10px}
+.rebours .num{font-size:26px;font-weight:800;color:#fff;font-variant-numeric:tabular-nums}
+.rebours .lab{font-size:10px;text-transform:uppercase;letter-spacing:.08em;color:#9fc7e6;margin-top:2px}
+.vide p{margin:0;color:var(--sous);font-size:14px;max-width:420px}
+#drone{position:fixed;left:0;top:0;width:88px;height:auto;z-index:5;pointer-events:none;
+filter:drop-shadow(0 10px 16px rgba(0,0,0,.5));will-change:transform}
+#drone .helice{transform-origin:center;animation:tourner .12s linear infinite}
+@keyframes tourner{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}
+#lang{position:fixed;top:12px;right:14px;z-index:9;display:flex;
+border:1px solid var(--bord);border-radius:8px;overflow:hidden;background:rgba(15,42,77,.6)}
+#lang button{padding:6px 12px;border:0;background:transparent;color:var(--sous);font-size:12px;font-weight:700;cursor:pointer}
+#lang button.on{background:#1565C0;color:#fff}
+</style></head><body>
+<div id="lang"><button data-l="fr">FR</button><button data-l="en">EN</button></div>
+<div class="vide">
+<div class="logo"><span class="c">Cine</span>Flight</div>
+<div class="att"><span class="pt"></span> <span data-fr="En attente du direct" data-en="Waiting for the live">En attente du direct</span></div>
+<h2 data-fr="Le direct va bientot commencer" data-en="The live stream will start soon">Le direct va bientot commencer</h2>
+<div class="heure"><span data-fr="Direct prevu : 2026-07-25 19:00" data-en="Live scheduled : 2026-07-25 19:00">Direct prevu : 2026-07-25 19:00</span></div>
+<div class="rebours" id="reb" style="display:none">
+<div class="bloc"><div class="num" id="rj">00</div><div class="lab" data-fr="Jours" data-en="Days">Jours</div></div>
+<div class="bloc"><div class="num" id="rh">00</div><div class="lab" data-fr="Heures" data-en="Hours">Heures</div></div>
+<div class="bloc"><div class="num" id="rm">00</div><div class="lab" data-fr="Min" data-en="Min">Min</div></div>
+<div class="bloc"><div class="num" id="rs">00</div><div class="lab" data-fr="Sec" data-en="Sec">Sec</div></div></div>
+<p data-fr="La video apparaitra ici automatiquement des que la diffusion commence. Cette page se met a jour toute seule, reste ouverte." data-en="The video will appear here automatically as soon as the live starts. This page refreshes on its own, keep it open.">La video apparaitra ici automatiquement des que la diffusion commence. Cette page se met a jour toute seule, reste ouverte.</p>
+</div>
+<svg id="drone" viewBox="0 0 120 90" xmlns="http://www.w3.org/2000/svg">
+<g stroke="#4FC3F7" stroke-width="3" fill="none">
+<line x1="60" y1="52" x2="24" y2="26"/><line x1="60" y1="52" x2="96" y2="26"/>
+<line x1="60" y1="52" x2="24" y2="78"/><line x1="60" y1="52" x2="96" y2="78"/></g>
+<g fill="#0d2f57" stroke="#4FC3F7" stroke-width="2">
+<circle class="helice" cx="24" cy="26" r="13"/><circle class="helice" cx="96" cy="26" r="13"/>
+<circle class="helice" cx="24" cy="78" r="13"/><circle class="helice" cx="96" cy="78" r="13"/></g>
+<g class="helice" stroke="#8fd0ff" stroke-width="2"><line x1="16" y1="26" x2="32" y2="26"/><line x1="24" y1="18" x2="24" y2="34"/></g>
+<g class="helice" stroke="#8fd0ff" stroke-width="2"><line x1="88" y1="26" x2="104" y2="26"/><line x1="96" y1="18" x2="96" y2="34"/></g>
+<g class="helice" stroke="#8fd0ff" stroke-width="2"><line x1="16" y1="78" x2="32" y2="78"/><line x1="24" y1="70" x2="24" y2="86"/></g>
+<g class="helice" stroke="#8fd0ff" stroke-width="2"><line x1="88" y1="78" x2="104" y2="78"/><line x1="96" y1="70" x2="96" y2="86"/></g>
+<rect x="44" y="44" width="32" height="18" rx="6" fill="#123a63" stroke="#4FC3F7" stroke-width="2.5"/>
+<circle cx="60" cy="53" r="4" fill="#8fd0ff"/></svg>
+<script>(function(){var el=document.getElementById('drone');if(!el)return;
+var W=innerWidth,H=innerHeight;addEventListener('resize',function(){W=innerWidth;H=innerHeight;});
+var x=W*0.5,y=H*0.4,ang=Math.random()*6.28,sp=1.6,tang=ang,tsp=sp,last=0,chg=0;
+function step(ts){if(!last)last=ts;var dt=Math.min(40,ts-last);last=ts;
+if(ts>chg){chg=ts+1500+Math.random()*2500;tang=Math.random()*6.28;tsp=1.1+Math.random()*1.8;}
+var da=tang-ang;while(da>Math.PI)da-=6.28;while(da<-Math.PI)da+=6.28;
+ang+=da*0.02;sp+=(tsp-sp)*0.02;
+x+=Math.cos(ang)*sp*dt*0.06;y+=Math.sin(ang)*sp*dt*0.06;
+var M=110;if(x<-M)x=W+M;if(x>W+M)x=-M;if(y<-M)y=H+M;if(y>H+M)y=-M;
+var tilt=Math.cos(ang)*12;
+el.style.transform='translate('+x+'px,'+y+'px) rotate('+tilt+'deg)';
+requestAnimationFrame(step);}requestAnimationFrame(step);})();</script>
+<script>(function(){var q=new Date('2026-07-25T19:00');
+var reb=document.getElementById('reb');if(reb)reb.style.display='flex';
+function p(n){return(n<10?'0':'')+n;}
+function tick(){var d=q-new Date();if(d<=0){return;}
+var s=Math.floor(d/1000);var j=Math.floor(s/86400);s-=j*86400;
+var h=Math.floor(s/3600);s-=h*3600;var m=Math.floor(s/60);s-=m*60;
+document.getElementById('rj').textContent=p(j);document.getElementById('rh').textContent=p(h);
+document.getElementById('rm').textContent=p(m);document.getElementById('rs').textContent=p(s);}
+tick();setInterval(tick,1000);})();</script>
+<script>(function(){
+function applique(l){document.documentElement.lang=l;
+document.querySelectorAll('[data-fr]').forEach(function(e){var t=e.getAttribute('data-'+l);if(t!==null)e.textContent=t;});
+document.querySelectorAll('#lang button').forEach(function(b){b.classList.toggle('on',b.getAttribute('data-l')===l);});
+try{localStorage.setItem('cf_lang',l);}catch(e){}}
+var pref=null;try{pref=localStorage.getItem('cf_lang');}catch(e){}
+var nav=(navigator.language||'fr').toLowerCase();
+var lang=pref||(nav.indexOf('en')===0?'en':'fr');
+document.querySelectorAll('#lang button').forEach(function(b){b.onclick=function(){applique(b.getAttribute('data-l'));};});
+applique(lang);})();</script>
+</body></html>
