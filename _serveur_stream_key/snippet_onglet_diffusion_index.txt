@@ -1,0 +1,78 @@
+=====================================================================
+  CINEFLIGHT — Onglet "Diffusion" dans le modal Parametres (index.html)
+  A INSERER dans cineflight_web/static/index.html
+=====================================================================
+
+Ton modal Parametres utilise des onglets .cfTab + cfSwitchTab(tab) + des div #cfTab...
+On ajoute un onglet "Diffusion" qui gere la cle YouTube (stockee sur le compte via
+/api/stream_key, recuperee AUTOMATIQUEMENT par l'app Android).
+
+SAUVEGARDE D'ABORD :
+  cp cineflight_web/static/index.html cineflight_web/static/index.html.bak_diffusion
+
+------------------------------------------------------------------
+INSERTION 1 — l'onglet (apres la ligne "preferences", ~ligne 411)
+------------------------------------------------------------------
+        <div class="cfTab"            data-tab="diffusion"  onclick="cfSwitchTab('diffusion')">Diffusion</div>
+
+------------------------------------------------------------------
+INSERTION 2 — le panneau (a cote de #cfTabParrainage, ~ligne 424)
+------------------------------------------------------------------
+        <div id="cfTabDiffusion" style="display:none"></div>
+
+------------------------------------------------------------------
+INSERTION 3 — le rendu (dans cfSwitchTab, apres la ligne 'preferences', ~4174)
+------------------------------------------------------------------
+  if(tab==='diffusion') cfRendreDiffusion();
+
+------------------------------------------------------------------
+INSERTION 4 — la fonction (juste avant 'async function cfRendreParrainage', ~4400)
+------------------------------------------------------------------
+// ── ONGLET DIFFUSION : cle YouTube stockee sur le compte, recuperee AUTO par l'app ──
+async function cfRendreDiffusion(){
+  const host=document.getElementById('cfTabDiffusion');
+  if(!host) return;
+  host.innerHTML =
+    '<div style="font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:#8b949e;margin-bottom:8px">DIFFUSION EN DIRECT (YOUTUBE)</div>'+
+    '<p style="color:#9fb3c8;font-size:13px;margin:0 0 12px">Colle ta <b>cle de diffusion</b> YouTube (YouTube Studio → Parametres du flux → Cle de flux). '+
+    'Elle sera recuperee <b>automatiquement</b> par l\'application Android — aucun copier-coller a faire sur le telephone.</p>'+
+    '<div id="cfDiffEtat" style="margin:8px 0;color:#7fce7f;font-size:13px">Chargement…</div>'+
+    '<input id="cfDiffCle" type="password" autocomplete="off" placeholder="Cle de diffusion (xxxx-xxxx-xxxx-xxxx)" '+
+      'style="width:100%;max-width:420px;padding:10px 13px;background:#0F2A4D;border:0.5px solid #1c3a5e;border-radius:8px;color:#eaf2fb;font-size:14px;box-sizing:border-box">'+
+    '<div style="margin-top:10px"><button id="cfDiffSave" style="padding:9px 18px;border:0;border-radius:8px;background:#1565C0;color:#fff;cursor:pointer;font-size:14px">Enregistrer la cle</button></div>'+
+    '<p style="color:#e0a3a3;font-size:12px;margin-top:10px">⚠ La cle de diffusion est un secret : ne la partage avec personne.</p>';
+
+  const etat=document.getElementById('cfDiffEtat');
+  const inp =document.getElementById('cfDiffCle');
+  const btn =document.getElementById('cfDiffSave');
+  // ADAPTE si besoin le nom de la cle localStorage (voir cfToken() dans ton index.html)
+  const H=()=>({'Authorization':'Bearer '+(localStorage.getItem('cineflight_token')||''),'Content-Type':'application/json'});
+
+  try{
+    const r=await fetch('/api/stream_key',{headers:H()});
+    if(r.status===200){ etat.textContent='✓ Une cle est enregistree sur ton compte.'; etat.style.color='#7fce7f'; }
+    else if(r.status===404){ etat.textContent='Aucune cle enregistree pour l\'instant.'; etat.style.color='#caa'; }
+    else if(r.status===401){ etat.textContent='Connecte-toi pour gerer ta cle.'; etat.style.color='#e99'; }
+    else { etat.textContent='Etat indisponible ('+r.status+').'; etat.style.color='#e99'; }
+  }catch(e){ etat.textContent='Etat indisponible (reseau).'; etat.style.color='#e99'; }
+
+  btn.onclick=async function(){
+    const cle=(inp.value||'').trim();
+    if(!cle){ etat.textContent='Saisis d\'abord une cle.'; etat.style.color='#e99'; return; }
+    btn.disabled=true;
+    try{
+      const r=await fetch('/api/stream_key',{method:'POST',headers:H(),body:JSON.stringify({stream_key:cle})});
+      if(r.ok){ etat.textContent='✓ Cle enregistree. L\'app la recuperera automatiquement.'; etat.style.color='#7fce7f'; inp.value=''; }
+      else { etat.textContent='Echec de l\'enregistrement ('+r.status+').'; etat.style.color='#e99'; }
+    }catch(e){ etat.textContent='Echec (reseau).'; etat.style.color='#e99'; }
+    finally{ btn.disabled=false; }
+  };
+}
+
+------------------------------------------------------------------
+POINT A VERIFIER : le nom de la cle localStorage du token
+  grep -n "function cfToken\|localStorage.getItem" cineflight_web/static/index.html | head
+  Si ce n'est pas 'cineflight_token', remplacer dans la fonction H() ci-dessus.
+
+RESULTAT : dans Parametres → onglet "Diffusion", tu colles ta cle une fois.
+L'app Android la recupere seule a l'ouverture de l'ecran Live (aucun geste telephone).
