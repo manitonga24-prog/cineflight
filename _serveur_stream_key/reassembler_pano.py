@@ -104,11 +104,26 @@ def main(args):
     echecs = 0
     for e in choisis:
         print("\n=== %s (%d photos) ===" % (e["id"], e["photos"]))
+        # ANGLES : s'ils ont été déposés par l'app, on les utilise. C'est ce qui fait
+        # atterrir deux panoramas d'une paire stéréo dans le MÊME repère — sans eux,
+        # Hugin choisit une orientation par panorama et les deux yeux divergent.
+        angles = None
+        fa = os.path.join(e["chemin"], "angles.json")
+        if os.path.exists(fa):
+            try:
+                import json
+                angles = json.load(open(fa))
+                print("  angles disponibles : %d" % len(angles))
+            except Exception as ex:
+                print("  angles illisibles (%s) : assemblage automatique" % ex)
+        else:
+            print("  pas d'angles pour ce travail : assemblage automatique")
         sys.stdout.flush()
         t0 = time.time()
         try:
             r = stitch.assembler(os.path.join(e["chemin"], "in"),
-                                 os.path.join(e["chemin"], "panorama.jpg"))
+                                 os.path.join(e["chemin"], "panorama.jpg"),
+                                 angles=angles)
             print("RESULTAT %s : %s" % (e["id"], r))
         except Exception as ex:
             echecs += 1

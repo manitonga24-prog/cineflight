@@ -42,8 +42,13 @@ CHEMIN = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cine_panorama
 
 NOUVELLE_FONCTION = '''
 # Sens de rotation du lacet dans Hugin par rapport au cap boussole du drone.
-# -1.0 ou +1.0 : A DETERMINER PAR LA MESURE (essai_angles.py), pas par intuition.
-SENS_YAW = -1.0
+# TRANCHE PAR LA MESURE le 2026-07-27 (verifier_sens.py, job 0f578b6cfb3a) : le candidat
+# +1 est du MEME sens que la reference automatique (residu 26,6 contre 32,8 pour son
+# miroir, soit 19 % de mieux) ; -1 sort indecis. Un seul des deux pouvant etre correct,
+# c'est +1.
+# ⚠ NE PAS changer sans refaire la mesure : un signe inverse produit un panorama MIROIR,
+# invisible sur un paysage symetrique et desastreux chez un client.
+SENS_YAW = 1.0
 
 
 def _ecrire_positions(pto, angles, log=print):
