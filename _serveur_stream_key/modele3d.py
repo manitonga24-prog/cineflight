@@ -52,6 +52,9 @@ _FICHIER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "modeles3d.j
 _lock = threading.Lock()
 
 THREE = "https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"
+# A-Frame apporte le chargeur glTF et WebXR sans dépendance supplémentaire. Version
+# épinglée : une mise à jour surprise du CDN ne doit pas casser une démonstration client.
+AFRAME = "https://aframe.io/releases/1.5.0/aframe.min.js"
 
 # Seuils au-dessous desquels on ne lance RIEN. Choisis bas volontairement : ce sont les
 # valeurs sous lesquelles l'échec est CERTAIN, pas les valeurs confortables.
@@ -207,11 +210,142 @@ async def fichier_modele(mid: str):
     return FileResponse(chemin, media_type="model/gltf-binary")
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+#  DÉPÔT D'UN MODÈLE CALCULÉ AILLEURS (2026-07-27)
+#
+#  Voie retenue : la reconstruction se fait sur le PC (RTX 3090 + RealityScan),
+#  pas ici. Ce serveur n'a que 1 Go — il ne CALCULE pas, il SERT. Servir un
+#  fichier ne coûte rien ; c'est le calculer qui coûte cher.
+# ─────────────────────────────────────────────────────────────────────────────
+
+@router.post("/api/modele3d/{mid}/modele")
+async def deposer_modele(mid: str, file: UploadFile = File(...)):
+    """Attache un maillage fini à un jeu de photos DÉJÀ envoyé par l'app."""
+    if mid not in _lire():
+        raise HTTPException(404, "modèle inconnu")
+    dossier = os.path.join(_BASE, mid)
+    os.makedirs(dossier, exist_ok=True)
+    return await _ecrire_glb(mid, dossier, file)
+
+
+@router.post("/api/modele3d/glb")
+async def deposer_modele_seul(titre: str = Form("Modèle 3D"), file: UploadFile = File(...)):
+    """Dépose un maillage SANS passer par un envoi de photos (traitement hors ligne)."""
+    mid = uuid.uuid4().hex[:12]
+    dossier = os.path.join(_BASE, mid)
+    os.makedirs(dossier, exist_ok=True)
+    _maj(mid, titre=titre, photos=0, cree=int(time.time()))
+    return await _ecrire_glb(mid, dossier, file)
+
+
+async def _ecrire_glb(mid, dossier, file):
+    # Écriture par blocs : un maillage texturé pèse couramment 100 à 500 Mo, et cette
+    # machine n'a pas la mémoire pour le tenir en entier.
+    tmp = os.path.join(dossier, "modele.glb.tmp")
+    taille = 0
+    with open(tmp, "wb") as f:
+        while True:
+            bloc = await file.read(1 << 20)
+            if not bloc:
+                break
+            f.write(bloc)
+            taille += len(bloc)
+    if taille < 1024:
+        os.remove(tmp)
+        raise HTTPException(422, "fichier vide ou tronqué (%d octets)" % taille)
+    # En-tête glTF binaire : « glTF » en ASCII. Un fichier au mauvais format afficherait
+    # une page noire chez le client, sans le moindre indice — mieux vaut refuser ici.
+    with open(tmp, "rb") as f:
+        if f.read(4) != b"glTF":
+            os.remove(tmp)
+            raise HTTPException(422, "ce n'est pas un fichier .glb (en-tête glTF absent)")
+    os.replace(tmp, os.path.join(dossier, "modele.glb"))
+    _maj(mid, etat="termine", etape="modèle disponible", pct=100,
+         taille_glb=taille, origine="calcul externe")
+    return JSONResponse({"modele_id": mid, "url": "/modele3d/%s" % mid,
+                         "octets": taille})
+
+
+def _page_visite(mid, e):
+    """
+    Visionneuse du maillage : on se DÉPLACE dedans, on ne se téléporte plus entre des
+    sphères. Casque (WebXR, déplacement au manche), téléphone, ordinateur (ZQSD + souris).
+
+    ⚠ ÉCHELLE : une reconstruction photogrammétrique n'a pas d'échelle absolue garantie
+    (sauf mise à l'échelle explicite au traitement). Le modèle est donc RECENTRÉ et ajusté
+    à une taille lisible. Ne pas présenter cette vue comme un relevé métrique.
+    """
+    return """<!DOCTYPE html>
+<html lang="fr"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<title>%(titre)s — Modèle 3D</title>
+<script src="%(aframe)s"></script>
+<style>
+ html,body { margin:0; background:#000; overflow:hidden; font-family:-apple-system,
+   BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; color:#fff; }
+ #hud { position:fixed; top:0; left:0; right:0; padding:12px 16px; z-index:5;
+   background:linear-gradient(rgba(0,0,0,.75),transparent); pointer-events:none; font-size:14px; }
+ #hud .n { font-size:12px; opacity:.7; margin-top:4px; }
+</style></head><body>
+<div id="hud"><b>%(titre)s</b>
+  <div class="n">Casque : manche gauche pour avancer. Ordinateur : ZQSD + souris.</div></div>
+<a-scene renderer="colorManagement:true" background="color:#0b0b0d" vr-mode-ui="enabled:true">
+  <a-entity light="type:hemisphere; color:#ffffff; groundColor:#444; intensity:1.1"></a-entity>
+  <a-entity light="type:directional; intensity:.7" position="4 8 3"></a-entity>
+  <a-entity id="modele" gltf-model="url(/api/modele3d/%(mid)s/modele.glb)" ajuster></a-entity>
+  <a-entity id="rig" position="0 1.6 14" deplacement-manette>
+    <a-entity camera look-controls wasd-controls="acceleration:45"></a-entity>
+  </a-entity>
+</a-scene>
+<script>
+// AJUSTEMENT : recentre le maillage et le ramène à une taille lisible. Sans ça, un modèle
+// exporté en unités arbitraires apparaît soit microscopique, soit tout autour de la caméra.
+AFRAME.registerComponent('ajuster', {
+  init: function () {
+    var el = this.el;
+    el.addEventListener('model-loaded', function () {
+      var boite = new THREE.Box3().setFromObject(el.object3D);
+      var taille = new THREE.Vector3(); boite.getSize(taille);
+      var centre = new THREE.Vector3(); boite.getCenter(centre);
+      var grand = Math.max(taille.x, taille.y, taille.z) || 1;
+      var k = 20 / grand;                       // ~20 unités de large : à échelle humaine
+      el.object3D.scale.setScalar(k);
+      el.object3D.position.set(-centre.x * k, -boite.min.y * k, -centre.z * k);
+    });
+  }
+});
+// DÉPLACEMENT AU MANCHE en casque. A-Frame ne le fournit pas d'origine ; plutôt que
+// d'ajouter une bibliothèque de plus (une dépendance CDN de plus = un risque de panne de
+// plus le jour d'une démonstration), on lit directement les axes de la manette WebXR.
+AFRAME.registerComponent('deplacement-manette', {
+  tick: function (t, dt) {
+    var sc = this.el.sceneEl, xr = sc.renderer && sc.renderer.xr;
+    if (!xr || !xr.isPresenting) return;
+    var s = xr.getSession(); if (!s) return;
+    var cam = sc.camera, rig = this.el.object3D, v = dt / 1000 * 3.5;   // 3,5 u/s
+    for (var i = 0; i < s.inputSources.length; i++) {
+      var g = s.inputSources[i].gamepad; if (!g || g.axes.length < 4) continue;
+      var x = g.axes[2], y = g.axes[3];
+      if (Math.abs(x) < .15 && Math.abs(y) < .15) continue;
+      var dir = new THREE.Vector3(); cam.getWorldDirection(dir); dir.y = 0; dir.normalize();
+      var cote = new THREE.Vector3().crossVectors(dir, new THREE.Vector3(0, 1, 0));
+      rig.position.addScaledVector(dir, -y * v).addScaledVector(cote, x * v);
+      break;                                    // une seule manette gouverne le déplacement
+    }
+  }
+});
+</script>
+</body></html>""" % {"titre": e.get("titre") or "Modèle 3D", "mid": mid, "aframe": AFRAME}
+
+
 @router.get("/modele3d/{mid}")
 async def page_modele(mid: str):
     e = _lire().get(mid)
     if not e:
         return HTMLResponse("<h1>Modèle introuvable</h1>", status_code=404)
+    # Le maillage prime sur tout : s'il est là, on montre le produit, pas un état d'avancement.
+    if os.path.exists(os.path.join(_BASE, mid, "modele.glb")):
+        return HTMLResponse(_page_visite(mid, e))
     res = e.get("ressources") or {}
     attente = e.get("etat") == "en_attente_ressources"
     # Le message d'attente dit EXACTEMENT ce qui manque. Un « veuillez patienter » sur un
