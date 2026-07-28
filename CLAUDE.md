@@ -1395,6 +1395,12 @@ juste au profit d'une sphère basculée, trois fois de suite.
 → `patch_pano_secours_ordre.py` : les options s'insèrent après l'EXÉCUTABLE.
 `--wrap` est CONSERVÉ — il reste le réglage juste pour un équirectangulaire.
 
+**RÉSOLU ET VÉRIFIÉ (2026-07-28)** : `!! enblend a PLANTE — nouvelle tentative :
+--no-optimize` puis `abouti avec : --no-optimize`, `VOIE D'ASSEMBLAGE : angles_seuls`,
+**`Fill sky 9,0 %`** — au dixième près le chiffre de l'œil jumeau `277a3c293f89`. Même
+lieu, même préréglage, même voie, même remplissage : les deux yeux de la paire stéréo sont
+enfin dans le MÊME repère. 19 min 11 s pour 61 photos.
+
 ⚠⚠ **POURQUOI J'AI CRU LE CONTRAIRE**, et c'est la leçon la plus utile de la journée :
 1. Mon essai manuel « réussi » portait sur des couches produites SANS `autooptimiser -m`
    (mode `--rapide` du diagnostic). **Ce n'étaient pas les données de la production.**
