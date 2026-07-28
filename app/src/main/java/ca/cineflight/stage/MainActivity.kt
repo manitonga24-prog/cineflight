@@ -62,6 +62,16 @@ import ca.cineflight.stage.cine.ProfilDrone
 class MainActivity : AppCompatActivity() {
 
     companion object {
+        /**
+         * Dernier espace libre CONNU sur la carte du drone, en octets ; -1 = jamais lu.
+         *
+         * Mis à jour à chaque vérification avant capture. Sert à l'écran « Carte du drone »,
+         * qui n'a pas accès au pont DJI. ⚠ C'est une valeur MÉMORISÉE, pas une lecture
+         * fraîche : l'écran doit dire quand elle date, plutôt que de la présenter comme
+         * l'état actuel d'une carte peut-être changée depuis.
+         */
+        @Volatile var dernierEspaceCarteOctets: Long = -1L
+
         const val MODE_SIMULE = false
         // MAILLON 2 - observation passive perception d'obstacle, chemin NORMAL.
         // false = comportement identique a aujourd'hui. NE MODIFIE JAMAIS de commande.
@@ -468,6 +478,16 @@ class MainActivity : AppCompatActivity() {
                 }
             },
             annulerPanorama = { annulerPanorama() },
+            differerPanorama = {
+                differerAssemblage("PANORAMA", getString(R.string.ma_pano_nom),
+                    listOf(dernierPanoramaNb),
+                    dernierePanoramaGrille?.let { listOf(it) }, 0.0, emptyList())
+            },
+            lancerVisiteAltitude = { paliers, preset -> lancerVisiteAltitudes(paliers, preset) },
+            lancerVisitePoints = { preset, alt -> ouvrirVisitePointsMarques(preset, alt) },
+            lancerRelief3D = { preset, alt -> lancerReliefStereo(preset, alt) },
+            lancerModele3D = { rayon, n, anneaux -> lancerCapture3D(rayon, n, anneaux) },
+            lancerQuadrillage = { lancerQuadrillage() },
             assemblerPano360 = { onProgres, onFini -> assemblerPanorama360(onProgres, onFini) },
             // === LECTURE MISSION KMZ ? TOUJOURS EN SIMULATION ===
             // Le sequenceur tourne TOUJOURS sur un pont SIMULE dedie (jamais le vrai
@@ -578,6 +598,10 @@ class MainActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // GARDER L'ÉCRAN ALLUMÉ tant que l'app pilote est ouverte (comme DJI Fly).
+        // La mise en veille de l'écran (~5 min par défaut chez Samsung) SUSPEND la liaison
+        // USB avec la RC → « drone déconnecté » régulier après 4-5 min, drone froid.
+        window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         initialiserVoixClicker()
         // ping ACK de diagnostic retire : affichait un Toast "Erreur ACK : failed to connect" au demarrage
         // Disclaimer obligatoire au premier lancement
@@ -696,7 +720,8 @@ class MainActivity : AppCompatActivity() {
         findViewById<Button>(R.id.btnTags).setOnClickListener {
             startActivity(android.content.Intent(this, TagsActivity::class.java))
         }
-        // Bouton LIVE : ouvre l'ecran de diffusion en direct (meme cible que l'appui long RTSP).
+        // Bouton LIVE : ouvre l'ecran de diffusion (cle synchronisee auto).
+        // Le direct se lance ensuite avec le bouton "Demarrer le direct".
         findViewById<Button>(R.id.btnLive).setOnClickListener {
             startActivity(android.content.Intent(this, LiveStreamActivity::class.java))
         }
@@ -1108,9 +1133,12 @@ class MainActivity : AppCompatActivity() {
                 it.obsConnexionRc = { c -> obs.observerConnexionRc(c) }
                 it.obsGpsSatellites = { n -> obs.observerGpsSatellites(n) }
                 // Phase 3B : camera / enregistrement
-                it.obsRecordStarted = { obs.observerRecordStarted() }
-                it.obsRecordStopped = { obs.observerRecordStopped() }
-                it.obsRecordFailed = { obs.observerRecordFailed() }
+                it.obsRecordStarted = { obs.observerRecordStarted()
+                    runOnUiThread { android.widget.Toast.makeText(this, getString(R.string.ma_rec_on), android.widget.Toast.LENGTH_SHORT).show() } }
+                it.obsRecordStopped = { obs.observerRecordStopped()
+                    runOnUiThread { android.widget.Toast.makeText(this, getString(R.string.ma_rec_off), android.widget.Toast.LENGTH_SHORT).show() } }
+                it.obsRecordFailed = { obs.observerRecordFailed()
+                    runOnUiThread { android.widget.Toast.makeText(this, getString(R.string.ma_rec_ko), android.widget.Toast.LENGTH_LONG).show() } }
             }
             // Lot 2B : hooks RTH (sur le cockpit lui-meme, pas le base)
             (pontReel)?.let { pc ->
@@ -1176,16 +1204,10 @@ class MainActivity : AppCompatActivity() {
                         profilDrone = CapacitesDrone.analyser(mdl)
                         demarrerObservationPerceptionNormale()  // maillon 2 : connexion
                         vEtat.text = mdl.let { if (it.isNotEmpty() && it != "Drone connecte" && it != "Simulateur") getString(R.string.ma_modele_connecte, it) else getString(R.string.ma_drone_connecte) }
-                        // --- demarre le serveur RTSP du SDK (test Mini 3) ---
-                        StreamRtsp.demarrer { ok, msg ->
-                            runOnUiThread {
-                                com.google.android.material.dialog.MaterialAlertDialogBuilder(this@MainActivity, R.style.DialogCineFlight)
-                                    .setTitle(if (ok) getString(R.string.ma_dlg_rtsp_ok) else getString(R.string.ma_dlg_rtsp_echec))
-                                    .setMessage(msg)
-                                    .setPositiveButton(android.R.string.ok, null)
-                                    .show()
-                            }
-                        }
+                        // RTSP N'EST PLUS demarre automatiquement ici : le liveStreamManager
+                        // DJI est UNIQUE et un RTSP auto bloquait la diffusion YouTube
+                        // ("live stream already started"). RTSP se lance a la demande via le
+                        // bouton RTSP (appui court) quand le suivi YOLO PC en a besoin.
                     } else {
                         vEtat.text = getString(R.string.ma_drone_deco)
                         arreterObservationPerceptionNormale()  // maillon 2 : deconnexion
@@ -1319,7 +1341,23 @@ class MainActivity : AppCompatActivity() {
         // --- bouton Placement : placer les musiciens au Vive Tracker ---
 
         // --- commandes camera / gimbal ---
-        btnPhoto.setOnClickListener { effetCapture(); pont.declencherPhoto() }
+        btnPhoto.setOnClickListener {
+            effetCapture()
+            val reel = pontReel
+            if (reel != null) {
+                // PRISE CONFIRMÉE + retour à l'écran : l'utilisateur SAIT si la photo est partie.
+                reel.declencherPhotoConfirmee { ok, detail ->
+                    runOnUiThread {
+                        if (ok) android.widget.Toast.makeText(this,
+                            getString(R.string.ma_photo_ok), android.widget.Toast.LENGTH_SHORT).show()
+                        else android.widget.Toast.makeText(this,
+                            getString(R.string.ma_photo_ko, detail ?: ""), android.widget.Toast.LENGTH_LONG).show()
+                    }
+                }
+            } else {
+                pont.declencherPhoto()   // pont non réel (simulateur) : ancien comportement
+            }
+        }
         btnPhoto.setOnLongClickListener {
             captureAutoActive = !captureAutoActive
             compteurPhotosAuto = 0
@@ -1335,7 +1373,7 @@ class MainActivity : AppCompatActivity() {
             true
         }
         btnRtsp.setOnClickListener { if (StreamRtsp.enCours) { com.google.android.material.dialog.MaterialAlertDialogBuilder(this, R.style.DialogCineFlight).setTitle(getString(R.string.ma_dlg_rtsp_actif_titre)).setMessage(getString(R.string.ma_dlg_rtsp_actif_msg)).setPositiveButton(android.R.string.ok, null).show() } else { StreamRtsp.demarrer { ok, msg -> runOnUiThread { com.google.android.material.dialog.MaterialAlertDialogBuilder(this, R.style.DialogCineFlight).setTitle(if (ok) getString(R.string.ma_dlg_rtsp_ok) else getString(R.string.ma_dlg_rtsp_echec)).setMessage(msg).setPositiveButton(android.R.string.ok, null).show() } } } }
-        // Appui LONG sur le bouton RTSP -> ecran de diffusion en direct (prototype V1 YouTube).
+        // Appui LONG sur le bouton RTSP -> ecran de diffusion en direct.
         btnRtsp.setOnLongClickListener {
             startActivity(android.content.Intent(this, LiveStreamActivity::class.java))
             true
@@ -1601,6 +1639,9 @@ class MainActivity : AppCompatActivity() {
 
     // === PANORAMA PHOTO : execution sequentielle (machine a etats) ===
     @Volatile private var panoramaEnCours = false
+    /** Le panorama a-t-il OUVERT le journal, ou s'est-il greffé sur un vol composite ?
+     *  Décide qui a le droit de le CLORE — voir `demarrerOuEtape`. */
+    @Volatile private var panoramaAOuvertLeJournal = false
 
     /**
      * Lance un panorama PAYSAGE : le drone reste sur place, pivote par paliers,
@@ -1696,7 +1737,1673 @@ class MainActivity : AppCompatActivity() {
     // --- Assemblage panorama 360 (serveur Hugin) ---
     private var mediaDronePano: ca.cineflight.stage.control.MediaDrone? = null
     private var dernierPanoramaNb: Int = 0
+    /** Grille (cap, inclinaison) du dernier panorama capturé, pour un assemblage guidé. */
+    private var dernierePanoramaGrille: List<Pair<Float, Float>>? = null
     private val SERVEUR_PANO = "https://cineflight.ca"
+
+    // ══════════════════════════════════════════════════════════════════════════════
+    //  VISITE VIRTUELLE — plusieurs panoramas reliés, parcourus en VR (2026-07-27)
+    // ══════════════════════════════════════════════════════════════════════════════
+    /** Points de la visite en cours de préparation (marqués au GPS du téléphone). */
+    private val pointsVisiteMarques = ArrayList<ca.cineflight.stage.cine.VisiteMultiPoints.Point>()
+    /** Nombre de photos réellement prises à chaque étape — sert à découper les lots. */
+    private val photosParEtape = ArrayList<Int>()
+    @Volatile private var visiteEnCours = false
+
+    /**
+     * VISITE EN ALTITUDE — le drone monte À LA VERTICALE du point de décollage et prend un
+     * panorama à chaque palier. AUCUN déplacement horizontal : c'est la variante SÛRE, sans
+     * risque d'obstacle latéral (le drone ne traverse pas un espace non reconnu).
+     * Le résultat montre le site se révéler dans son environnement au fil de la montée.
+     */
+    private fun lancerVisiteAltitudes(paliers: List<Double>, preset: ca.cineflight.stage.cine.PanoramaPreset) {
+        if (visiteEnCours || panoramaEnCours) { bandeauEphemere(getString(R.string.ma_visite_deja)); return }
+        val e = pont.lireEtat(pilote.enVol)
+        if (!e.connecte || !e.gpsValide) { bandeauEphemere(getString(R.string.ma_bloc_gps)); return }
+        // Chaque palier coûte ~1 min de vol : on refuse si la batterie ne suit pas.
+        val besoinPct = 15 + paliers.size * 12
+        if (e.batteriePct in 0 until besoinPct) {
+            com.google.android.material.dialog.MaterialAlertDialogBuilder(this, R.style.DialogCineFlight)
+                .setTitle(getString(R.string.ma_visite_titre))
+                .setMessage(getString(R.string.ma_visite_batt, e.batteriePct, besoinPct))
+                .setPositiveButton(android.R.string.ok, null).show()
+            return
+        }
+        if (!carteTient(preset.nbPhotos() * paliers.size) { msg ->
+                com.google.android.material.dialog.MaterialAlertDialogBuilder(this, R.style.DialogCineFlight)
+                    .setTitle(getString(R.string.ma_visite_titre)).setMessage(msg)
+                    .setPositiveButton(android.R.string.ok, null).show()
+            }) return
+        com.google.android.material.dialog.MaterialAlertDialogBuilder(this, R.style.DialogCineFlight)
+            .setTitle(getString(R.string.ma_visite_titre))
+            .setMessage(getString(R.string.ma_visite_confirm_alt,
+                paliers.size, paliers.joinToString(", ") { "${it.toInt()} m" }, preset.nbPhotos() * paliers.size) + blocReglagesCamera())
+            .setNegativeButton(android.R.string.cancel, null)
+            .setPositiveButton(getString(R.string.ma_dlg_decoller)) { _, _ ->
+                executerVisiteAltitudes(paliers, preset)
+            }.show()
+    }
+
+    private fun executerVisiteAltitudes(paliers: List<Double>, preset: ca.cineflight.stage.cine.PanoramaPreset) {
+        visiteEnCours = true
+        photosParEtape.clear()
+        try {
+            ca.cineflight.stage.control.JournalVol.demarrer(this, "VISITE_ALT",
+                "paliers=${paliers.joinToString("/") { it.toInt().toString() }}m" +
+                " preset=${preset.nomFr} photos_par_palier=${preset.nbPhotos()}")
+        } catch (_: Throwable) {}
+        val dlg = com.google.android.material.dialog.MaterialAlertDialogBuilder(this, R.style.DialogCineFlight)
+            .setTitle(getString(R.string.ma_visite_titre))
+            .setMessage(getString(R.string.ma_visite_decollage))
+            .setCancelable(false)
+            .setNegativeButton(R.string.ma_dlg_arret_rth) { _, _ ->
+                visiteEnCours = false; annulerPanorama(); pont.lancerRth { }
+            }.show()
+
+        lifecycleScope.launch(Dispatchers.Main) {
+            // 1) Décollage + montée au 1er palier, puis un panorama PAR palier.
+            for ((i, alt) in paliers.withIndex()) {
+                if (!visiteEnCours) break
+                dlg.setMessage(getString(R.string.ma_visite_montee, i + 1, paliers.size, alt.toInt()))
+                try { ca.cineflight.stage.control.JournalVol.evenement("palier ${i + 1} : montée à ${alt.toInt()} m") } catch (_: Throwable) {}
+                val monteeOk = monterA(alt, premierPalier = (i == 0))
+                if (!monteeOk || !visiteEnCours) break
+                dlg.setMessage(getString(R.string.ma_visite_pano, i + 1, paliers.size, alt.toInt()))
+                val prises = panoramaBloquant(preset) { fait, total ->
+                    runOnUiThread { dlg.setMessage(getString(R.string.ma_visite_pano_progres,
+                        i + 1, paliers.size, fait, total)) }
+                }
+                photosParEtape.add(prises)
+                try { ca.cineflight.stage.control.JournalVol.evenement(
+                    "palier ${i + 1} : $prises photo(s)") } catch (_: Throwable) {}
+                if (prises < 2) { break }     // une étape ratée invalide la visite : on s'arrête
+            }
+            // 2) Retour au sol AVANT l'assemblage (long) : on ne laisse pas le drone en l'air.
+            dlg.setMessage(getString(R.string.ma_visite_atterrissage))
+            // ⚠ On n'atterrit QUE si l'app commande encore. Si le pilote a repris les
+            // manches, déclencher un atterrissage lui prendrait l'aéronef des mains.
+            if (modeAuto) try { pilote.atterrir { } } catch (_: Exception) {}
+            try { ca.cineflight.stage.control.JournalVol.terminer(
+                "visite : ${photosParEtape.size} palier(s) — ${photosParEtape.joinToString("+")} photos") } catch (_: Throwable) {}
+            delay(6000)
+            // 3) Assemblage de CHAQUE étape, puis création de la visite.
+            if (photosParEtape.size >= 2) {
+                assemblerVisite(photosParEtape.toList(),
+                    noms = paliers.take(photosParEtape.size).map { "${it.toInt()} m" },
+                    titre = getString(R.string.ma_visite_nom_alt),
+                    onProgres = { m -> runOnUiThread { dlg.setMessage(m) } }) { lien ->
+                    runOnUiThread { dlg.dismiss(); visiteEnCours = false; afficherLienVisite(lien) }
+                }
+            } else {
+                dlg.dismiss(); visiteEnCours = false
+                bandeauEphemere(getString(R.string.ma_visite_echec))
+            }
+        }
+    }
+
+    /**
+     * L'app a-t-elle ENCORE la main sur l'aéronef ? Vérifié à chaque cycle des boucles de
+     * visite. Si le Virtual Stick n'est plus accordé (reprise aux manches, écran passé en
+     * arrière-plan, liaison dégradée), `soumettre()` part dans le vide : la boucle
+     * tournerait jusqu'à son délai maximal en CROYANT piloter, et enchaînerait le panorama
+     * suivant depuis une position fausse. On ARRÊTE la visite et on le DIT au journal —
+     * un état qui ment est pire qu'un arrêt.
+     */
+    private fun autoriteDeVolIntacte(etape: String): Boolean {
+        val vsOk = try { pont.virtualStickConfirmeActif() } catch (_: Throwable) { false }
+        if (vsOk && modeAuto) return true
+        visiteEnCours = false
+        try { ca.cineflight.stage.control.JournalVol.anomalie(
+            "visite interrompue pendant $etape : virtual_stick=$vsOk mode_auto=$modeAuto" +
+            " — l'app ne commandait plus l'aéronef") } catch (_: Throwable) {}
+        runOnUiThread { bandeauEphemere(getString(R.string.ma_visite_perte_main)) }
+        return false
+    }
+
+    /** Monte à l'altitude demandée (verticale pure). true si atteinte. */
+    private suspend fun monterA(altCibleM: Double, premierPalier: Boolean): Boolean {
+        if (premierPalier && !pilote.enVol) {
+            if (!modeAuto) basculerMode(true)
+            if (!modeAuto) return false
+            try { pont.activerVirtualStick(true) } catch (_: Exception) {}
+            var decolle = false
+            pilote.decoller { ok -> decolle = ok }
+            val t0 = System.currentTimeMillis()
+            while (!decolle && System.currentTimeMillis() - t0 < 12000) delay(200)
+            // Le SDK n'accorde le Virtual Stick qu'une fois le décollage terminé.
+            val tVs = System.currentTimeMillis()
+            while (!(try { pont.virtualStickConfirmeActif() } catch (_: Throwable) { false }) &&
+                   System.currentTimeMillis() - tVs < 15000) delay(200)
+        }
+        val tDebut = System.currentTimeMillis()
+        val timeout = (altCibleM / 1.2 * 1000.0).toLong() + 12000L
+        var cycle = 0
+        while (visiteEnCours) {
+            val e = pont.lireEtat(pilote.enVol)
+            if (e.batteriePct in 0 until BATT_CRITIQUE) return false
+            if (!autoriteDeVolIntacte("montée")) return false
+            val alt = try { pont.altitudeDrone() } catch (_: Throwable) { Double.NaN }
+            if (!alt.isNaN() && alt >= altCibleM - 0.5) break
+            if (System.currentTimeMillis() - tDebut > timeout) break
+            pilote.soumettre(RecepteurBridge.CommandeBridge(
+                System.currentTimeMillis() / 1000.0, 0f, 1.2f, 0f, 0f, "actif", System.currentTimeMillis()))
+            // TRACE de la commande RÉELLEMENT émise, ~1,5 s. La ligne ETAT générique
+            // rapporte la commande de SUIVI (zéro pendant une visite) : au vol du
+            // 2026-07-27 le journal affichait « thr=0,00 » pendant que le drone montait
+            // à 1,2 m/s. Un journal qui décrit autre chose que ce qui se passe est pire
+            // qu'un journal absent.
+            if (cycle++ % 10 == 0) try { ca.cineflight.stage.control.JournalVol.evenement(
+                "montée : alt=%.1f/%.0f m thr_emis=1.2 m/s".format(
+                    if (alt.isNaN()) -1.0 else alt, altCibleM)) } catch (_: Throwable) {}
+            delay(150)
+        }
+        pilote.soumettre(RecepteurBridge.CommandeBridge(
+            System.currentTimeMillis() / 1000.0, 0f, 0f, 0f, 0f, "actif", System.currentTimeMillis()))
+        delay(1500)      // stabilisation avant les photos
+        return visiteEnCours
+    }
+
+    /** Lance un panorama et ATTEND sa fin. Rend le nombre de photos réellement prises. */
+    private suspend fun panoramaBloquant(
+        preset: ca.cineflight.stage.cine.PanoramaPreset,
+        capDepartForce: Float? = null,
+        onProgres: (Int, Int) -> Unit,
+    ): Int = kotlinx.coroutines.suspendCancellableCoroutine { cont ->
+        demarrerBouclePanorama(preset, onProgres = { i, n -> onProgres(i, n) },
+            onFini = { nb -> if (cont.isActive) cont.resumeWith(Result.success(if (nb > 0) nb else 0)) },
+            atterrirALaFin = false, capDepartForce = capDepartForce)
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════════
+    //  RELIEF STÉRÉOSCOPIQUE — deux panoramas, un par œil (2026-07-27)
+    // ══════════════════════════════════════════════════════════════════════════════
+    /**
+     * LIGNE DE BASE (écartement entre les deux prises de vue), en mètres.
+     *
+     * L'écartement des yeux humains (~6,5 cm) ne produit AUCUN relief perceptible sur un
+     * paysage à 50 m : le cerveau ne mesure plus de parallaxe au-delà de ~10 m. L'aérien
+     * utilise donc l'HYPERSTÉRÉO — une ligne de base agrandie, règle d'usage ≈ distance/30.
+     * À 60 m de distance moyenne, cela donne 2 m.
+     *
+     * ⚠ Trop grand, le relief devient une maquette (« effet miniature ») et fatigue les
+     * yeux ; trop petit, l'image est plate. 2 m est un compromis prudent pour un premier
+     * vol, et c'est aussi un déplacement que le GPS du drone tient raisonnablement.
+     */
+    private val STEREO_BASE_M = 2.0
+
+    /**
+     * Le drone prend un panorama, se décale LATÉRALEMENT de la ligne de base, en reprend un
+     * second. Les deux sphères deviennent l'œil gauche et l'œil droit dans le casque.
+     *
+     * ⚠ LIMITE HONNÊTE, à dire au client : le relief n'existe que dans les directions
+     * PERPENDICULAIRES au décalage. En regardant le long de la ligne de base, la parallaxe
+     * tombe à zéro et l'image redevient plate. Un vrai 360° stéréo complet demande un rig
+     * qui tourne autour d'un axe à quelques centimètres près — un drone dérive de plusieurs
+     * mètres, il ne peut pas l'imiter. On décale donc vers l'EST et la visionneuse s'ouvre
+     * face au NORD, là où le relief est maximal.
+     */
+    private fun lancerReliefStereo(preset: ca.cineflight.stage.cine.PanoramaPreset, altitudeM: Double) {
+        if (visiteEnCours || panoramaEnCours) { bandeauEphemere(getString(R.string.ma_visite_deja)); return }
+        val e = pont.lireEtat(pilote.enVol)
+        if (!e.connecte || !e.gpsValide) { bandeauEphemere(getString(R.string.ma_bloc_gps)); return }
+        val besoinPct = 15 + 2 * 12
+        if (e.batteriePct in 0 until besoinPct) {
+            com.google.android.material.dialog.MaterialAlertDialogBuilder(this, R.style.DialogCineFlight)
+                .setTitle(getString(R.string.ma_stereo_titre))
+                .setMessage(getString(R.string.ma_visite_batt, e.batteriePct, besoinPct))
+                .setPositiveButton(android.R.string.ok, null).show()
+            return
+        }
+        if (!carteTient(preset.nbPhotos() * 2) { msg ->
+                com.google.android.material.dialog.MaterialAlertDialogBuilder(this, R.style.DialogCineFlight)
+                    .setTitle(getString(R.string.ma_stereo_titre)).setMessage(msg)
+                    .setPositiveButton(android.R.string.ok, null).show()
+            }) return
+        com.google.android.material.dialog.MaterialAlertDialogBuilder(this, R.style.DialogCineFlight)
+            .setTitle(getString(R.string.ma_stereo_titre))
+            .setMessage(getString(R.string.ma_stereo_confirm, altitudeM.toInt(),
+                STEREO_BASE_M.toInt(), preset.nbPhotos() * 2) + blocReglagesCamera())
+            .setNegativeButton(android.R.string.cancel, null)
+            .setPositiveButton(getString(R.string.ma_dlg_decoller)) { _, _ ->
+                executerReliefStereo(preset, altitudeM)
+            }.show()
+    }
+
+    private fun executerReliefStereo(preset: ca.cineflight.stage.cine.PanoramaPreset, altitudeM: Double) {
+        visiteEnCours = true
+        photosParEtape.clear()
+        try {
+            ca.cineflight.stage.control.JournalVol.demarrer(this, "RELIEF_STEREO",
+                "alt=${altitudeM.toInt()}m base=${STEREO_BASE_M}m preset=${preset.nomFr}" +
+                " photos_par_oeil=${preset.nbPhotos()}")
+        } catch (_: Throwable) {}
+        val dlg = com.google.android.material.dialog.MaterialAlertDialogBuilder(this, R.style.DialogCineFlight)
+            .setTitle(getString(R.string.ma_stereo_titre))
+            .setMessage(getString(R.string.ma_visite_decollage))
+            .setCancelable(false)
+            .setNegativeButton(R.string.ma_dlg_arret_rth) { _, _ ->
+                visiteEnCours = false; annulerPanorama(); pont.lancerRth { }
+            }.show()
+
+        lifecycleScope.launch(Dispatchers.Main) {
+            dlg.setMessage(getString(R.string.ma_visite_montee, 1, 2, altitudeM.toInt()))
+            if (!monterA(altitudeM, premierPalier = true)) {
+                dlg.dismiss(); visiteEnCours = false
+                bandeauEphemere(getString(R.string.ma_visite_echec)); return@launch
+            }
+            // Cap figé UNE fois pour les deux panoramas : c'est la condition d'alignement
+            // des deux sphères. Un cap relu entre les deux aurait dérivé de quelques degrés.
+            val capFige = try { pont.capDroneDeg() } catch (_: Throwable) { 0f }
+            val capStereo = if (capFige.isNaN()) 0f else capFige
+            val latA = pont.latitudeDrone(); val lonA = pont.longitudeDrone()
+
+            // — ŒIL GAUCHE (position A) —
+            dlg.setMessage(getString(R.string.ma_stereo_oeil_g))
+            try { ca.cineflight.stage.control.JournalVol.evenement(
+                "oeil GAUCHE en %.6f,%.6f cap_figé=%.0f".format(latA, lonA, capStereo)) } catch (_: Throwable) {}
+            val nbG = panoramaBloquant(preset, capDepartForce = capStereo) { fait, total ->
+                runOnUiThread { dlg.setMessage(getString(R.string.ma_stereo_oeil_g_progres, fait, total)) }
+            }
+            photosParEtape.add(nbG)
+            if (nbG < 2 || !visiteEnCours) { finirStereo(dlg, null); return@launch }
+
+            // — TRANSLATION VERS L'EST, sans rotation —
+            dlg.setMessage(getString(R.string.ma_stereo_decalage, STEREO_BASE_M.toInt()))
+            val mLon = 111_320.0 * kotlin.math.cos(Math.toRadians(latA))
+            val cibleLon = lonA + STEREO_BASE_M / mLon
+            if (!allerA(latA, cibleLon, altitudeM, tolM = 0.6, vMaxMps = 0.8)) {
+                finirStereo(dlg, null); return@launch
+            }
+            val ecart = ca.cineflight.stage.cine.VisiteMultiPoints.distanceM(
+                latA, lonA, pont.latitudeDrone(), pont.longitudeDrone())
+            try { ca.cineflight.stage.control.JournalVol.evenement(
+                "décalage réalisé : %.2f m (visé %.2f)".format(ecart, STEREO_BASE_M)) } catch (_: Throwable) {}
+            // ⚠ On CONSIGNE l'écart réel sans le corriger : c'est lui qui détermine
+            // l'intensité du relief. Le journal permettra de régler la ligne de base au
+            // vol suivant à partir d'une MESURE, pas d'une intention.
+
+            // — ŒIL DROIT (position B), MÊME cap de départ —
+            dlg.setMessage(getString(R.string.ma_stereo_oeil_d))
+            val nbD = panoramaBloquant(preset, capDepartForce = capStereo) { fait, total ->
+                runOnUiThread { dlg.setMessage(getString(R.string.ma_stereo_oeil_d_progres, fait, total)) }
+            }
+            photosParEtape.add(nbD)
+
+            dlg.setMessage(getString(R.string.ma_visite_atterrissage))
+            if (modeAuto) try { pilote.atterrir { } } catch (_: Exception) {}
+            // ⚠ On NE FERME PAS le journal ici. Le rapatriement et l'assemblage viennent
+            // APRÈS, et c'est justement là que des photos se perdent (8 sur 50 au vol
+            // précédent). Fermer maintenant enverrait ces anomalies dans un fichier clos,
+            // c'est-à-dire nulle part. La fermeture se fait dans `finirStereo`.
+            try { ca.cineflight.stage.control.JournalVol.evenement(
+                "capture terminée : gauche=$nbG droite=$nbD photos, base mesurée %.2f m".format(ecart)) } catch (_: Throwable) {}
+            delay(6000)
+            if (nbG >= 2 && nbD >= 2) {
+                val grille = ca.cineflight.stage.cine.PanoramaGrille.construire(preset, capStereo)
+                    .map { it.yawDeg to it.pitchDeg }
+                proposerAssemblage("RELIEF", getString(R.string.ma_stereo_nom),
+                    listOf(nbG, nbD), listOf(grille, grille), ecart, emptyList(),
+                    maintenant = {
+                        assemblerStereo(nbG, nbD, ecart, preset, capStereo,
+                            onProgres = { m -> runOnUiThread { dlg.setMessage(m) } }
+                        ) { lien -> runOnUiThread { finirStereo(dlg, lien) } }
+                    },
+                    plusTard = {
+                        // La fenêtre de vol n'a plus lieu d'être : la file prend le relais
+                        // et le pilote peut repartir voler tout de suite.
+                        visiteEnCours = false
+                        try { ca.cineflight.stage.control.JournalVol.terminer(
+                            "relief capturé, assemblage mis en file") } catch (_: Throwable) {}
+                        try { dlg.dismiss() } catch (_: Exception) {}
+                    })
+            } else finirStereo(dlg, null)
+        }
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════════
+    //  MODÈLE 3D — capture photogrammétrique en orbite (2026-07-27)
+    // ══════════════════════════════════════════════════════════════════════════════
+    /**
+     * Le drone tourne autour du sujet sur plusieurs anneaux, caméra vers le centre, et
+     * s'ARRÊTE à chaque prise. Le serveur reconstruit ensuite un maillage texturé dans
+     * lequel on se DÉPLACE — ce n'est plus une sphère, c'est le lieu.
+     *
+     * ⚠ CENTRE = position ACTUELLE DU DRONE, pas celle du téléphone. Le pilote place
+     * d'abord le drone au-dessus du sujet, puis lance : c'est le seul repère dont on est
+     * sûr qu'il correspond à ce que la caméra voit.
+     */
+    /**
+     * Demande d'abord la HAUTEUR DU SUJET, puis planifie.
+     *
+     * ⚠ POURQUOI CETTE QUESTION (2026-07-28). Toute la géométrie visait le sol au centre de
+     * l'orbite : une façade verticale n'était donc jamais photographiée de face, même par
+     * l'anneau le plus rasant. Ce qui n'est vu que de biais se reconstruit en surfaces
+     * étirées — le défaut saute aux yeux dès qu'on s'approche d'un mur dans la visionneuse.
+     * Une valeur approximative suffit : elle déplace le point visé, elle ne conditionne
+     * AUCUNE sécurité (le plancher et le plafond d'altitude restent souverains).
+     */
+    private fun lancerCapture3D(rayonM: Double, clichesParTour: Int, nbAnneaux: Int = 3) {
+        // ⚠ COULEURS EXPLICITES. Ces vues sont créées avec le contexte de l'ACTIVITÉ, pas
+        // avec celui du dialogue : elles n'héritent donc pas de `DialogCineFlight` et
+        // s'affichaient en sombre sur le fond sombre #1C2126 — champ, case et
+        // avertissement étaient littéralement invisibles, seul le titre se lisait.
+        val encre = android.graphics.Color.parseColor("#ECEFF1")
+        val encreDouce = android.graphics.Color.parseColor("#B0BEC5")
+        val champ = android.widget.EditText(this).apply {
+            inputType = android.text.InputType.TYPE_CLASS_NUMBER
+            setText("0")
+            setTextColor(encre)
+            setHintTextColor(encreDouce)
+            highlightColor = android.graphics.Color.parseColor("#3A9BFF")
+        }
+        // ⚠ CASE DÉCOCHÉE PAR DÉFAUT, et elle le restera. Abaisser le plancher est une
+        // décision de SITE : seul le pilote voit s'il y a des arbres et des fils. Une
+        // borne de sécurité qui se relâche « en général » ne se resserre jamais.
+        val casePlancher = android.widget.CheckBox(this).apply {
+            text = getString(R.string.ma_3d_plancher_bas)
+            isChecked = false
+            setTextColor(encre)
+            buttonTintList = android.content.res.ColorStateList.valueOf(
+                android.graphics.Color.parseColor("#3A9BFF"))
+        }
+        val avert = TextView(this).apply {
+            text = getString(R.string.ma_3d_plancher_avert)
+            textSize = 13f
+            // Ambre : l'avertissement doit se distinguer du reste sans crier. Il ne
+            // s'affiche qu'à la coche, donc il est déjà porteur d'un sens.
+            setTextColor(android.graphics.Color.parseColor("#FFC107"))
+            setPadding(0, 16, 0, 0)
+            visibility = android.view.View.GONE
+        }
+        casePlancher.setOnCheckedChangeListener { _, coche ->
+            // L'avertissement n'apparaît qu'à la coche : affiché en permanence, il devient
+            // du décor qu'on ne lit plus.
+            avert.visibility = if (coche) android.view.View.VISIBLE else android.view.View.GONE
+        }
+        val explication = TextView(this).apply {
+            text = getString(R.string.ma_3d_hauteur_msg)
+            textSize = 13f
+            setTextColor(encreDouce)
+            setPadding(0, 0, 0, 16)
+        }
+        val boite = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(56, 16, 56, 8)
+            addView(explication); addView(champ); addView(casePlancher); addView(avert)
+        }
+        // ⚠ TOUT DANS UNE VUE DÉFILANTE, ET PAS DE setMessage.
+        // `MainActivity` est en PAYSAGE : un téléphone couché laisse à peine 300 dp de
+        // hauteur. Un dialogue qui porte à la fois un long message ET une vue
+        // personnalisée écrase la seconde à zéro — l'écran n'affichait plus que le titre
+        // sur un rectangle gris, et le champ comme la case existaient sans être visibles.
+        // En mettant l'explication DANS la vue défilante, tout reste atteignable quelle
+        // que soit la hauteur disponible.
+        val defilant = android.widget.ScrollView(this).apply { addView(boite) }
+        com.google.android.material.dialog.MaterialAlertDialogBuilder(this, R.style.DialogCineFlight)
+            .setTitle(getString(R.string.ma_3d_hauteur_titre))
+            .setView(defilant)
+            .setNegativeButton(android.R.string.cancel, null)
+            .setPositiveButton(getString(R.string.ma_3d_hauteur_suite)) { _, _ ->
+                // Une saisie illisible vaut 0 (sujet au sol), jamais un plantage ni une
+                // hauteur inventée : on retombe sur le comportement d'avant ce correctif.
+                val h = champ.text.toString().trim().toDoubleOrNull()?.coerceIn(0.0, 200.0) ?: 0.0
+                val plancher = if (casePlancher.isChecked)
+                    ca.cineflight.stage.cine.CaptureOrbite3D.ALT_MIN_FACADE_M
+                else ca.cineflight.stage.cine.CaptureOrbite3D.ALT_MIN_M
+                lancerCapture3DAvecHauteur(rayonM, clichesParTour, nbAnneaux, h, plancher)
+            }
+            .show()
+    }
+
+    private fun lancerCapture3DAvecHauteur(
+        rayonM: Double, clichesParTour: Int, nbAnneaux: Int, hauteurSujetM: Double,
+        plancherFacadeM: Double,
+    ) {
+        if (visiteEnCours || panoramaEnCours) { bandeauEphemere(getString(R.string.ma_visite_deja)); return }
+        val e = pont.lireEtat(pilote.enVol)
+        // ── APERÇU AU SOL ────────────────────────────────────────────────────────────
+        // Drone éteint ou posé : on ne peut pas planifier (le centre de l'orbite EST la
+        // position du drone), mais on peut montrer à quoi ressemblerait l'orbite autour
+        // d'ici. C'est utile AVANT de partir : on repère les arbres et les fils depuis
+        // chez soi, pas une fois sur place la batterie chargée.
+        // ⚠ L'écran le dit clairement et n'offre AUCUN bouton de lancement : un cercle
+        // qu'on prendrait pour le plan réel serait pire que pas de carte du tout.
+        if (!e.connecte || !e.gpsValide || !pilote.enVol) {
+            val p = positionTelephonePourApercu()
+            if (p == null) { bandeauEphemere(getString(R.string.ma_3d_doit_voler)); return }
+            val apercu = ca.cineflight.stage.cine.CaptureOrbite3D.planifier(
+                p.first, p.second, rayonM, clichesParTour, nbAnneaux = nbAnneaux,
+                hauteurSujetM = hauteurSujetM, plancherFacadeM = plancherFacadeM)
+            if (!apercu.realisable) { bandeauEphemere(apercu.refus ?: getString(R.string.ma_visite_echec)); return }
+            ouvrirCarteOrbite3D(apercu, p.first, p.second, rayonM, apercuSeulement = true)
+            return
+        }
+        val cLat = pont.latitudeDrone(); val cLon = pont.longitudeDrone()
+        if (cLat.isNaN() || cLon.isNaN()) { bandeauEphemere(getString(R.string.ma_bloc_gps)); return }
+        val plan = ca.cineflight.stage.cine.CaptureOrbite3D.planifier(
+            cLat, cLon, rayonM, clichesParTour, nbAnneaux = nbAnneaux,
+            hauteurSujetM = hauteurSujetM, plancherFacadeM = plancherFacadeM)
+        if (!plan.realisable) { bandeauEphemere(plan.refus ?: getString(R.string.ma_visite_echec)); return }
+        // ESPACE CARTE avant tout : une capture 3D interrompue à mi-parcours ne donne pas
+        // « un modèle moins bon », elle ne donne RIEN — la reconstruction a besoin de
+        // l'anneau complet.
+        if (!carteTient(plan.cliches.size) { msg ->
+                com.google.android.material.dialog.MaterialAlertDialogBuilder(this, R.style.DialogCineFlight)
+                    .setTitle(getString(R.string.ma_3d_titre)).setMessage(msg)
+                    .setPositiveButton(android.R.string.ok, null).show()
+            }) return
+        // Une capture 3D est LONGUE : la batterie est la première cause d'échec, et un
+        // modèle amputé de son dernier anneau ne se rattrape pas au montage.
+        val besoinPct = 20 + plan.dureeEstimeeS / 30
+        if (e.batteriePct in 0 until besoinPct) {
+            com.google.android.material.dialog.MaterialAlertDialogBuilder(this, R.style.DialogCineFlight)
+                .setTitle(getString(R.string.ma_3d_titre))
+                .setMessage(getString(R.string.ma_visite_batt, e.batteriePct, besoinPct))
+                .setPositiveButton(android.R.string.ok, null).show()
+            return
+        }
+        com.google.android.material.dialog.MaterialAlertDialogBuilder(this, R.style.DialogCineFlight)
+            .setTitle(getString(R.string.ma_3d_titre))
+            .setMessage(getString(R.string.ma_3d_confirm, plan.cliches.size, rayonM.toInt(),
+                plan.recouvrementPct.toInt(), plan.dureeEstimeeS / 60, plan.dureeEstimeeS % 60,
+                // Nombre RÉEL d'anneaux, pas la valeur demandée : l'anneau de façade
+                // s'ajoute ou non selon la hauteur du sujet, et le pilote doit voir ce
+                // qu'il va réellement voler.
+                plan.cliches.map { it.gimbalPitchDeg }.distinct().size) + blocReglagesCamera())
+            .setNegativeButton(android.R.string.cancel, null)
+            // La carte est l'ÉTAPE SUIVANTE, pas une option. Ce que le calcul ignore — un
+            // arbre, une ligne, un toit voisin — n'apparaît que là, et il vaut mieux le
+            // voir maintenant qu'au troisième arrêt de l'anneau bas.
+            .setPositiveButton(getString(R.string.ma_3d_hauteur_suite)) { _, _ ->
+                ouvrirCarteOrbite3D(plan, cLat, cLon, rayonM)
+            }
+            .show()
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════════
+    //  QUADRILLAGE DU TERRAIN — cartographie d'une zone entière (2026-07-28)
+    // ══════════════════════════════════════════════════════════════════════════════
+    /**
+     * Le drone balaie la zone en lignes parallèles, puis en travers, caméra vers le bas.
+     * C'est le motif de la cartographie : chaque point du sol est vu depuis plusieurs
+     * passages, sous des angles franchement différents — et c'est cette diversité qui
+     * permet de retrouver la profondeur, pas le nombre de photos.
+     *
+     * La zone se définit par DEUX COINS marqués au drone : le pilote regarde le terrain,
+     * pas une image satellite vieille de trois ans.
+     */
+    private fun lancerQuadrillage() {
+        if (visiteEnCours || panoramaEnCours) { bandeauEphemere(getString(R.string.ma_visite_deja)); return }
+        val encre = android.graphics.Color.parseColor("#ECEFF1")
+        val encreDouce = android.graphics.Color.parseColor("#B0BEC5")
+        val caseOblique = android.widget.CheckBox(this).apply {
+            text = getString(R.string.qa_oblique)
+            isChecked = true          // un quadrillage sans oblique donne un modèle écrasé
+            setTextColor(encre)
+            buttonTintList = android.content.res.ColorStateList.valueOf(
+                android.graphics.Color.parseColor("#3A9BFF"))
+        }
+        val boite = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(56, 16, 56, 8)
+            addView(TextView(this@MainActivity).apply {
+                text = getString(R.string.qa_reglages); textSize = 13f
+                setTextColor(encreDouce); setPadding(0, 0, 0, 16)
+            })
+            addView(caseOblique)
+            addView(TextView(this@MainActivity).apply {
+                text = getString(R.string.qa_oblique_info); textSize = 12f
+                setTextColor(encreDouce); setPadding(0, 8, 0, 0)
+            })
+        }
+        // ScrollView : MainActivity est en PAYSAGE, la place verticale est comptée.
+        com.google.android.material.dialog.MaterialAlertDialogBuilder(this, R.style.DialogCineFlight)
+            .setTitle(getString(R.string.qa_titre))
+            .setView(android.widget.ScrollView(this).apply { addView(boite) })
+            .setNegativeButton(android.R.string.cancel, null)
+            .setPositiveButton(getString(R.string.ma_3d_hauteur_suite)) { _, _ ->
+                // ⚠ L'ALTITUDE N'EST PLUS DEMANDÉE ICI. « 15, 22 ou 30 » ne veut rien dire
+                // tant qu'on ignore ce que ça produit SUR CE TERRAIN. On marque d'abord les
+                // coins ; ensuite l'app propose des résultats chiffrés.
+                marquerCoin(premier = true, altitudeM = 0.0,
+                    oblique = if (caseOblique.isChecked) 45.0 else 0.0, coinA = null)
+            }
+            .show()
+    }
+
+    /**
+     * Marque un coin à la position ACTUELLE du drone.
+     *
+     * ⚠ Position du DRONE, jamais du téléphone : c'est l'aéronef qu'on amène au coin, et
+     * lui seul est là où l'on croit. Le mode exige donc un vol en cours, comme l'orbite.
+     */
+    private fun marquerCoin(
+        premier: Boolean, altitudeM: Double, oblique: Double,
+        coinA: Pair<Double, Double>?,
+    ) {
+        val e = pont.lireEtat(pilote.enVol)
+        if (!e.connecte || !e.gpsValide) { bandeauEphemere(getString(R.string.ma_bloc_gps)); return }
+        if (!pilote.enVol) { bandeauEphemere(getString(R.string.ma_3d_doit_voler)); return }
+        com.google.android.material.dialog.MaterialAlertDialogBuilder(this, R.style.DialogCineFlight)
+            .setTitle(getString(R.string.qa_titre))
+            .setMessage(getString(if (premier) R.string.qa_coin_a else R.string.qa_coin_b))
+            .setCancelable(false)
+            .setNegativeButton(android.R.string.cancel, null)
+            .setPositiveButton(getString(R.string.qa_marquer)) { _, _ ->
+                val la = pont.latitudeDrone(); val lo = pont.longitudeDrone()
+                if (la.isNaN() || lo.isNaN()) { bandeauEphemere(getString(R.string.ma_bloc_gps)); return@setPositiveButton }
+                if (premier) {
+                    bandeauEphemere(getString(R.string.qa_coin_pris))
+                    marquerCoin(false, altitudeM, oblique, la to lo)
+                } else {
+                    coinA?.let { a -> choisirAltitude(a, la to lo, oblique) }
+                }
+            }
+            .show()
+    }
+
+    /**
+     * Propose les altitudes RÉALISABLES pour ce terrain, avec leurs conséquences.
+     *
+     * ⚠ POURQUOI CET ÉCRAN EXISTE. Demander « altitude en mètres ? » revient à demander à
+     * l'utilisateur de deviner : 15, 22 ou 30 ne signifient rien tant qu'on ne sait pas
+     * combien de photos, quelle finesse et quelle durée ils produisent sur CE terrain. Le
+     * calcul, lui, le sait dès que les deux coins sont marqués. On propose donc des
+     * résultats, jamais un champ vide.
+     *
+     * Les altitudes qui dépasseraient le plafond de clichés sont simplement ABSENTES : une
+     * option qu'on ne peut pas choisir n'a pas à être affichée.
+     */
+    private fun choisirAltitude(
+        a: Pair<Double, Double>, b: Pair<Double, Double>, oblique: Double,
+    ) {
+        val q = ca.cineflight.stage.cine.QuadrillageAerien
+        val t = q.depuisDeuxCoins(a.first, a.second, b.first, b.second)
+        if (t.largeurM < q.COTE_MIN_M || t.longueurM < q.COTE_MIN_M) {
+            bandeauEphemere(getString(R.string.qa_trop_petit,
+                t.largeurM.toInt(), t.longueurM.toInt(), q.COTE_MIN_M.toInt()))
+            return
+        }
+        val options = q.optionsAltitude(t.largeurM, t.longueurM, oblique)
+        if (options.isEmpty()) {
+            bandeauEphemere(getString(R.string.qa_aucune_option,
+                t.largeurM.toInt(), t.longueurM.toInt()))
+            return
+        }
+        val encre = android.graphics.Color.parseColor("#ECEFF1")
+        val encreDouce = android.graphics.Color.parseColor("#B0BEC5")
+        val col = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(48, 8, 48, 8)
+            addView(TextView(this@MainActivity).apply {
+                text = getString(R.string.qa_choix_intro, t.largeurM.toInt(), t.longueurM.toInt())
+                textSize = 13f; setTextColor(encreDouce); setPadding(0, 0, 0, 12)
+            })
+        }
+        val dlg = com.google.android.material.dialog.MaterialAlertDialogBuilder(this, R.style.DialogCineFlight)
+            .setTitle(getString(R.string.qa_titre))
+            .setView(android.widget.ScrollView(this).apply { addView(col) })
+            .setNegativeButton(android.R.string.cancel, null)
+            .create()
+        for (o in options) {
+            col.addView(android.widget.Button(this).apply {
+                text = getString(R.string.qa_option, o.altitudeM.toInt(), o.photos,
+                    o.cmParPixel, o.dureeS / 60, o.dureeS % 60) +
+                    // ⚠ DIT AVANT, PAS APRÈS. Une mission qui dépasse la batterie revient
+                    // avec un jeu incomplet — et un jeu incomplet ne se reconstruit pas,
+                    // il se revole.
+                    (if (o.tientEnUnVol) "" else "\n" + getString(R.string.qa_deux_batteries))
+                isAllCaps = false
+                setTextColor(if (o.tientEnUnVol) encre
+                             else android.graphics.Color.parseColor("#FFC107"))
+                setOnClickListener {
+                    dlg.dismiss()
+                    preparerQuadrillage(a, b, o.altitudeM, oblique)
+                }
+            })
+        }
+        dlg.show()
+    }
+
+    private fun preparerQuadrillage(
+        a: Pair<Double, Double>, b: Pair<Double, Double>,
+        altitudeM: Double, obliqueDeg: Double,
+    ) {
+        val q = ca.cineflight.stage.cine.QuadrillageAerien
+        val t = q.depuisDeuxCoins(a.first, a.second, b.first, b.second)
+        if (t.largeurM < q.COTE_MIN_M || t.longueurM < q.COTE_MIN_M) {
+            // On le DIT avec les mesures : « trop petit » sans chiffres n'apprend rien.
+            bandeauEphemere(getString(R.string.qa_trop_petit,
+                t.largeurM.toInt(), t.longueurM.toInt(), q.COTE_MIN_M.toInt()))
+            return
+        }
+        val plan = q.planifier(t.centreLat, t.centreLon, t.largeurM, t.longueurM,
+            altitudeM, capDeg = t.capDeg, obliqueDeg = obliqueDeg)
+        if (!plan.realisable) { bandeauEphemere(plan.refus ?: getString(R.string.ma_visite_echec)); return }
+        // Mêmes garde-fous que l'orbite : la carte mémoire et la batterie d'abord. Un
+        // quadrillage interrompu ne donne pas « un modèle moins bon », il ne donne rien.
+        if (!carteTient(plan.cliches.size) { msg ->
+                com.google.android.material.dialog.MaterialAlertDialogBuilder(this, R.style.DialogCineFlight)
+                    .setTitle(getString(R.string.qa_titre)).setMessage(msg)
+                    .setPositiveButton(android.R.string.ok, null).show()
+            }) return
+        val e = pont.lireEtat(pilote.enVol)
+        val besoinPct = 20 + plan.dureeEstimeeS / 30
+        if (e.batteriePct in 0 until besoinPct) {
+            com.google.android.material.dialog.MaterialAlertDialogBuilder(this, R.style.DialogCineFlight)
+                .setTitle(getString(R.string.qa_titre))
+                .setMessage(getString(R.string.ma_visite_batt, e.batteriePct, besoinPct))
+                .setPositiveButton(android.R.string.ok, null).show()
+            return
+        }
+        com.google.android.material.dialog.MaterialAlertDialogBuilder(this, R.style.DialogCineFlight)
+            .setTitle(getString(R.string.qa_titre))
+            .setMessage(getString(R.string.qa_resume, t.largeurM.toInt(), t.longueurM.toInt(),
+                plan.cliches.size, plan.cmParPixel, plan.dureeEstimeeS / 60,
+                plan.dureeEstimeeS % 60, plan.distanceVolM.toInt()) +
+                // ⚠ AVERTISSEMENT NON CONDITIONNEL, et c'est délibéré : deux points ne
+                // permettent PAS de savoir si le terrain est en biais. On ne peut donc pas
+                // détecter le dépassement, seulement prévenir qu'il est possible — et
+                // renvoyer à la carte, qui est le seul vrai contrôle.
+                "\n\n" + getString(R.string.qa_avert_cardinal) + blocReglagesCamera())
+            .setNegativeButton(android.R.string.cancel, null)
+            .setPositiveButton(getString(R.string.ma_3d_hauteur_suite)) { _, _ ->
+                ouvrirCarteQuadrillage(plan, t)
+            }
+            .show()
+    }
+
+    private fun ouvrirCarteQuadrillage(
+        plan: ca.cineflight.stage.cine.QuadrillageAerien.Plan,
+        t: ca.cineflight.stage.cine.QuadrillageAerien.Terrain,
+    ) {
+        // Converti vers le plan d'orbite : l'exécution, elle, reste UNIQUE et déjà
+        // éprouvée. Deux moteurs de vol finiraient par diverger sur les garde-fous.
+        with(ca.cineflight.stage.cine.QuadrillageAerien) { plan3DEnAttente = plan.versPlanOrbite() }
+        val coins = ca.cineflight.stage.cine.QuadrillageAerien
+            .coins(t.centreLat, t.centreLon, t.largeurM, t.longueurM, t.capDeg)
+        val i = android.content.Intent(this, CarteOrbite3DActivity::class.java)
+            .putExtra("apercu", false)
+            .putExtra("centre_lat", t.centreLat)
+            .putExtra("centre_lon", t.centreLon)
+            // Sert au seul cadrage du zoom : la demi-diagonale du terrain.
+            .putExtra("rayon_m", kotlin.math.hypot(t.largeurM / 2.0, t.longueurM / 2.0))
+            .putExtra("coins_lats", coins.map { it.first }.toDoubleArray())
+            .putExtra("coins_lons", coins.map { it.second }.toDoubleArray())
+            .putExtra("lats", plan.cliches.map { it.lat }.toDoubleArray())
+            .putExtra("lons", plan.cliches.map { it.lon }.toDoubleArray())
+            .putExtra("resume", getString(R.string.qa_resume, t.largeurM.toInt(),
+                t.longueurM.toInt(), plan.cliches.size, plan.cmParPixel,
+                plan.dureeEstimeeS / 60, plan.dureeEstimeeS % 60, plan.distanceVolM.toInt()))
+        startActivityForResult(i, REQ_CARTE_3D)
+    }
+
+    /** Plan en attente de confirmation SUR LA CARTE. Rejoué tel quel, jamais recalculé. */
+    private var plan3DEnAttente: ca.cineflight.stage.cine.CaptureOrbite3D.Plan? = null
+
+    /** Dernière position connue du téléphone, pour l'aperçu au sol. Null si indisponible. */
+    private fun positionTelephonePourApercu(): Pair<Double, Double>? = try {
+        val lm = getSystemService(android.content.Context.LOCATION_SERVICE) as android.location.LocationManager
+        val loc = lm.getLastKnownLocation(android.location.LocationManager.GPS_PROVIDER)
+            ?: lm.getLastKnownLocation(android.location.LocationManager.NETWORK_PROVIDER)
+            ?: lm.getLastKnownLocation(android.location.LocationManager.PASSIVE_PROVIDER)
+        if (loc == null) null else loc.latitude to loc.longitude
+    } catch (_: Throwable) { null }   // permission refusée, service coupé : pas d'aperçu,
+                                      // et surtout pas de plantage sur une commodité
+
+    private fun ouvrirCarteOrbite3D(
+        plan: ca.cineflight.stage.cine.CaptureOrbite3D.Plan,
+        cLat: Double, cLon: Double, rayonM: Double,
+        apercuSeulement: Boolean = false,
+    ) {
+        // On TRANSPORTE le plan déjà calculé au lieu de le recalculer là-bas : ce qui est
+        // montré sur la carte doit être exactement ce qui sera volé, sans qu'un paramètre
+        // puisse diverger entre les deux écrans.
+        // En aperçu, RIEN n'est mis en attente : il n'y a pas de vol à confirmer, et un
+        // plan qui traînerait pourrait être exécuté par un retour d'écran ultérieur.
+        plan3DEnAttente = if (apercuSeulement) null else plan
+        val nbHauteurs = plan.cliches.map { it.gimbalPitchDeg }.distinct().size
+        val plusBasse = plan.cliches.minOf { it.altitudeM }
+        val i = android.content.Intent(this, CarteOrbite3DActivity::class.java)
+            .putExtra("apercu", apercuSeulement)
+            .putExtra("centre_lat", cLat)
+            .putExtra("centre_lon", cLon)
+            .putExtra("rayon_m", rayonM)
+            .putExtra("lats", plan.cliches.map { it.lat }.toDoubleArray())
+            .putExtra("lons", plan.cliches.map { it.lon }.toDoubleArray())
+            .putExtra("resume",
+                (if (apercuSeulement) getString(R.string.co3d_apercu) + "\n" else "") +
+                getString(R.string.co3d_resume,
+                    plan.cliches.size, rayonM.toInt(), nbHauteurs, plusBasse.toInt(),
+                    plan.dureeEstimeeS / 60, plan.dureeEstimeeS % 60))
+        startActivityForResult(i, REQ_CARTE_3D)
+    }
+
+    private fun executerCapture3D(plan: ca.cineflight.stage.cine.CaptureOrbite3D.Plan) {
+        visiteEnCours = true
+        try {
+            val estOrbite = plan.motif == "ORBITE"
+            ca.cineflight.stage.control.JournalVol.demarrer(this, "MODELE_3D",
+                "motif=${plan.motif}" +
+                " cliches=${plan.cliches.size} recouvrement=${plan.recouvrementPct.toInt()}%" +
+                " ${if (estOrbite) "anneaux" else "passages"}=" +
+                "${plan.cliches.map { it.anneau }.distinct().size}" +
+                " duree_estimee=${plan.dureeEstimeeS}s" +
+                // Hauteur déclarée et plancher RETENU : sans eux, on relit un vol sans
+                // savoir sous quelle règle il a eu lieu. Le plancher abaissé est marqué
+                // pour qu'il saute aux yeux dans la trace.
+                // ⚠ N'ONT DE SENS QUE POUR UNE ORBITE : sur un quadrillage il n'y a pas de
+                // sujet et le plancher vaut 20 m, pas 12. Les écrire quand même reviendrait
+                // à consigner des valeurs fausses avec l'autorité d'une mesure.
+                (if (estOrbite)
+                    " hauteur_sujet=${plan.hauteurSujetM.toInt()}m" +
+                    " plancher=${plan.plancherM.toInt()}m" +
+                    (if (plan.plancherM < ca.cineflight.stage.cine.CaptureOrbite3D.ALT_MIN_M)
+                        " PLANCHER_ABAISSE=OUI" else "")
+                 else "") +
+                " alt_min_plan=${plan.cliches.minOfOrNull { it.altitudeM }?.toInt() ?: -1}m")
+        } catch (_: Throwable) {}
+        val dlg = com.google.android.material.dialog.MaterialAlertDialogBuilder(this, R.style.DialogCineFlight)
+            .setTitle(getString(R.string.ma_3d_titre))
+            .setMessage(getString(R.string.ma_3d_progres, 0, plan.cliches.size, 1))
+            .setCancelable(false)
+            .setNegativeButton(R.string.ma_dlg_arret_rth) { _, _ ->
+                visiteEnCours = false; pont.lancerRth { }
+            }.show()
+
+        lifecycleScope.launch(Dispatchers.Main) {
+            // FORMAT 4:3 AVANT TOUTE PRISE. En 16:9 la caméra jette un quart de la hauteur
+            // du capteur : c'est autant de recouvrement VERTICAL perdu entre les anneaux,
+            // et le recouvrement est ce qui fait tenir le modèle. Constaté sur les photos
+            // du 2026-07-27 (4032×2268 au lieu de 4032×3024).
+            // La sonde ne force rien si elle ne trouve pas exactement ce qu'elle cherche —
+            // et le journal porte ce qu'elle a fait, pour qu'on puisse le savoir APRÈS COUP.
+            val fmt = kotlinx.coroutines.suspendCancellableCoroutine<
+                ca.cineflight.stage.control.SondeFormatPhoto.Resultat> { cont ->
+                try {
+                    ca.cineflight.stage.control.SondeFormatPhoto.forcer4x3 { r ->
+                        if (cont.isActive) cont.resumeWith(Result.success(r))
+                    }
+                } catch (e: Throwable) {
+                    if (cont.isActive) cont.resumeWith(Result.success(
+                        ca.cineflight.stage.control.SondeFormatPhoto.Resultat(false, "indisponible")))
+                }
+            }
+            try {
+                if (fmt.ok) ca.cineflight.stage.control.JournalVol.evenement("format photo : ${fmt.detail}")
+                else ca.cineflight.stage.control.JournalVol.anomalie("format photo NON forcé : ${fmt.detail}")
+            } catch (_: Throwable) {}
+            delay(500)          // laisser la caméra reconfigurer avant le 1er cliché
+
+            // ⚠⚠ VIRTUAL STICK DEMANDÉ ICI, ET ATTENDU.
+            //
+            // DÉFAUT MESURÉ le 2026-07-28 : quatre captures 3D d'affilée se sont arrêtées
+            // en moins d'une seconde sur « virtual_stick=false ». La cause est la même que
+            // celle documentée pour Phase 3 le 2026-07-22 : le Virtual Stick n'est demandé
+            // que dans `decoller()` (bouton DÉCOLLER de l'app) et dans `basculerMode(true)`.
+            // Un pilote qui décolle AUX MANCHES, ou qui est déjà en mode auto, n'obtient
+            // jamais l'autorité — et la capture exige `pilote.enVol`, donc elle ne passe pas
+            // par le chemin de décollage qui l'aurait demandée.
+            //
+            // On le demande donc explicitement, et on ATTEND l'acquittement du SDK au lieu
+            // de partir en supposant qu'il a dit oui. Un refus se dit AVANT le vol, pas au
+            // premier transit par une ligne de journal que le pilote ne lira jamais.
+            if (!pont.virtualStickConfirmeActif()) {
+                try { pont.activerVirtualStick(true) } catch (_: Exception) {}
+                val t0 = System.currentTimeMillis()
+                while (!pont.virtualStickConfirmeActif() &&
+                       System.currentTimeMillis() - t0 < 4000) delay(200)
+            }
+            val vsOk = try { pont.virtualStickConfirmeActif() } catch (_: Throwable) { false }
+            try { ca.cineflight.stage.control.JournalVol.evenement(
+                "virtual stick avant capture : accorde=$vsOk mode_auto=$modeAuto") } catch (_: Throwable) {}
+            if (!vsOk || !modeAuto) {
+                try { ca.cineflight.stage.control.JournalVol.anomalie(
+                    "capture ANNULÉE avant le premier cliché : virtual_stick=$vsOk" +
+                    " mode_auto=$modeAuto") } catch (_: Throwable) {}
+                visiteEnCours = false
+                try { dlg.dismiss() } catch (_: Exception) {}
+                bandeauEphemere(getString(R.string.ma_3d_vs_refuse))
+                return@launch
+            }
+
+            var pris = 0
+            var manques = 0
+            for ((i, c) in plan.cliches.withIndex()) {
+                if (!visiteEnCours) break
+                dlg.setMessage(getString(R.string.ma_3d_progres, i + 1, plan.cliches.size, c.anneau + 1))
+                if (!allerA(c.lat, c.lon, c.altitudeM, tolM = 1.5, vMaxMps = 3.0)) break
+                if (!orienterVers(c.capDeg)) break
+                pont.reglerGimbalPitch(c.gimbalPitchDeg.toFloat().coerceIn(-90f, 30f))
+                delay(1200)          // stabilisation : une photo floue est une photo perdue
+                val ok = prendrePhotoBloquante()
+                if (ok) pris++ else manques++
+                val etat = pont.lireEtat(pilote.enVol)
+                try { ca.cineflight.stage.control.JournalVol.etatSimple(
+                    altM = c.altitudeM, capDeg = c.capDeg,
+                    lat = pont.latitudeDrone(), lon = pont.longitudeDrone(),
+                    pitch = 0f, roll = 0f, throttle = 0f, yaw = 0f,
+                    batteriePct = etat.batteriePct,
+                    satellites = etat.satellites,
+                    phase = "cliché ${i + 1}/${plan.cliches.size} passage=${c.anneau + 1}" +
+                        " gimbal=${c.gimbalPitchDeg.toInt()} photo=${if (ok) "OK" else "REFUSEE"}")
+                } catch (_: Throwable) {}
+                // ⚠ BATTERIE SURVEILLÉE PENDANT LA MISSION, pas seulement avant.
+                // L'estimation de durée faite au départ suppose un vent nul et des
+                // transits idéaux ; un vent de face peut doubler la consommation. Sans ce
+                // contrôle, une mission longue s'arrêtait au seul jugement du firmware —
+                // qui déclenche son retour automatique bien plus tard, et pas forcément là
+                // où on l'aurait choisi.
+                if (etat.batteriePct in 1 until BATTERIE_PLANCHER_MISSION_PCT) {
+                    try { ca.cineflight.stage.control.JournalVol.anomalie(
+                        "mission interrompue : batterie ${etat.batteriePct} % " +
+                        "(plancher $BATTERIE_PLANCHER_MISSION_PCT %) après ${i + 1} clichés")
+                    } catch (_: Throwable) {}
+                    bandeauEphemere(getString(R.string.ma_3d_batt_basse, etat.batteriePct))
+                    break
+                }
+                // Une reconstruction tolère quelques trous, pas une hémorragie : si le
+                // quart des prises est refusé, on arrête plutôt que de finir la batterie
+                // pour un jeu de photos inexploitable.
+                if (manques > plan.cliches.size / 4) {
+                    try { ca.cineflight.stage.control.JournalVol.anomalie(
+                        "capture 3D interrompue : $manques photos refusées sur ${i + 1}") } catch (_: Throwable) {}
+                    break
+                }
+            }
+            try { dlg.setMessage(getString(R.string.ma_visite_retour)) } catch (_: Exception) {}
+            if (modeAuto) try { pont.lancerRth { } } catch (_: Exception) {}
+            try { ca.cineflight.stage.control.JournalVol.terminer(
+                "modèle 3D : $pris photos prises, $manques refusées") } catch (_: Throwable) {}
+            delay(8000)
+            // ⚠ TOUTE LA QUEUE EST GARDÉE. Depuis que `onStop` interrompt la mission, cette
+            // suite peut s'exécuter alors que l'écran n'est plus au premier plan : afficher
+            // un dialogue à ce moment-là lève `BadTokenException`. Les photos sont déjà sur
+            // la carte du drone — perdre la proposition d'assemblage est fâcheux, faire
+            // planter l'app pendant qu'un aéronef rentre en RTH l'est bien davantage.
+            try {
+            if (pris >= 12) {
+                // Même choix que pour le relief — et il compte encore plus ici : 96 photos
+                // pleine résolution, c'est près d'un gigaoctet à rapatrier puis à envoyer.
+                proposerAssemblage("MODELE3D", getString(R.string.ma_3d_nom),
+                    listOf(pris), null, 0.0, emptyList(),
+                    maintenant = {
+                        dlg.setMessage(getString(R.string.ma_3d_envoi))
+                        envoyerJeu3D(pris) { lien ->
+                            runOnUiThread {
+                                visiteEnCours = false; dlg.dismiss()
+                                if (lien != null) afficherLienVisite(lien, R.string.ma_3d_titre, R.string.ma_visite_lien)
+                                else bandeauEphemere(getString(R.string.ma_3d_envoi_echec))
+                            }
+                        }
+                    },
+                    plusTard = {
+                        visiteEnCours = false
+                        try { ca.cineflight.stage.control.JournalVol.terminer(
+                            "modèle 3D capturé, envoi mis en file") } catch (_: Throwable) {}
+                        try { dlg.dismiss() } catch (_: Exception) {}
+                    })
+            } else {
+                visiteEnCours = false; dlg.dismiss()
+                bandeauEphemere(getString(R.string.ma_3d_trop_peu, pris))
+            }
+            } catch (e: Throwable) {
+                visiteEnCours = false
+                try { dlg.dismiss() } catch (_: Exception) {}
+                try { ca.cineflight.stage.control.JournalVol.anomalie(
+                    "fin de capture non affichée (écran absent ?) : ${e.javaClass.simpleName}" +
+                    " — $pris photos restent sur la carte du drone") } catch (_: Throwable) {}
+            }
+        }
+    }
+
+    /** Pivote sur place jusqu'au cap demandé. true si atteint. */
+    private suspend fun orienterVers(capCibleDeg: Double): Boolean {
+        val t0 = System.currentTimeMillis()
+        var atteint = false
+        while (visiteEnCours && System.currentTimeMillis() - t0 < 12_000L) {
+            if (!autoriteDeVolIntacte("orientation")) return false
+            val cap = try { pont.capDroneDeg() } catch (_: Throwable) { Float.NaN }
+            if (cap.isNaN()) return false
+            val ecart = ca.cineflight.stage.cine.PanoramaStateMachine
+                .ecartAngulaire(cap, capCibleDeg.toFloat())
+            if (kotlin.math.abs(ecart) < 3f) { atteint = true; break }
+            pilote.soumettre(RecepteurBridge.CommandeBridge(
+                System.currentTimeMillis() / 1000.0, 0f, 0f, 0f,
+                (ecart * 1.5f).coerceIn(-40f, 40f), "actif", System.currentTimeMillis()))
+            delay(120)
+        }
+        // Cap non atteint : on CONTINUE — un écart de quelques degrés ne ruine pas une
+        // reconstruction, et interrompre la mission pour ça coûterait tout le jeu. Mais on
+        // le DIT : si toutes les prises portent cette ligne, le lacet ne suit pas, et
+        // c'est cela qu'il faudra corriger, pas les photos.
+        if (!atteint && visiteEnCours) try {
+            val cap = try { pont.capDroneDeg() } catch (_: Throwable) { Float.NaN }
+            ca.cineflight.stage.control.JournalVol.anomalie(
+                "CAP_NON_ATTEINT vise=%.0f obtenu=%.0f apres=12s — photo prise quand meme"
+                    .format(capCibleDeg, cap)) } catch (_: Throwable) {}
+        pilote.soumettre(RecepteurBridge.CommandeBridge(
+            System.currentTimeMillis() / 1000.0, 0f, 0f, 0f, 0f, "actif", System.currentTimeMillis()))
+        delay(600)
+        return visiteEnCours
+    }
+
+    /**
+     * Déclenche une photo et attend la CONFIRMATION de la caméra. false si refusée.
+     * On passe par la chaîne durcie `declencherPhotoConfirmee` (celle qui gère le -472
+     * WEAK_GPS et la bascule PHOTO_NORMAL) : un déclenchement non confirmé laisserait un
+     * trou silencieux dans le jeu photogrammétrique, et le trou ne se voit qu'à la
+     * reconstruction, une heure de calcul plus tard.
+     */
+    private suspend fun prendrePhotoBloquante(): Boolean {
+        val reel = pontReel ?: return false
+        return kotlinx.coroutines.suspendCancellableCoroutine { cont ->
+            try {
+                reel.declencherPhotoConfirmee { ok, _ ->
+                    if (cont.isActive) cont.resumeWith(Result.success(ok))
+                }
+            } catch (_: Throwable) {
+                if (cont.isActive) cont.resumeWith(Result.success(false))
+            }
+        }
+    }
+
+    /** Rapatrie les N dernières photos et les envoie au serveur de reconstruction. */
+    private fun envoyerJeu3D(nb: Int, onFini: (String?) -> Unit) {
+        val media = mediaDronePano ?: ca.cineflight.stage.control.MediaDrone().also { mediaDronePano = it }
+        media.activer { ok ->
+            if (!ok) { onFini(null); return@activer }
+            media.listerPhotos { brutes ->
+                val photos = seulementJpeg(brutes)
+                if (photos.size < nb) { media.quitter(); onFini(null); return@listerPhotos }
+                val cibles = photos.sortedBy { it.fileName }.takeLast(nb)
+                val fichiers = java.util.ArrayList<java.io.File>()
+                fun suivant(i: Int) {
+                    if (i >= cibles.size) {
+                        media.quitter()
+                        Thread {
+                            onFini(ca.cineflight.stage.cine.ClientModele3D.envoyer(
+                                SERVEUR_PANO, getString(R.string.ma_3d_nom), fichiers))
+                        }.start()
+                        return
+                    }
+                    runOnUiThread { bandeauEphemere(getString(R.string.ma_3d_transfert, i + 1, cibles.size)) }
+                    // (le transfert 3D a sa propre fenêtre, mise à jour par l'appelant)
+                    media.telecharger(this@MainActivity, cibles[i], { }, { f ->
+                        if (f != null) fichiers.add(f); suivant(i + 1)
+                    })
+                }
+                suivant(0)
+            }
+        }
+    }
+
+    private fun finirStereo(dlg: androidx.appcompat.app.AlertDialog, lien: String?) {
+        visiteEnCours = false
+        // Le journal ne se clôt qu'ICI : il couvre donc le vol ET la chaîne aval
+        // (rapatriement, assemblage, création de la paire), qui est la partie fragile.
+        try { ca.cineflight.stage.control.JournalVol.terminer(
+            if (lien != null) "relief prêt : $lien" else "relief NON abouti (assemblage ou envoi)")
+        } catch (_: Throwable) {}
+        try { dlg.dismiss() } catch (_: Exception) {}
+        if (lien != null) afficherLienVisite(lien, R.string.ma_stereo_prete, R.string.ma_stereo_lien)
+        else bandeauEphemere(getString(R.string.ma_visite_echec))
+    }
+
+    /**
+     * Assemble les deux panoramas puis crée la paire stéréo côté serveur.
+     *
+     * ⚠ LES DEUX YEUX PARTAGENT LA MÊME GRILLE, construite sur le cap FIGÉ de la capture.
+     * C'est ce qui garantit qu'ils atterrissent dans le MÊME repère à l'assemblage — sans
+     * quoi Hugin oriente chaque panorama à sa guise et les deux images ne se superposent
+     * plus (2,6° d'écart vertical mesurés au vol du 2026-07-27, cinq fois la tolérance).
+     */
+    private fun assemblerStereo(
+        nbG: Int, nbD: Int, baseM: Double,
+        preset: ca.cineflight.stage.cine.PanoramaPreset,
+        capStereo: Float,
+        onProgres: (String) -> Unit = { bandeauEphemere(it) },
+        onFini: (String?) -> Unit,
+    ) {
+        val grille = ca.cineflight.stage.cine.PanoramaGrille.construire(preset, capStereo)
+            .map { it.yawDeg to it.pitchDeg }
+        assemblerLots(listOf(nbG, nbD), listOf(grille, grille), onProgres = onProgres) { jobs ->
+            if (jobs.size < 2) { onFini(null); return@assemblerLots }
+            Thread {
+                onFini(ca.cineflight.stage.cine.ClientVisiteVr.creerStereo(
+                    SERVEUR_PANO, getString(R.string.ma_stereo_nom),
+                    jobGauche = jobs[0], jobDroit = jobs[1], baseM = baseM))
+            }.start()
+        }
+    }
+
+    /**
+     * Assemble chaque étape séparément puis crée la visite. Les photos de la carte SD sont
+     * en ordre chronologique : les dernières `somme(compteurs)` appartiennent à la visite,
+     * découpées en lots consécutifs — un lot par point de vue.
+     */
+    private fun assemblerVisite(
+        compteurs: List<Int>, noms: List<String>, titre: String,
+        onProgres: (String) -> Unit = { bandeauEphemere(it) },
+        onFini: (String?) -> Unit,
+    ) {
+        // Les visites n'ont pas encore de grille transmise : chaque point a son propre cap
+        // de départ, et rien n'exige qu'ils partagent un repère. À ajouter si un jour la
+        // téléportation entre points paraît « sauter » en rotation.
+        assemblerLots(compteurs, onProgres = onProgres) { jobs ->
+            if (jobs.size < 2) { onFini(null); return@assemblerLots }
+            Thread {
+                val points = jobs.mapIndexed { i, j ->
+                    ca.cineflight.stage.cine.ClientVisiteVr.PointVisite(
+                        j, noms.getOrElse(i) { "Point ${i + 1}" })
+                }
+                onFini(ca.cineflight.stage.cine.ClientVisiteVr.creer(SERVEUR_PANO, titre, points))
+            }.start()
+        }
+    }
+
+    /**
+     * Rapatrie les dernières `somme(compteurs)` photos du drone, les découpe en lots
+     * CONSÉCUTIFS (un lot = un panorama) et assemble chaque lot côté serveur.
+     * Rend la liste des `job_id` obtenus — la matière première d'une visite OU d'une paire
+     * stéréo. Un lot qui échoue est simplement absent de la liste : l'appelant décide.
+     */
+    /**
+     * Propose de faire l'assemblage MAINTENANT ou plus tard. Sur le terrain, rapatrier
+     * 50 photos et attendre le serveur immobilise le drone une vingtaine de minutes —
+     * souvent au meilleur moment de la lumière. Différer rend le drone au pilote.
+     *
+     * En différé, on ne garde AUCUNE image : seulement les noms des fichiers restés sur la
+     * carte du drone, plus la description de l'assemblage.
+     */
+    /**
+     * La carte du drone tiendra-t-elle `nbPhotos` clichés ?
+     *
+     * @return true si on peut y aller. Un espace INCONNU laisse passer, avec un
+     *   avertissement : le SDK de ce drone se trompe régulièrement sur le stockage, et un
+     *   contrôle qui bloquerait le vol faute d'avoir su lire la carte rendrait l'app
+     *   inutilisable — on préfère prévenir plutôt qu'interdire.
+     */
+    /**
+     * Réglages caméra à montrer AVANT de décoller, lus au drone et non dans les préférences
+     * de l'app — ce sont deux choses différentes, et c'est celle du drone qui décide.
+     *
+     * Le format 16:9 des photos du 2026-07-27 tenait depuis des semaines sans que rien ne
+     * l'affiche : un quart de la hauteur du capteur jeté à chaque prise, invisible.
+     * Un pilote ne corrige pas ce qu'il ne voit pas.
+     *
+     * @return un bloc de texte à coller dans la fenêtre de confirmation, ou "" si le drone
+     *   ne dit rien (auquel cas on ne prétend rien).
+     */
+    private fun blocReglagesCamera(): String {
+        val r = try { pontReel?.resumeReglagesCamera() ?: emptyMap() } catch (_: Throwable) { emptyMap() }
+        if (r.isEmpty()) return ""
+        val lignes = r.entries.joinToString("\n") { "   ${it.key} : ${it.value}" }
+        // Le 4:3 est signalé quand il manque : c'est le réglage qui coûte le plus cher en
+        // photogrammétrie, et le seul qu'on ait vu se tromper en silence.
+        val fmt = r["format"] ?: ""
+        val alerte = if (fmt.isNotBlank() && !fmt.contains("4:3") && !fmt.contains("4 3"))
+            "\n" + getString(R.string.ma_cam_43_conseil) else ""
+        // ⚠ DNG SEUL = aucun JPEG écrit, donc RIEN à assembler. Notre serveur travaille sur
+        // les JPEG réduits. Sans cet avertissement, le pilote ne le découvrirait qu'au
+        // retour, après avoir volé — l'échec arriverait à l'assemblage, trop tard.
+        val sansJpeg = if (reglages.getFormatPhoto() == 1)
+            "\n" + getString(R.string.ma_cam_dng_seul) else ""
+        return "\n\n" + getString(R.string.ma_cam_reglages) + "\n" + lignes + alerte + sansJpeg
+    }
+
+    private fun carteTient(nbPhotos: Int, onRefus: (String) -> Unit): Boolean {
+        // ⚠ CARTE ABSENTE = 2 Go de mémoire interne, et rien d'autre (Mini 4 Pro).
+        // Le drone n'annonce rien : il enregistre dans sa mémoire embarquée et continue
+        // comme si de rien n'était. Une capture 3D de 96 photos s'arrêterait vers la
+        // trentième, et le pilote ne le découvrirait qu'au rapatriement — vol perdu,
+        // batterie perdue, déplacement perdu. On refuse AVANT le décollage.
+        val etat = pont.lireEtat(pilote.enVol)
+        if (!etat.carteSdPresente) {
+            onRefus(getString(R.string.ma_carte_absente))
+            try { ca.cineflight.stage.control.JournalVol.anomalie(
+                "capture refusée : aucune carte détectée (mémoire interne = 2 Go seulement)")
+            } catch (_: Throwable) {}
+            return false
+        }
+        val libres = try { pontReel?.octetsLibresCarte ?: -1L } catch (_: Throwable) { -1L }
+        dernierEspaceCarteOctets = libres          // pour l'écran « Carte du drone »
+        // Le format choisi change TOUT le calcul : en DNG+JPEG le drone écrit deux fichiers
+        // par déclenchement, et le DNG pèse trois à quatre fois le JPEG.
+        val fmt = reglages.getFormatPhoto()
+        val v = ca.cineflight.stage.cine.EspaceCarte.verifier(
+            libres, nbPhotos, ca.cineflight.stage.cine.EspaceCarte.octetsParPrise(fmt))
+        // FORMAT appliqué ICI, avant la capture : c'est un réglage caméra qui survit aux
+        // sessions, et l'utilisateur l'a choisi dans les réglages de l'app — les deux
+        // doivent être remis d'accord au moment qui compte.
+        try { ca.cineflight.stage.control.JournalVol.evenement(
+            pontReel?.reglerFormatPhoto(fmt) ?: "format photo : pont indisponible") } catch (_: Throwable) {}
+        try { ca.cineflight.stage.control.JournalVol.evenement(
+            "carte : %.2f Go libres, %d photos en %s (%.2f Go nécessaires)".format(
+                v.libresGo(), nbPhotos, reglages.formatPhotoNom(), v.necessairesGo())) } catch (_: Throwable) {}
+        if (libres < 0L) {
+            bandeauEphemere(getString(R.string.ma_carte_inconnue))
+            return true
+        }
+        if (!v.suffisant) {
+            onRefus(getString(R.string.ma_carte_pleine,
+                v.libresGo(), nbPhotos, v.necessairesGo(), v.photosPossibles))
+            return false
+        }
+        return true
+    }
+
+    private fun proposerAssemblage(
+        type: String, titre: String, compteurs: List<Int>,
+        grilles: List<List<Pair<Float, Float>>>?, baseM: Double, noms: List<String>,
+        maintenant: () -> Unit,
+        plusTard: () -> Unit,
+    ) {
+        com.google.android.material.dialog.MaterialAlertDialogBuilder(this, R.style.DialogCineFlight)
+            .setTitle(getString(R.string.ma_asm_titre))
+            .setMessage(getString(R.string.ma_asm_msg, compteurs.sum()))
+            .setCancelable(false)
+            .setPositiveButton(getString(R.string.ma_asm_maintenant)) { _, _ -> maintenant() }
+            .setNegativeButton(getString(R.string.ma_asm_plus_tard)) { _, _ ->
+                differerAssemblage(type, titre, compteurs, grilles, baseM, noms)
+                plusTard()
+            }
+            .show()
+    }
+
+    /**
+     * Exécute une tâche différée demandée par l'écran de la file. Le rapatriement se fait
+     * PAR NOM de fichier — c'est la seule référence qui survit à d'autres vols.
+     */
+    private fun traiterAssemblageEnAttente(id: Long) {
+        val TAG = ca.cineflight.stage.cine.AssemblagesEnAttente.TAG
+        android.util.Log.i(TAG, "traitement demande id=$id")
+        val t = ca.cineflight.stage.cine.AssemblagesEnAttente.lister(this).firstOrNull { it.id == id }
+        if (t == null) {
+            android.util.Log.w(TAG, "tache INTROUVABLE id=$id")
+            bandeauEphemere(getString(R.string.ma_asm_introuvable)); return
+        }
+        val e = pont.lireEtat(pilote.enVol)
+        android.util.Log.i(TAG, "tache=${t.titre} type=${t.type} lots=${t.lots.size}" +
+            " photos=${t.nbPhotos()} drone_connecte=${e.connecte}")
+        if (!e.connecte) {
+            android.util.Log.w(TAG, "REFUS : drone non connecte")
+            bandeauEphemere(getString(R.string.ma_asm_drone_requis)); return
+        }
+        val dlg = com.google.android.material.dialog.MaterialAlertDialogBuilder(this, R.style.DialogCineFlight)
+            .setTitle(t.titre)
+            .setMessage(getString(R.string.ma_asm_en_cours))
+            .setCancelable(false)
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
+        val compteurs = t.lots.map { it.size }
+        // MODÈLE 3D : pas d'assemblage panoramique. On rapatrie les photos et on les
+        // envoie telles quelles au serveur de reconstruction — la photogrammétrie retrouve
+        // elle-même la position de chaque prise de vue, elle n'a que faire de nos angles.
+        if (t.type == "MODELE3D") {
+            rapatrierPuisEnvoyer3D(t, dlg); return
+        }
+        assemblerLots(compteurs, t.angles, t.lots,
+            onProgres = { m -> runOnUiThread { dlg.setMessage(m) } }
+        ) { jobs ->
+            Thread {
+                val lien = when {
+                    // Un panorama seul : pas de visite ni de paire, juste sa visionneuse.
+                    t.type == "PANORAMA" && jobs.size == 1 -> "$SERVEUR_PANO/vr/${jobs[0]}"
+                    t.type == "RELIEF" && jobs.size >= 2 ->
+                        ca.cineflight.stage.cine.ClientVisiteVr.creerStereo(
+                            SERVEUR_PANO, t.titre, jobs[0], jobs[1], t.baseM)
+                    jobs.size >= 2 -> ca.cineflight.stage.cine.ClientVisiteVr.creer(
+                        SERVEUR_PANO, t.titre,
+                        jobs.mapIndexed { i, j -> ca.cineflight.stage.cine.ClientVisiteVr.PointVisite(
+                            j, t.noms.getOrElse(i) { "Point ${i + 1}" }) })
+                    else -> null
+                }
+                runOnUiThread {
+                    try { dlg.dismiss() } catch (_: Exception) {}
+                    if (lien != null) {
+                        // La tâche n'est retirée QUE si elle a abouti : un échec réseau ne
+                        // doit pas faire disparaître la seule trace d'un vol.
+                        ca.cineflight.stage.cine.AssemblagesEnAttente.retirer(this@MainActivity, t.id)
+                        afficherLienVisite(lien,
+                            if (t.type == "RELIEF") R.string.ma_stereo_prete else R.string.ma_visite_prete,
+                            if (t.type == "RELIEF") R.string.ma_stereo_lien else R.string.ma_visite_lien)
+                    } else bandeauEphemere(getString(R.string.ma_asm_echec))
+                }
+            }.start()
+        }
+    }
+
+    /** Tâche différée d'un MODÈLE 3D : rapatriement par nom, puis envoi au serveur. */
+    private fun rapatrierPuisEnvoyer3D(
+        t: ca.cineflight.stage.cine.AssemblagesEnAttente.Tache,
+        dlg: androidx.appcompat.app.AlertDialog,
+    ) {
+        val noms = t.lots.flatten()
+        val media = mediaDronePano ?: ca.cineflight.stage.control.MediaDrone().also { mediaDronePano = it }
+        media.activer { ok ->
+            if (!ok) { runOnUiThread { dlg.dismiss(); bandeauEphemere(getString(R.string.ma_asm_drone_requis)) }; return@activer }
+            media.listerPhotos { photos ->
+                val parNom = photos.associateBy { it.fileName }
+                val cibles = noms.map { parNom[it] }
+                val fichiers = java.util.ArrayList<java.io.File>()
+                var manquantes = 0
+                fun suivant(i: Int) {
+                    if (i >= cibles.size) {
+                        media.quitter()
+                        if (manquantes > 0) try { ca.cineflight.stage.control.JournalVol.anomalie(
+                            "modèle 3D différé : $manquantes photo(s) introuvables sur la carte")
+                        } catch (_: Throwable) {}
+                        runOnUiThread { dlg.setMessage(getString(R.string.ma_3d_envoi)) }
+                        Thread {
+                            val lien = ca.cineflight.stage.cine.ClientModele3D.envoyer(
+                                SERVEUR_PANO, t.titre, fichiers)
+                            runOnUiThread {
+                                try { dlg.dismiss() } catch (_: Exception) {}
+                                if (lien != null) {
+                                    ca.cineflight.stage.cine.AssemblagesEnAttente.retirer(this@MainActivity, t.id)
+                                    afficherLienVisite(lien, R.string.ma_3d_titre, R.string.ma_visite_lien)
+                                } else bandeauEphemere(getString(R.string.ma_3d_envoi_echec))
+                            }
+                        }.start()
+                        return
+                    }
+                    val c = cibles[i]
+                    if (c == null) { manquantes++; suivant(i + 1); return }
+                    // Même progression détaillée que pour les panoramas : sur 400 photos
+                    // d'un quadrillage, un compteur de fichiers seul laisse croire à un
+                    // blocage pendant chaque descente.
+                    val majProgres = { pct: Int ->
+                        val global = ((i * 100 + pct) / cibles.size.coerceAtLeast(1))
+                        runOnUiThread { dlg.setMessage(getString(R.string.ma_asm_rapatriement,
+                            i + 1, cibles.size, pct, global)) }
+                    }
+                    majProgres(0)
+                    media.telecharger(this@MainActivity, c, majProgres, { f ->
+                        if (f != null) fichiers.add(f) else manquantes++
+                        suivant(i + 1)
+                    })
+                }
+                suivant(0)
+            }
+        }
+    }
+
+    /** Relève les noms de fichiers sur la carte du drone et met la tâche en file. */
+    private fun differerAssemblage(
+        type: String, titre: String, compteurs: List<Int>,
+        grilles: List<List<Pair<Float, Float>>>?, baseM: Double, noms: List<String>,
+    ) {
+        val total = compteurs.sum()
+        bandeauEphemere(getString(R.string.ma_asm_releve))
+        val media = mediaDronePano ?: ca.cineflight.stage.control.MediaDrone().also { mediaDronePano = it }
+        media.activer { ok ->
+            if (!ok) { runOnUiThread { bandeauEphemere(getString(R.string.ma_asm_releve_echec)) }; return@activer }
+            media.listerPhotos { brutes ->
+                val photos = seulementJpeg(brutes)
+                media.quitter()
+                if (photos.size < total) {
+                    runOnUiThread { bandeauEphemere(getString(R.string.ma_asm_releve_echec)) }
+                    return@listerPhotos
+                }
+                // ⚠ On relève les noms MAINTENANT, drone encore connecté. Plus tard,
+                // « les N dernières photos » ne désigneraient plus les bonnes dès qu'un
+                // autre vol a eu lieu.
+                val derniers = photos.sortedBy { it.fileName }.takeLast(total).map { it.fileName }
+                var debut = 0
+                val lots = compteurs.map { n ->
+                    val l = derniers.subList(debut, (debut + n).coerceAtMost(derniers.size)).toList()
+                    debut += n; l
+                }
+                ca.cineflight.stage.cine.AssemblagesEnAttente.ajouter(this@MainActivity,
+                    ca.cineflight.stage.cine.AssemblagesEnAttente.Tache(
+                        System.currentTimeMillis(), type, titre, lots, grilles, baseM, noms))
+                try { ca.cineflight.stage.control.JournalVol.evenement(
+                    "assemblage DIFFÉRÉ : $total photo(s) laissées sur la carte") } catch (_: Throwable) {}
+                runOnUiThread {
+                    com.google.android.material.dialog.MaterialAlertDialogBuilder(
+                        this@MainActivity, R.style.DialogCineFlight)
+                        .setTitle(getString(R.string.ma_asm_differe_titre))
+                        .setMessage(getString(R.string.ma_asm_differe_msg))
+                        .setPositiveButton(android.R.string.ok, null).show()
+                }
+            }
+        }
+    }
+
+    /**
+     * Ne garde que les JPEG d'une liste de médias.
+     *
+     * ⚠ INDISPENSABLE DEPUIS LE MODE DNG+JPEG (2026-07-27). Le drone écrit alors DEUX
+     * fichiers par déclenchement, et `listerPhotos` rend les deux : 122 entrées pour
+     * 61 prises. Prendre « les N dernières » enverrait un mélange, et les DNG ne se
+     * décodent pas avec `BitmapFactory` — ils disparaîtraient à la réduction en décalant
+     * tous les angles d'un cran, ce qui rendrait l'assemblage guidé pire que l'automatique.
+     * Le DNG reste sur la carte : c'est sa raison d'être, il sert au traitement sur PC.
+     */
+    private fun seulementJpeg(
+        l: List<dji.v5.manager.datacenter.media.MediaFile>,
+    ): List<dji.v5.manager.datacenter.media.MediaFile> {
+        val jpeg = l.filter {
+            val n = it.fileName.lowercase(); n.endsWith(".jpg") || n.endsWith(".jpeg")
+        }
+        if (jpeg.size != l.size) try { ca.cineflight.stage.control.JournalVol.evenement(
+            "sélection : ${jpeg.size} JPEG retenus sur ${l.size} fichiers (les DNG restent sur la carte)")
+        } catch (_: Throwable) {}
+        return jpeg
+    }
+
+    private fun assemblerLots(
+        compteurs: List<Int>,
+        /** Grille de prise de vue de chaque lot (cap, inclinaison), dans l'ordre des
+         *  clichés. Transmise au serveur pour un assemblage GUIDÉ plutôt que deviné.
+         *  null = ancien comportement. */
+        grilles: List<List<Pair<Float, Float>>>? = null,
+        /** Progression rendue à l'appelant. L'assemblage dure PLUSIEURS MINUTES : un
+         *  message éphémère ne convient pas, c'est la fenêtre du mode qui doit l'afficher
+         *  — sinon l'utilisateur croit l'app figée sur son dernier message. */
+        /** Noms de fichiers à rapatrier, lot par lot. Fourni par un assemblage DIFFÉRÉ :
+         *  « les N dernières photos » ne désigne plus les bonnes une fois d'autres vols
+         *  effectués. null = comportement immédiat (les N dernières). */
+        nomsParLot: List<List<String>>? = null,
+        onProgres: (String) -> Unit = { bandeauEphemere(it) },
+        onFini: (List<String>) -> Unit,
+    ) {
+        val total = compteurs.sum()
+        val media = mediaDronePano ?: ca.cineflight.stage.control.MediaDrone().also { mediaDronePano = it }
+        media.activer { ok ->
+            if (!ok) { onFini(emptyList()); return@activer }
+            media.listerPhotos { brutes ->
+                val photos = seulementJpeg(brutes)
+                if (nomsParLot == null && photos.size < total) {
+                    media.quitter(); onFini(emptyList()); return@listerPhotos
+                }
+                // Sélection par NOM en différé : une photo introuvable (carte formatée,
+                // fichier effacé) laisse un trou À SA PLACE, sans décaler les suivantes.
+                val cibles: List<dji.v5.manager.datacenter.media.MediaFile?> =
+                    if (nomsParLot == null) photos.sortedBy { it.fileName }.takeLast(total)
+                    else {
+                        val parNom = photos.associateBy { it.fileName }
+                        nomsParLot.flatten().map { parNom[it] }
+                    }
+                // ⚠ DÉFAUT CORRIGÉ (2026-07-27) : les fichiers étaient EMPILÉS au fur et à
+                // mesure, et le découpage en lots se faisait ensuite par COMPTAGE. Un
+                // téléchargement raté — il y en a eu 8 sur 50 au vol du relief — décalait
+                // toute la suite : la coupure tombait au mauvais endroit et des photos de
+                // l'œil droit partaient dans l'assemblage de l'œil gauche. Mélange
+                // silencieux, invisible au résultat.
+                // → On indexe PAR POSITION : un échec laisse un trou à SA place et
+                //   n'affecte que son propre lot.
+                val parIndex = arrayOfNulls<java.io.File>(cibles.size)
+                var echecs = 0
+                fun suivant(i: Int) {
+                    if (i >= cibles.size) {
+                        media.quitter()
+                        if (echecs > 0) try { ca.cineflight.stage.control.JournalVol.anomalie(
+                            "rapatriement : $echecs photo(s) sur ${cibles.size} non téléchargées" +
+                            " — les lots concernés seront incomplets") } catch (_: Throwable) {}
+                        Thread {
+                            val jobs = ArrayList<String>()
+                            var debut = 0
+                            for ((idx, n) in compteurs.withIndex()) {
+                                val fin = (debut + n).coerceAtMost(parIndex.size)
+                                // On garde la POSITION de chaque photo dans son lot : c'est
+                                // elle qui donne l'angle correspondant. Une photo manquante
+                                // ne doit pas décaler les angles de toutes les suivantes.
+                                val paires = (debut until fin).mapNotNull { i ->
+                                    parIndex[i]?.let { f -> f to (i - debut) } }
+                                val lot = paires.map { it.first }
+                                val grille = grilles?.getOrNull(idx)
+                                val anglesLot = if (grille == null || grille.size < n) null
+                                    else paires.map { grille[it.second] }
+                                if (lot.size < n) try { ca.cineflight.stage.control.JournalVol.anomalie(
+                                    "lot ${idx + 1} : ${lot.size}/$n photos seulement") } catch (_: Throwable) {}
+                                debut += n
+                                if (lot.size < 2) continue
+                                val att = java.util.concurrent.CountDownLatch(1)
+                                ca.cineflight.stage.cine.PanoramaAssemblage.assembler(
+                                    this@MainActivity, lot, SERVEUR_PANO, angles = anglesLot,
+                                    onProgres = { _, p -> runOnUiThread {
+                                        onProgres(getString(R.string.ma_visite_assemblage, idx + 1, compteurs.size, p)) } },
+                                    onFini = { att.countDown() })
+                                att.await()
+                                ca.cineflight.stage.cine.PanoramaAssemblage.dernierJobId?.let { jobs.add(it) }
+                            }
+                            onFini(jobs)
+                        }.start()
+                        return
+                    }
+                    val cible = cibles[i]
+                    if (cible == null) {          // photo absente de la carte (différé)
+                        echecs++; suivant(i + 1); return
+                    }
+                    // ⚠ PROGRESSION AFFICHÉE PENDANT LE RAPATRIEMENT. Elle manquait : le
+                    // message restait figé sur l'étape précédente pendant toute la
+                    // descente — dix à vingt minutes pour un jeu complet, sans le moindre
+                    // signe de vie. Un utilisateur devant un écran immobile conclut que
+                    // l'app est plantée, et il a raison de le croire.
+                    val majProgres = { pct: Int ->
+                        val global = ((i * 100 + pct) / cibles.size.coerceAtLeast(1))
+                        runOnUiThread { onProgres(getString(R.string.ma_asm_rapatriement,
+                            i + 1, cibles.size, pct, global)) }
+                    }
+                    majProgres(0)
+                    // UNE SECONDE CHANCE par photo : la liaison DJI a des ratés passagers, et
+                    // réessayer coûte quelques secondes là où renoncer coûte un panorama.
+                    media.telecharger(this@MainActivity, cible, majProgres, { f ->
+                        if (f != null) { parIndex[i] = f; suivant(i + 1) }
+                        else media.telecharger(this@MainActivity, cible, majProgres, { f2 ->
+                            if (f2 != null) parIndex[i] = f2 else echecs++
+                            suivant(i + 1)
+                        })
+                    })
+                }
+                suivant(0)
+            }
+        }
+    }
+
+    /**
+     * VISITE EN POINTS MARQUÉS — l'opérateur MARCHE jusqu'à chaque emplacement et le
+     * marque au GPS du téléphone ; le drone s'y rendra ensuite.
+     * ⚠ POURQUOI MARCHER PLUTÔT QUE POINTER SUR UNE CARTE : en marchant, l'opérateur VOIT
+     * les obstacles (arbres, fils, bâtiments) du trajet. Un point posé sur une carte peut
+     * traverser un espace jamais reconnu — le drone n'a pas d'évitement garanti en mode
+     * automatique. C'est un choix de sécurité, pas d'ergonomie.
+     */
+    private fun ouvrirVisitePointsMarques(preset: ca.cineflight.stage.cine.PanoramaPreset, altitudeM: Double) {
+        fun resume(): String {
+            if (pointsVisiteMarques.isEmpty()) return getString(R.string.ma_visite_aucun_point)
+            val p = ca.cineflight.stage.cine.VisiteMultiPoints.planifier(
+                pointsVisiteMarques, secondesParPanorama = preset.nbPhotos() * 4)
+            return getString(R.string.ma_visite_resume, pointsVisiteMarques.size,
+                p.distanceTotaleM.toInt(), p.dureeEstimeeS / 60, p.dureeEstimeeS % 60) +
+                (if (!p.realisable && p.refus != null) "\n\n⚠ ${p.refus}" else "")
+        }
+        val dlg = com.google.android.material.dialog.MaterialAlertDialogBuilder(this, R.style.DialogCineFlight)
+            .setTitle(getString(R.string.ma_visite_marquage_titre))
+            .setMessage(getString(R.string.ma_visite_marquage_msg) + "\n\n" + resume())
+            .setCancelable(true)
+            .setPositiveButton(getString(R.string.ma_visite_marquer), null)   // listener posé après show()
+            .setNeutralButton(getString(R.string.ma_visite_lancer), null)
+            .setNegativeButton(getString(R.string.ma_visite_effacer), null)
+            .show()
+        // Listeners posés APRÈS show() : marquer plusieurs points sans rouvrir la fenêtre.
+        dlg.getButton(android.content.DialogInterface.BUTTON_POSITIVE).setOnClickListener {
+            val pos = positionTelephone()
+            if (pos == null) { bandeauEphemere(getString(R.string.ma_visite_gps_tel)); return@setOnClickListener }
+            pointsVisiteMarques.add(ca.cineflight.stage.cine.VisiteMultiPoints.Point(
+                pos.first, pos.second, altitudeM, getString(R.string.ma_visite_point_n, pointsVisiteMarques.size + 1)))
+            dlg.setMessage(getString(R.string.ma_visite_marquage_msg) + "\n\n" + resume())
+        }
+        dlg.getButton(android.content.DialogInterface.BUTTON_NEGATIVE).setOnClickListener {
+            pointsVisiteMarques.clear()
+            dlg.setMessage(getString(R.string.ma_visite_marquage_msg) + "\n\n" + resume())
+        }
+        dlg.getButton(android.content.DialogInterface.BUTTON_NEUTRAL).setOnClickListener {
+            val plan = ca.cineflight.stage.cine.VisiteMultiPoints.planifier(
+                pointsVisiteMarques, secondesParPanorama = preset.nbPhotos() * 4)
+            if (!plan.realisable) { bandeauEphemere(plan.refus ?: getString(R.string.ma_visite_echec)); return@setOnClickListener }
+            dlg.dismiss()
+            executerVisitePoints(plan.points, preset)
+        }
+    }
+
+    /** Exécute la visite : décollage, puis pour chaque point — transit, panorama. */
+    private fun executerVisitePoints(
+        points: List<ca.cineflight.stage.cine.VisiteMultiPoints.Point>,
+        preset: ca.cineflight.stage.cine.PanoramaPreset,
+    ) {
+        visiteEnCours = true
+        photosParEtape.clear()
+        try {
+            ca.cineflight.stage.control.JournalVol.demarrer(this, "VISITE_POINTS",
+                "points=${points.size} alt=${points.first().altitudeM.toInt()}m preset=${preset.nomFr}")
+        } catch (_: Throwable) {}
+        val dlg = com.google.android.material.dialog.MaterialAlertDialogBuilder(this, R.style.DialogCineFlight)
+            .setTitle(getString(R.string.ma_visite_titre))
+            .setMessage(getString(R.string.ma_visite_decollage))
+            .setCancelable(false)
+            .setNegativeButton(R.string.ma_dlg_arret_rth) { _, _ ->
+                visiteEnCours = false; annulerPanorama(); pont.lancerRth { }
+            }.show()
+
+        lifecycleScope.launch(Dispatchers.Main) {
+            for ((i, p) in points.withIndex()) {
+                if (!visiteEnCours) break
+                dlg.setMessage(getString(R.string.ma_visite_transit, i + 1, points.size))
+                try { ca.cineflight.stage.control.JournalVol.evenement(
+                    "point ${i + 1}/${points.size} : transit vers %.6f,%.6f".format(p.lat, p.lon)) } catch (_: Throwable) {}
+                if (i == 0) { if (!monterA(p.altitudeM, premierPalier = true)) break }
+                if (!allerA(p.lat, p.lon, p.altitudeM)) break
+                if (!visiteEnCours) break
+                dlg.setMessage(getString(R.string.ma_visite_pano, i + 1, points.size, p.altitudeM.toInt()))
+                val prises = panoramaBloquant(preset) { fait, total ->
+                    runOnUiThread { dlg.setMessage(getString(R.string.ma_visite_pano_progres,
+                        i + 1, points.size, fait, total)) }
+                }
+                photosParEtape.add(prises)
+                if (prises < 2) break
+            }
+            dlg.setMessage(getString(R.string.ma_visite_retour))
+            // Même règle que pour l'atterrissage : pas de RTH si le pilote a repris la main.
+            if (modeAuto) try { pont.lancerRth { } } catch (_: Exception) {}
+            try { ca.cineflight.stage.control.JournalVol.terminer(
+                "visite points : ${photosParEtape.joinToString("+")} photos") } catch (_: Throwable) {}
+            delay(8000)
+            if (photosParEtape.size >= 2) {
+                assemblerVisite(photosParEtape.toList(),
+                    noms = points.take(photosParEtape.size).map { it.nom },
+                    titre = getString(R.string.ma_visite_nom_points),
+                    onProgres = { m -> runOnUiThread { dlg.setMessage(m) } }) { lien ->
+                    runOnUiThread { dlg.dismiss(); visiteEnCours = false; afficherLienVisite(lien) }
+                }
+            } else { dlg.dismiss(); visiteEnCours = false; bandeauEphemere(getString(R.string.ma_visite_echec)) }
+        }
+    }
+
+    /**
+     * Rejoint un point (lat/lon/alt) à vitesse bornée. true si atteint.
+     * @param tolM rayon d'arrivée. 2,5 m suffit pour un point de visite ; la translation
+     *   stéréo demande 0,6 m — c'est l'écart entre les deux prises qui FAIT le relief.
+     * @param vMaxMps vitesse de croisière. Lente en stéréo : le drone doit se poser sur sa
+     *   marque sans dépasser, un dépassement fausserait la ligne de base.
+     */
+    private suspend fun allerA(
+        cibleLat: Double, cibleLon: Double, altM: Double,
+        tolM: Double = 2.5, vMaxMps: Double = 4.0,
+    ): Boolean {
+        val tDebut = System.currentTimeMillis()
+        var cycle = 0
+        while (visiteEnCours) {
+            val e = pont.lireEtat(pilote.enVol)
+            if (e.batteriePct in 0 until BATT_CRITIQUE) return false
+            if (!autoriteDeVolIntacte("transit")) return false
+            val dLat = pont.latitudeDrone(); val dLon = pont.longitudeDrone()
+            if (dLat.isNaN() || dLon.isNaN()) return false
+            val mLat = 111_320.0
+            val mLon = 111_320.0 * kotlin.math.cos(Math.toRadians(dLat))
+            val dN = (cibleLat - dLat) * mLat
+            val dE = (cibleLon - dLon) * mLon
+            val dist = kotlin.math.hypot(dE, dN)
+            val altCourante = try { pont.altitudeDrone() } catch (_: Throwable) { altM }
+            // ⚠ L'ALTITUDE FAIT PARTIE DE L'ARRIVÉE. Le critère ne portait que sur la
+            // distance HORIZONTALE : le drone pouvait être au bon endroit au sol mais
+            // encore des dizaines de mètres plus bas, et la photo partait quand même. Sur
+            // une capture en orbite, l'altitude EST la géométrie de l'anneau — une prise
+            // faite trop bas fausse l'angle de vue et se paie à la reconstruction.
+            if (dist < tolM && kotlin.math.abs(altCourante - altM) < 1.5) break
+            if (System.currentTimeMillis() - tDebut > 120_000L) {
+                // ⚠ NE PLUS CONTINUER EN SILENCE. L'ancienne version sortait de la boucle
+                // et rendait `true` : l'appelant croyait le point atteint, orientait la
+                // caméra et déclenchait — depuis un endroit qui n'était pas celui du plan.
+                // Deux minutes sans arriver signifie quelque chose : vent, évitement
+                // d'obstacle qui bloque, ou commandes sans effet. Aucun de ces cas ne
+                // justifie de photographier comme si de rien n'était.
+                try { ca.cineflight.stage.control.JournalVol.anomalie(
+                    "TRANSIT_TIMEOUT reste=%.1fm alt=%.1f/%.0fm apres=120s — mission arretee"
+                        .format(dist, altCourante, altM)) } catch (_: Throwable) {}
+                pilote.soumettre(RecepteurBridge.CommandeBridge(
+                    System.currentTimeMillis() / 1000.0, 0f, 0f, 0f, 0f, "actif",
+                    System.currentTimeMillis()))
+                return false
+            }
+            // Approche douce : on ralentit dans les 10 derniers mètres, et jamais plus vite
+            // que la moitié de la distance restante par seconde (pas de dépassement).
+            val v = kotlin.math.min(if (dist < 10.0) vMaxMps * 0.4 else vMaxMps, dist * 0.5)
+                .coerceAtLeast(0.25)
+            val k = v / dist
+            val vy = ((altM - altCourante) * 0.5).coerceIn(-1.5, 1.5)
+            // Convention TraductionAxes : vx = Est, vz = Nord, vy = vertical.
+            pilote.soumettre(RecepteurBridge.CommandeBridge(
+                System.currentTimeMillis() / 1000.0,
+                (dE * k).toFloat(), vy.toFloat(), (dN * k).toFloat(), 0f,
+                "actif", System.currentTimeMillis()))
+            // Même raison qu'en montée : on trace la commande ÉMISE, pas celle du suivi.
+            if (cycle++ % 10 == 0) try { ca.cineflight.stage.control.JournalVol.evenement(
+                "transit : reste %.1f m — emis(E=%.2f N=%.2f V=%.2f) alt=%.1f/%.0f m".format(
+                    dist, dE * k, dN * k, vy, altCourante, altM)) } catch (_: Throwable) {}
+            delay(150)
+        }
+        pilote.soumettre(RecepteurBridge.CommandeBridge(
+            System.currentTimeMillis() / 1000.0, 0f, 0f, 0f, 0f, "actif", System.currentTimeMillis()))
+        delay(2000)     // stabilisation avant les photos
+        return visiteEnCours
+    }
+
+    /** Affiche le lien de la visite avec les actions utiles (ouvrir / partager). */
+    /**
+     * @param titreRes titre du résultat. Il DOIT nommer ce qui a été produit : annoncer
+     *   « visite virtuelle prête » à la fin d'un relief stéréo laisse le pilote se demander
+     *   s'il n'a pas lancé le mauvais mode.
+     * @param messageRes explication adaptée : on ne regarde pas un relief comme une visite.
+     */
+    private fun afficherLienVisite(
+        lien: String?,
+        titreRes: Int = R.string.ma_visite_prete,
+        messageRes: Int = R.string.ma_visite_lien,
+    ) {
+        if (lien == null) { bandeauEphemere(getString(R.string.ma_visite_echec)); return }
+        com.google.android.material.dialog.MaterialAlertDialogBuilder(this, R.style.DialogCineFlight)
+            .setTitle(getString(titreRes))
+            .setMessage(getString(messageRes, lien))
+            .setPositiveButton(getString(R.string.ma_visite_ouvrir)) { _, _ ->
+                try { startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW,
+                    android.net.Uri.parse(lien))) } catch (_: Exception) {}
+            }
+            .setNeutralButton(getString(R.string.ma_visite_partager)) { _, _ ->
+                try {
+                    startActivity(android.content.Intent.createChooser(
+                        android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+                            type = "text/plain"
+                            putExtra(android.content.Intent.EXTRA_TEXT,
+                                getString(R.string.ma_visite_texte, lien))
+                        }, getString(R.string.ma_visite_partager)))
+                } catch (_: Exception) {}
+            }
+            .setNegativeButton(android.R.string.ok, null)
+            .show()
+    }
 
     /** Recupere les N dernieres photos du drone (carte SD), les envoie au serveur
      *  pour assemblage 360 haute qualite, renvoie l'image finale.
@@ -1709,22 +3416,36 @@ class MainActivity : AppCompatActivity() {
         onProgres(getString(R.string.ma_pano_connexion_sd), 2)
         media.activer { ok ->
             if (!ok) { onProgres(getString(R.string.ma_pano_acces_impossible), 0); onFini(null); return@activer }
-            media.listerPhotos { photos ->
+            media.listerPhotos { brutes ->
+                val photos = seulementJpeg(brutes)
                 if (photos.size < 2) {
                     media.quitter(); onProgres(getString(R.string.ma_pano_aucune_trouvee), 0); onFini(null); return@listerPhotos
                 }
                 android.util.Log.i("CineFlightPano", "photos sur SD: ${photos.size}")
                 val cibles = photos.sortedBy { it.fileName }.takeLast(nb)   // tri par nom = ordre chrono
                 android.util.Log.i("CineFlightPano", "lot cible (${cibles.size}): ${cibles.joinToString { it.fileName }}")
-                val fichiers = java.util.ArrayList<java.io.File>()
+                // Indexation PAR POSITION : un téléchargement raté laisse un trou à sa
+                // place. Empiler les réussites décalerait tous les angles suivants d'un
+                // cran, et l'assemblage guidé serait alors PIRE que l'automatique.
+                val parIndex = arrayOfNulls<java.io.File>(cibles.size)
+                val grille = dernierePanoramaGrille
                 fun telechargerSuivant(i: Int) {
                     if (i >= cibles.size) {
                         media.quitter()
+                        val presents = (0 until parIndex.size).filter { parIndex[it] != null }
+                        val fichiers = presents.map { parIndex[it]!! }
                         if (fichiers.size < 2) { onProgres(getString(R.string.ma_pano_dl_echoue), 0); onFini(null); return }
-                        android.util.Log.i("CineFlightPano", "envoi de ${fichiers.size} photos au serveur")
+                        if (fichiers.size < cibles.size) try {
+                            ca.cineflight.stage.control.JournalVol.anomalie(
+                                "rapatriement panorama : ${fichiers.size}/${cibles.size} photos")
+                        } catch (_: Throwable) {}
+                        val angles = if (grille != null && grille.size >= cibles.size)
+                            presents.map { grille[it] } else null
+                        android.util.Log.i("CineFlightPano",
+                            "envoi de ${fichiers.size} photos au serveur, angles=${angles?.size ?: 0}")
                         Thread {
                             ca.cineflight.stage.cine.PanoramaAssemblage.assembler(
-                                this@MainActivity, fichiers, SERVEUR_PANO,
+                                this@MainActivity, fichiers, SERVEUR_PANO, angles = angles,
                                 onProgres = onProgres, onFini = onFini)
                         }.start()
                         return
@@ -1732,7 +3453,7 @@ class MainActivity : AppCompatActivity() {
                     onProgres(getString(R.string.ma_pano_dl_progres, i + 1, cibles.size), 2 + (i * 20) / cibles.size)
                     media.telecharger(this@MainActivity, cibles[i], { }, { f ->
                         android.util.Log.i("CineFlightPano", "photo ${i + 1}/${cibles.size} -> ${if (f != null) f.name else "ECHEC"}")
-                        if (f != null) fichiers.add(f)
+                        if (f != null) parIndex[i] = f
                         telechargerSuivant(i + 1)
                     })
                 }
@@ -1746,17 +3467,79 @@ class MainActivity : AppCompatActivity() {
         preset: ca.cineflight.stage.cine.PanoramaPreset,
         onProgres: (Int, Int) -> Unit,
         onFini: (Int) -> Unit,
-        atterrirALaFin: Boolean = false
+        atterrirALaFin: Boolean = false,
+        /** Force le cap du PREMIER cliché. Indispensable en stéréo : les deux panoramas
+         *  d'une paire doivent commencer au même cap, sinon les sphères gauche/droite sont
+         *  décalées en rotation et le cerveau ne fusionne plus les deux images. */
+        capDepartForce: Float? = null,
     ) {
         if (panoramaEnCours) return
         val etat0 = pont.lireEtat(pilote.enVol)
+        // PANORAMA = PHOTOS, PAS DE VIDÉO (2026-07-25). Un enregistrement en cours entre
+        // en conflit avec la bascule PHOTO_NORMAL (vol #8 : faux « carte mémoire pleine.
+        // Enregistrement arrêté » à la 1re photo). On coupe PROPREMENT la vidéo AVANT —
+        // la 1re photo n'arrive que plusieurs secondes plus tard (positionnement + stab).
+        if (etat0.enregistre) {
+            try {
+                pont.arreterEnregistrement()
+                android.util.Log.i("CineFlightPano", "enregistrement vidéo arrêté avant le panorama")
+            } catch (_: Exception) {}
+        }
+        // VERROUILLAGE D'EXPOSITION (2026-07-26) : fige ISO + vitesse sur les valeurs
+        // mesurées MAINTENANT, pour toute la séquence. Sans ça, l'auto-exposition change à
+        // chaque rotation (ciel / sous-bois) et les jointures du panorama restent visibles
+        // même quand la géométrie est bonne — constaté sur le pano 12 photos du 2026-07-26.
+        // ⚠ LE RÉSULTAT PART AU JOURNAL, comme celui de la balance des blancs. Il était
+        // jeté par un `catch` muet : le verrou pouvait échouer sans que rien ne le dise,
+        // et c'est exactement ce qui s'est passé — 2,48 EV de dérive mesurés sur le
+        // panorama du 2026-07-28, invisibles jusqu'à ce qu'on lise le fichier de projet
+        // Hugin. La ligne de vérification suit une seconde plus tard.
+        try { ca.cineflight.stage.control.JournalVol.evenement(
+            pontReel?.verrouillerExposition() ?: "exposition : pont indisponible")
+        } catch (_: Throwable) {}
+        // BALANCE DES BLANCS figée elle aussi (2026-07-27). C'est le verrouillage sur
+        // lequel toutes les sources s'accordent : en automatique elle dérive d'une image à
+        // l'autre, et un écart de COULEUR se rattrape très mal au raccord — alors qu'un
+        // écart de luminosité, l'assembleur sait l'égaliser. Le résultat part au journal :
+        // une balance qu'on croit figée et qui dérive donnerait un panorama en camaïeu
+        // sans que personne comprenne pourquoi.
+        try { ca.cineflight.stage.control.JournalVol.evenement(
+            pontReel?.verrouillerBalanceBlancs() ?: "balance des blancs : pont indisponible")
+        } catch (_: Throwable) {}
+        // JOURNAL DE VOL : le panorama commande le drone (rotations + montée) — il doit
+        // laisser la même trace que les autres modes.
+        val capMesure = if (etat0.capDeg.isNaN()) 0f else etat0.capDeg
+        val capDepart = capDepartForce ?: capMesure
+        // GRILLE MÉMORISÉE pour l'assemblage : l'app sait exactement où chaque cliché a
+        // été pris, et jusqu'ici elle jetait cette information. Le serveur devait la
+        // redécouvrir dans les pixels — impossible sur les rangées hautes, où le ciel n'a
+        // aucune texture. C'est de là que venaient les taches sombres au zénith.
+        dernierePanoramaGrille = ca.cineflight.stage.cine.PanoramaGrille
+            .construire(preset, capDepart).map { it.yawDeg to it.pitchDeg }
+        try {
+            // `demarrerOuEtape` : si un mode COMPOSITE (relief, visite, modèle 3D) a déjà
+            // ouvert un journal, on s'y greffe au lieu de lui en voler un nouveau — sinon
+            // sa trace s'arrête au premier panorama (constaté au vol du 2026-07-27).
+            //
+            // Le cap est journalisé SOUS SES DEUX FORMES : celui qu'on APPLIQUE et celui
+            // qu'on MESURE. L'ancienne ligne n'écrivait que le mesuré alors que la grille
+            // était construite sur le forcé — sur un vol stéréo, le journal semblait dire
+            // que les deux yeux n'avaient pas le même cap, alors qu'ils l'avaient.
+            panoramaAOuvertLeJournal = ca.cineflight.stage.control.JournalVol.demarrerOuEtape(this, "PANORAMA",
+                "preset=${preset.nomFr} colonnes=${preset.colonnes} rangees=${preset.rangees}" +
+                " photos=${preset.nbPhotos()} nadir=${preset.nadir}" +
+                " capApplique=${"%.0f".format(capDepart)} capMesure=${"%.0f".format(capMesure)}" +
+                (if (capDepartForce != null) " (cap FORCE)" else "") +
+                " alt=${"%.1f".format(etat0.altitudeAgl)}m batt=${etat0.batteriePct}%" +
+                " atterrirALaFin=$atterrirALaFin")
+        } catch (_: Throwable) {}
         val modeAutoAvant = modeAuto
         if (!modeAuto) basculerMode(true)
-        val capDepart = if (etat0.capDeg.isNaN()) 0f else etat0.capDeg
         val pas = ca.cineflight.stage.cine.PanoramaGrille.construire(preset, capDepart)
         val machine = ca.cineflight.stage.cine.PanoramaStateMachine(pas, preset)
         panoramaEnCours = true
         var photosPrises = 0
+        var echecPhoto = false
 
         lifecycleScope.launch(Dispatchers.Main) {
             var pitchApplique = Float.NaN
@@ -1771,10 +3554,33 @@ class MainActivity : AppCompatActivity() {
                 // jamais emis -> ancien gimbal utilise).
                 machine.pasCourant?.let { pc ->
                     if (pitchApplique.isNaN() || kotlin.math.abs(pitchApplique - pc.pitchDeg) > 0.5f) {
-                        pont.reglerGimbalPitch(pc.pitchDeg.coerceIn(-90f, 30f))
+                        // ⚠ PLAFOND PORTÉ DE +30 À +60 (2026-07-27). Il bridait la nacelle
+                        // à +30 alors que le Mini 4 Pro monte à +60 : tout ce qui est
+                        // au-dessus n'était jamais photographié et le serveur le COMBLAIT
+                        // — 53 à 59 % de la sphère sur un vol réel, avec des traînées
+                        // verticales visibles en casque dès qu'on lève les yeux.
+                        val cible = pc.pitchDeg.coerceIn(-90f, 60f)
+                        pont.reglerGimbalPitch(cible)
                         pitchApplique = pc.pitchDeg
+                        // On journalise la valeur DEMANDÉE : si la nacelle refuse d'aller
+                        // aussi haut, le relevé de vol le montrera, et les angles envoyés
+                        // à l'assembleur seront à corriger. On ne le suppose pas acquis.
+                        if (cible > 30f) try { ca.cineflight.stage.control.JournalVol.evenement(
+                            "nacelle demandée à %.0f° (au-dessus de l'ancien plafond de 30°)".format(cible))
+                        } catch (_: Throwable) {}
                     }
                 }
+                // Trace ~1 Hz du panorama : cap réel vs cap visé, altitude, phase.
+                try {
+                    ca.cineflight.stage.control.JournalVol.etatSimple(
+                        altM = e.altitudeAgl, capDeg = cap.toDouble(),
+                        lat = e.latitude, lon = e.longitude,
+                        pitch = 0f, roll = 0f, throttle = 0f, yaw = 0f,
+                        batteriePct = e.batteriePct, satellites = e.satellites,
+                        phase = "pas ${(machine.pasCourant?.index ?: 0) + 1}/${machine.total}" +
+                            " visé=${"%.0f".format(machine.pasCourant?.yawDeg ?: 0f)}" +
+                            " gimbal=${"%.0f".format(machine.pasCourant?.pitchDeg ?: 0f)}")
+                } catch (_: Throwable) {}
                 when (val action = machine.avancer(cap, System.currentTimeMillis())) {
                     is ca.cineflight.stage.cine.PanoramaStateMachine.Action.AllerVers -> {
                         // (gimbal deja applique en tete de boucle selon le pas courant)
@@ -1797,9 +3603,34 @@ class MainActivity : AppCompatActivity() {
                         pilote.soumettre(RecepteurBridge.CommandeBridge(
                             System.currentTimeMillis() / 1000.0, 0f, 0f, 0f, 0f,
                             "actif", System.currentTimeMillis()))
-                        pont.declencherPhoto()
-                        photosPrises++
-                        machine.pasCourant?.let { onProgres(it.index + 1, it.total) }
+                        val reel = pontReel
+                        if (reel != null) {
+                            // PRISE CONFIRMÉE : on n'incrémente et n'avance QUE si la caméra a
+                            // accepté la photo. Un refus (carte pleine, mode, timing) interrompt
+                            // proprement au lieu de laisser un trou silencieux dans le panorama.
+                            val att = kotlinx.coroutines.CompletableDeferred<Pair<Boolean, String?>>()
+                            reel.declencherPhotoConfirmee { ok, detail -> att.complete(ok to detail) }
+                            val (ok, detail) = att.await()
+                            if (!ok) {
+                                android.util.Log.e("CineFlightPano",
+                                    "Panorama interrompu : ${detail ?: "photo non confirmée"}")
+                                try { ca.cineflight.stage.control.JournalVol.anomalie(
+                                    "photo REFUSÉE : ${detail ?: "?"}") } catch (_: Throwable) {}
+                                echecPhoto = true
+                                panoramaEnCours = false
+                            } else {
+                                photosPrises++
+                                try { ca.cineflight.stage.control.JournalVol.evenement(
+                                    "photo ${photosPrises}/${machine.total} prise") } catch (_: Throwable) {}
+                                machine.pasCourant?.let { onProgres(it.index + 1, it.total) }
+                            }
+                        } else {
+                            // Pont non réel (simulateur) : ancien comportement, tir simple + délai.
+                            pont.declencherPhoto()
+                            delay(1200)
+                            photosPrises++
+                            machine.pasCourant?.let { onProgres(it.index + 1, it.total) }
+                        }
                     }
                     is ca.cineflight.stage.cine.PanoramaStateMachine.Action.Termine -> {
                         break
@@ -1815,9 +3646,20 @@ class MainActivity : AppCompatActivity() {
                 System.currentTimeMillis() / 1000.0, 0f, 0f, 0f, 0f,
                 "actif", System.currentTimeMillis()))
             panoramaEnCours = false
+            // EXPOSITION : rendue à l'automatique à la fin (comme à l'annulation).
+            try { pontReel?.deverrouillerExposition() } catch (_: Exception) {}
+            try {
+                val bilan = "panorama terminé : $photosPrises photo(s)" +
+                    if (echecPhoto) " — INTERROMPU (photo refusée)" else ""
+                // On ne CLÔT le journal que si c'est le panorama qui l'a ouvert. Sinon un
+                // mode composite verrait son vol coupé en deux au premier panorama.
+                if (panoramaAOuvertLeJournal) ca.cineflight.stage.control.JournalVol.terminer(bilan)
+                else ca.cineflight.stage.control.JournalVol.evenement(bilan)
+            } catch (_: Throwable) {}
+            panoramaAOuvertLeJournal = false
             // Restaurer le mode : si l'usager etait en MANUEL, on lui rend la main.
             if (!modeAutoAvant && modeAuto) basculerMode(false)
-            onFini(photosPrises)
+            onFini(if (echecPhoto) -3 else photosPrises)
             // Decollage auto -> on complete le trajet : atterrissage VERTICAL. Le panorama
             // n'a fait que pivoter + monter droit, donc le drone est PILE au-dessus du point
             // de decollage ; descendre = revenir exactement au meme endroit.
@@ -1825,7 +3667,17 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun annulerPanorama() { panoramaEnCours = false }
+    private fun annulerPanorama() {
+        panoramaEnCours = false
+        try { pontReel?.deverrouillerExposition() } catch (_: Exception) {}
+        try {
+            if (panoramaAOuvertLeJournal)
+                ca.cineflight.stage.control.JournalVol.terminer("panorama ANNULÉ par le pilote")
+            else
+                ca.cineflight.stage.control.JournalVol.anomalie("panorama ANNULÉ par le pilote")
+        } catch (_: Throwable) {}
+        panoramaAOuvertLeJournal = false
+    }
 
     private fun contexteCineReel(espace: Espace = Espace.MOYEN): ContexteValidation {
         val e = pont.lireEtat(pilote.enVol)
@@ -1936,9 +3788,11 @@ class MainActivity : AppCompatActivity() {
         // boucle cockpit ~3 Hz
         lifecycleScope.launch(Dispatchers.Main) {
             while (isActive) {
-                majCockpit(pont.lireEtat(pilote.enVol))
+                // UN SEUL lireEtat par tour (avant : 2 appels = 2× les lectures caméra SDK
+                // sur le fil principal). On réutilise le même instantané pour tout.
+                val em = pont.lireEtat(pilote.enVol)
+                majCockpit(em)
                 try {
-                    val em = pont.lireEtat(pilote.enVol)
                     val tel = dernierePositionTel
                     if (em.enVol && !em.latitude.isNaN() && !em.longitude.isNaN()) {
                         moniteurVlos?.observer(
@@ -1984,19 +3838,20 @@ class MainActivity : AppCompatActivity() {
     }
 
     /** Recupere la meteo du lieu (GPS telephone/drone) en arriere-plan et met a jour la pastille. */
-    private fun chargerMeteoCockpit() {
-        chargerMeteoCockpitAvecEssais(3)
+    /** @param onFini appele sur le fil UI quand le chargement est termine (succes OU abandon). */
+    private fun chargerMeteoCockpit(onFini: (() -> Unit)? = null) {
+        chargerMeteoCockpitAvecEssais(3, onFini)
     }
 
-    private fun chargerMeteoCockpitAvecEssais(essaisRestants: Int) {
+    private fun chargerMeteoCockpitAvecEssais(essaisRestants: Int, onFini: (() -> Unit)? = null) {
         Thread {
             val pos = positionPourMeteo()
             if (pos == null) {
                 // pas encore de fix GPS : reessayer un peu plus tard (le suivi vient de demarrer)
                 if (essaisRestants > 1) {
-                    pastilleMeteo?.postDelayed({ chargerMeteoCockpitAvecEssais(essaisRestants - 1) }, 2500)
+                    pastilleMeteo?.postDelayed({ chargerMeteoCockpitAvecEssais(essaisRestants - 1, onFini) }, 2500)
                 } else {
-                    runOnUiThread { afficherPastilleMeteo(null) }
+                    runOnUiThread { afficherPastilleMeteo(null); onFini?.invoke() }
                 }
                 return@Thread
             }
@@ -2006,7 +3861,7 @@ class MainActivity : AppCompatActivity() {
             val plageT = try { ca.cineflight.stage.control.CapacitesDrone.plageTemp(pont.lireEtat(pilote.enVol).modele) } catch (_: Exception) { Pair(tempMinDrone, tempMaxDrone) }
             tempMinDrone = plageT.first; tempMaxDrone = plageT.second
             val c = ca.cineflight.stage.control.ConditionsVol.recuperer(pos.first, pos.second, codeDrone, plageT.first, plageT.second)
-            runOnUiThread { afficherPastilleMeteo(c) }
+            runOnUiThread { afficherPastilleMeteo(c); onFini?.invoke() }
         }.start()
     }
 
@@ -2060,19 +3915,56 @@ class MainActivity : AppCompatActivity() {
         p.text = CV.pastille(feu) + " " + label
     }
 
-    /** Detail au toucher de la pastille : bilan GPS + batterie + meteo + verdict PRET. */
+    /** Detail au toucher de la pastille : bilan GPS + batterie + meteo + verdict PRET.
+     *  Le bouton « Actualiser » RELIT l'etat et RECOMPOSE le message SANS fermer la
+     *  fenetre (correctif 2026-07-25 : un bouton d'AlertDialog ferme TOUJOURS le dialogue,
+     *  donc l'ancien code rechargeait la meteo mais faisait disparaitre l'ecran). */
     private fun afficherDetailPret() {
+        val dlg = androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle(getString(R.string.prep_titre))
+            .setMessage(texteDetailPret())
+            .setPositiveButton(android.R.string.ok, null)
+            .setNeutralButton(R.string.ma_dlg_actualiser, null)   // listener pose APRES show()
+            .show()
+        // Poser le listener APRES show() court-circuite la fermeture automatique.
+        dlg.getButton(android.content.DialogInterface.BUTTON_NEUTRAL)?.setOnClickListener {
+            dlg.setMessage(getString(R.string.prep_actualisation))
+            chargerMeteoCockpit {
+                // Recomposition avec l'etat FRAIS (GPS, batterie, meteo) ; si l'usager a
+                // ferme entre-temps, on ne touche a rien.
+                if (dlg.isShowing) dlg.setMessage(texteDetailPret())
+            }
+        }
+    }
+
+    /**
+     * Ligne « capteurs d'obstacles » du bilan : état LU au drone par LecteurPerception
+     * (listener PerceptionInfo, getter direct en secours). L'app ne MODIFIE jamais ce
+     * réglage — il vient de DJI Fly (Brake/Bypass/Off) et persiste dans le drone.
+     * ⚠ Averti si actif : sous Virtual Stick (vol automatique), le contournement DJI
+     * n'est PAS garanti — c'est l'objet du gate obstacle du dossier, pas un acquis.
+     */
+    private fun ligneCapteursObstacles(): String {
+        val CV = ca.cineflight.stage.control.ConditionsVol
+        val type = try { lecteurPerception.typeEvitementLu() ?: lecteurPerception.typeEvitementGetterLu() } catch (_: Throwable) { null }
+        return when {
+            type == null -> "⚪  " + getString(R.string.prep_oa_inconnu)
+            type.contains("CLOSE") -> "${CV.pastille("rouge")}  " + getString(R.string.prep_oa_off)
+            type.contains("BYPASS") -> "${CV.pastille("vert")}  " +
+                getString(R.string.prep_oa_on, getString(R.string.prep_oa_bypass)) +
+                "\n${CV.pastille("jaune")}  " + getString(R.string.prep_oa_vs)
+            type.contains("BRAKE") -> "${CV.pastille("vert")}  " +
+                getString(R.string.prep_oa_on, getString(R.string.prep_oa_brake)) +
+                "\n${CV.pastille("jaune")}  " + getString(R.string.prep_oa_vs)
+            else -> "⚪  " + getString(R.string.prep_oa_on, type)
+        }
+    }
+
+    /** Compose le texte du bilan PRET a partir de l'etat COURANT (relu a chaque appel). */
+    private fun texteDetailPret(): String {
         val CV = ca.cineflight.stage.control.ConditionsVol
         val e = try { pont.lireEtat(pilote.enVol) } catch (_: Exception) { EtatCockpit() }
-        if (!e.connecte) {
-            androidx.appcompat.app.AlertDialog.Builder(this)
-                .setTitle(getString(R.string.prep_titre))
-                .setMessage(getString(R.string.prep_drone_off))
-                .setPositiveButton(android.R.string.ok, null)
-                .setNeutralButton(R.string.ma_dlg_actualiser) { _, _ -> chargerMeteoCockpit() }
-                .show()
-            return
-        }
+        if (!e.connecte) return getString(R.string.prep_drone_off)
         val c = derniereConditionsMeteo
         val gFeu = feuGps(e); val bFeu = feuBatterie(e)
         val gTxt = when (gFeu) {
@@ -2092,9 +3984,10 @@ class MainActivity : AppCompatActivity() {
             "jaune" -> getString(R.string.prep_verdict_prudence)
             else -> getString(R.string.prep_verdict_pas_pret)
         }
-        val msg = buildString {
+        return buildString {
             append("${CV.pastille(gFeu)}  GPS : $gTxt\n")
             append("${CV.pastille(bFeu)}  ${getString(R.string.prep_batt_label)} : $bTxt\n")
+            append(ligneCapteursObstacles() + "\n")
             if (c != null && c.disponible) {
                 append("${CV.pastille(c.vent.feu)}  ${c.vent.texte}\n")
                 append("${CV.pastille(c.pluie.feu)}  ${c.pluie.texte}\n")
@@ -2106,12 +3999,6 @@ class MainActivity : AppCompatActivity() {
             append("\n$verdict\n\n")
             append(getString(R.string.prep_sur_place))
         }
-        androidx.appcompat.app.AlertDialog.Builder(this)
-            .setTitle(getString(R.string.prep_titre))
-            .setMessage(msg)
-            .setPositiveButton(android.R.string.ok, null)
-            .setNeutralButton(R.string.ma_dlg_actualiser) { _, _ -> chargerMeteoCockpit() }
-            .show()
     }
 
     /** Demande une confirmation avant une commande de vol. Si "danger", le bouton
@@ -2125,12 +4012,12 @@ class MainActivity : AppCompatActivity() {
             .show()
         // LISIBILITE PLEIN SOLEIL : gros texte BLANC sur les boutons de confirmation
         // (RAMENER / DECOLLER / ATTERRIR / ANNULER...). Action rouge vif si danger.
-        dlg.getButton(android.app.AlertDialog.BUTTON_POSITIVE)?.apply {
+        dlg.getButton(android.content.DialogInterface.BUTTON_POSITIVE)?.apply {
             textSize = 22f
             setTypeface(typeface, android.graphics.Typeface.BOLD)
             setTextColor(if (danger) 0xFFFF5252.toInt() else 0xFFFFFFFF.toInt())
         }
-        dlg.getButton(android.app.AlertDialog.BUTTON_NEGATIVE)?.apply {
+        dlg.getButton(android.content.DialogInterface.BUTTON_NEGATIVE)?.apply {
             textSize = 22f
             setTypeface(typeface, android.graphics.Typeface.BOLD)
             setTextColor(0xFFFFFFFF.toInt())
@@ -2147,7 +4034,16 @@ class MainActivity : AppCompatActivity() {
         android.widget.Toast.makeText(this, message, android.widget.Toast.LENGTH_SHORT).show()
     }
 
-    private fun majVoyantRec(enregistre: Boolean, connecte: Boolean = true) {
+    // Chronomètre de repli : utilisé seulement si le drone ne rend pas KeyRecordingTime.
+    // Démarré à la TRANSITION vers l'enregistrement (y compris déclenché par la RC, que
+    // l'app détecte via KeyIsRecording), remis à zéro à l'arrêt.
+    private var recDebutMs = 0L
+
+    /** "12" -> "00:12" ; "75" -> "01:15". */
+    private fun formatChrono(secondes: Int): String =
+        "%02d:%02d".format(secondes / 60, secondes % 60)
+
+    private fun majVoyantRec(enregistre: Boolean, connecte: Boolean = true, secondesDrone: Int = -1) {
         // Aspect du bouton REC :
         //  - drone non connecte : bouton grisi + point rouge attenue (on ne peut pas enregistrer)
         //  - connecte, au repos  : gris + point rouge vif (pret a enregistrer)
@@ -2161,6 +4057,12 @@ class MainActivity : AppCompatActivity() {
         btnRec.alpha = if (!connecte && !enregistre) 0.35f else 1f
         val v = voyantRec ?: return
         if (enregistre) {
+            // DURÉE : celle du DRONE si disponible (juste même si lancé à la RC), sinon
+            // chronomètre de l'app depuis la détection du démarrage.
+            if (recDebutMs == 0L) recDebutMs = System.currentTimeMillis()
+            val secondes = if (secondesDrone >= 0) secondesDrone
+                else ((System.currentTimeMillis() - recDebutMs) / 1000L).toInt()
+            v.text = getString(R.string.ma_voyant_rec) + "  " + formatChrono(secondes)
             if (v.visibility != android.view.View.VISIBLE) {
                 v.visibility = android.view.View.VISIBLE
             }
@@ -2174,6 +4076,8 @@ class MainActivity : AppCompatActivity() {
                 v.startAnimation(clignote)
             }
         } else {
+            recDebutMs = 0L                       // prêt pour le prochain enregistrement
+            v.text = getString(R.string.ma_voyant_rec)
             if (recClignoteActif) {
                 recClignoteActif = false
                 v.clearAnimation()
@@ -2184,7 +4088,51 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    // FIND MY DRONE : horodatage de la dernière sauvegarde de position (throttle 3 s).
+    private var fmdDerniereSauvegardeMs = 0L
+
+    /** Mémorise la dernière position VALIDE du drone (prefs). Survit à la perte de liaison,
+     *  au crash de l'app et au redémarrage du téléphone — c'est exactement quand le drone
+     *  est perdu au sol qu'on en a besoin (écran Find My Drone). */
+    private fun sauvegarderPositionDrone(e: EtatCockpit) {
+        if (!e.connecte || !e.gpsValide) return
+        if (e.latitude.isNaN() || e.longitude.isNaN()) return
+        val now = System.currentTimeMillis()
+        if (now - fmdDerniereSauvegardeMs < 3000L) return
+        fmdDerniereSauvegardeMs = now
+        getSharedPreferences("cineflight", MODE_PRIVATE).edit()
+            .putLong("fmd_lat", java.lang.Double.doubleToRawLongBits(e.latitude))
+            .putLong("fmd_lon", java.lang.Double.doubleToRawLongBits(e.longitude))
+            .putLong("fmd_ts", now)
+            .apply()
+    }
+
     private fun majCockpit(e: EtatCockpit) {
+        sauvegarderPositionDrone(e)
+        // JOURNAL — VOL MANUEL / MOUVEMENTS : dès que l'aéronef est EN VOL depuis cet écran
+        // et qu'aucun autre mode n'a ouvert de journal, on en ouvre un. Objectif : AUCUN vol
+        // sans trace, quel que soit le chemin emprunté (exigence 2026-07-26).
+        try {
+            val J = ca.cineflight.stage.control.JournalVol
+            if (e.enVol && !J.actif()) {
+                J.demarrer(this, "MANUEL",
+                    "drone=${e.modele} batt=${e.batteriePct}% sat=${e.satellites}" +
+                    " modeAuto=$modeAuto alt=${"%.1f".format(e.altitudeAgl)}m")
+            }
+            if (e.enVol) {
+                J.etatSimple(
+                    altM = e.altitudeAgl, capDeg = e.capDeg.toDouble(),
+                    lat = e.latitude, lon = e.longitude,
+                    pitch = 0f, roll = 0f, throttle = 0f, yaw = 0f,
+                    batteriePct = e.batteriePct, satellites = e.satellites,
+                    phase = (if (modeAuto) "AUTO" else "manuel") +
+                        (if (e.enregistre) " REC" else "") +
+                        (if (e.rthEnCours) " RTH" else "") +
+                        " dist=${"%.0f".format(e.distanceDecollageM)}m")
+            } else if (J.actif() && !panoramaEnCours && lecteurMissionReel == null) {
+                J.terminer("aéronef posé")
+            }
+        } catch (_: Throwable) {}
         // Profil de capacites : si le modele a change (arrive apres connexion), on recalcule.
         if (e.modele.isNotEmpty() && e.modele != profilDrone.modeleBrut) {
             profilDrone = CapacitesDrone.analyser(e.modele)
@@ -2236,8 +4184,15 @@ class MainActivity : AppCompatActivity() {
         txtVitesse.text = if (!e.vitesseHorizM.isNaN())
             "\u27A4 ${fmt1(e.vitesseHorizM)} | \u2191${fmt1(e.vitesseVertM)}" else "\u27A4 \u2014"
         // GPS
-        txtGps.text = "\uD83D\uDEF0 ${e.satellites}" + if (e.gpsValide) " \u2713" else " \u2717"
-        txtGps.setTextColor(if (e.gpsValide) 0xFFFFFFFF.toInt() else 0xFFFF5252.toInt())
+        // Temp\u00E9rature batterie drone (diagnostic surchauffe au sol) : affich\u00E9e \u00E0 c\u00F4t\u00E9 du GPS.
+        val tempC = try { pontReel?.basePourObservation()?.temperatureBatterieC() ?: Double.NaN } catch (_: Throwable) { Double.NaN }
+        val tempTxt = if (tempC.isFinite()) "  \uD83C\uDF21${tempC.toInt()}\u00B0C" else ""
+        txtGps.text = "\uD83D\uDEF0 ${e.satellites}" + (if (e.gpsValide) " \u2713" else " \u2717") + tempTxt
+        txtGps.setTextColor(when {
+            tempC.isFinite() && tempC >= 50.0 -> 0xFFFF5252.toInt()   // chaud : rouge
+            !e.gpsValide -> 0xFFFF5252.toInt()
+            else -> 0xFFFFFFFF.toInt()
+        })
         // pastille PRET / PAS PRET (agrege GPS + batterie + meteo)
         majPastillePret(e)
         // cap
@@ -2247,7 +4202,7 @@ class MainActivity : AppCompatActivity() {
         txtSignalVideo.text = if (e.signalVideoPct >= 0) "\uD83C\uDFA5 ${e.signalVideoPct}%" else "\uD83C\uDFA5 \u2014"
         // REC visuel
         btnRec.backgroundTintList = android.content.res.ColorStateList.valueOf(if (e.enregistre) 0xFFC62828.toInt() else 0xFF37474F.toInt())
-        majVoyantRec(e.enregistre, e.connecte)
+        majVoyantRec(e.enregistre, e.connecte, e.secondesEnregistrement)
 
         // --- Enregistrement intelligent ---
         // 1) Coupe AUTO a l'atterrissage / RTH : le plan est fini, on sauvegarde le fichier.
@@ -2330,6 +4285,57 @@ class MainActivity : AppCompatActivity() {
         if (requestCode == 300 && grantResults.isNotEmpty()
             && grantResults.any { it == android.content.pm.PackageManager.PERMISSION_GRANTED }) {
             chargerMeteoCockpit()
+        }
+    }
+
+    /**
+     * ⚠⚠ PRODUCTEURS DE COMMANDES CONCURRENTS — correctif 2026-07-26.
+     *
+     * CONSTAT PILOTE : au « décollage d'essai » (Vol découverte), le drone NE MONTAIT PAS
+     * et s'éloignait HORIZONTALEMENT. Cause trouvée par lecture du code : la boucle de
+     * pilotage de CET écran n'était arrêtée qu'à `onDestroy()`. Or Android NE DÉTRUIT PAS
+     * l'écran principal quand un autre écran s'ouvre par-dessus (PremierVolActivity,
+     * Phase3Activity…) : il passe seulement en arrière-plan. DEUX boucles commandaient
+     * donc le drone en même temps, à 15 Hz chacune — celle de l'écran ouvert (montée) et
+     * celle restée vivante ici. Les commandes s'écrasent mutuellement : la montée est
+     * annulée et la commande résiduelle fait dériver l'aéronef.
+     *
+     * C'est le MÊME défaut que celui documenté et corrigé pour Phase3Activity en juillet
+     * (arrêt de boucle à onStop, autorité de commande unique) ; il n'avait jamais été
+     * appliqué ici. Règle : un écran qui n'est plus au premier plan NE COMMANDE PLUS.
+     *
+     * Le pilote est relancé au retour au premier plan par le chemin normal (bascule de
+     * mode / reprise du suivi) — on ne relance rien automatiquement ici, exactement comme
+     * Phase3 : la reprise du pilotage automatique reste une décision explicite.
+     */
+    override fun onStop() {
+        super.onStop()
+        // ⚠⚠ UNE MISSION AUTOMATIQUE NE SURVIT PAS À L'ARRIÈRE-PLAN.
+        //
+        // DÉFAUT TROUVÉ À L'AUDIT (2026-07-28) : `onStop` arrêtait la boucle pilote mais
+        // laissait `visiteEnCours` à true. La coroutine de capture continuait donc à
+        // « voler » : elle appelait `allerA`, qui soumettait des commandes à une boucle
+        // ARRÊTÉE. Le drone ne bougeait plus, mais le transit n'aboutissait jamais — et
+        // l'anti-blocage de 120 s faisait alors prendre la photo QUAND MÊME. Résultat :
+        // 54 clichés du même point, pris sur près de deux heures, avec un aéronef en
+        // stationnaire et personne devant l'écran.
+        //
+        // Une mission qui ne peut plus commander l'aéronef doit s'arrêter, pas continuer
+        // à croire qu'elle vole. C'est la même règle que pour Phase 3 et le vol découverte.
+        if (visiteEnCours || panoramaEnCours) {
+            try { ca.cineflight.stage.control.JournalVol.anomalie(
+                "MISSION_INTERROMPUE cause=ecran_arriere_plan — la boucle pilote s'arrête, " +
+                "l'aéronef reste en stationnaire") } catch (_: Throwable) {}
+            visiteEnCours = false
+        }
+        if (::pilote.isInitialized) {
+            try {
+                pilote.arreter()
+                android.util.Log.i("CineFlightVol",
+                    "MainActivity onStop -> boucle pilote ARRÊTÉE (plus aucune commande depuis cet écran)")
+                ca.cineflight.stage.control.JournalVol.evenement(
+                    "écran principal en arrière-plan -> boucle pilote arrêtée (plus aucune commande d'ici)")
+            } catch (_: Exception) {}
         }
     }
 
@@ -2458,7 +4464,21 @@ class MainActivity : AppCompatActivity() {
      * MAILLON 2 : met a jour le bandeau d'observation a l'ecran (cree a la volee,
      * comme bandeauCorridor). Purement informatif : n'agit sur AUCUNE commande.
      */
+    /**
+     * Bandeau de diagnostic PERCEPTION — MODE DÉVELOPPEUR SEULEMENT (2026-07-25).
+     * C'est un outil d'observation passive des capteurs d'obstacles (preuve pour le
+     * dossier), pas une information de pilotage : il restait affiché en jaune
+     * « en attente de trames » en usage normal et masquait le bas de l'écran.
+     * ⚠ La JOURNALISATION (PerceptionDiagLogger + LecteurPerception) est INCHANGÉE :
+     * seule l'incrustation à l'écran est masquée. Aucune preuve n'est perdue.
+     */
+    private val bandeauPerceptionVisible: Boolean by lazy {
+        ca.cineflight.stage.BuildConfig.DEBUG ||
+            getSharedPreferences("cineflight", MODE_PRIVATE).getBoolean("mode_developpeur", false)
+    }
+
     private fun majBandeauPerception(etat: PerceptionObservationState, rawMm: Int?, vsActif: Boolean, modele: String, oaType: String? = null, vision: Boolean = false) {
+        if (!bandeauPerceptionVisible) return
         try {
             if (bandeauPerception == null) {
                 val racine = findViewById<android.view.ViewGroup>(android.R.id.content) ?: return
@@ -2877,8 +4897,18 @@ class MainActivity : AppCompatActivity() {
     }
 
 
+    /**
+     * Batterie sous laquelle une mission automatique CESSE d'elle-même.
+     *
+     * 25 % laisse de quoi rentrer depuis le bout d'un terrain de 400 m, vent debout. Le
+     * retour automatique du firmware existe, mais il se déclenche plus bas et décide seul
+     * du moment : mieux vaut interrompre proprement, journaliser, et rendre la main.
+     */
+    private val BATTERIE_PLANCHER_MISSION_PCT = 25
+
     private val REQ_VOCAL = 4242
     private val REQ_DEF_SUJET = 4243
+    private val REQ_CARTE_3D = 4244
     private fun lancerPopupVocale() {
         try {
             val intent = android.content.Intent(android.speech.RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
@@ -2897,6 +4927,13 @@ class MainActivity : AppCompatActivity() {
 
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: android.content.Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == REQ_CARTE_3D) {
+            val plan = plan3DEnAttente
+            plan3DEnAttente = null      // consommé dans les DEUX cas : un plan qui traîne
+                                        // serait volé au prochain retour d'écran quelconque
+            if (resultCode == RESULT_OK && plan != null) executerCapture3D(plan)
+            return
+        }
         if (requestCode == REQ_DEF_SUJET && resultCode == RESULT_OK) {
             val chemin = data?.getStringExtra("kmz_path")
             val recap = data?.getStringExtra("recap") ?: ""
@@ -3215,6 +5252,16 @@ class MainActivity : AppCompatActivity() {
                 .show()
             return
         }
+        // AIGUILLAGE PAR CAPACITÉ (audit 2026-07-25) : les missions wayline NATIVES
+        // (upload KMZ au drone) sont réservées aux drones ENTERPRISE par le MSDK v5.
+        // Sur Mini 4 Pro et tout drone grand public, l'upload échoue -> « la mission ne
+        // peut pas être exécutée ». Chemin de remplacement : l'app JOUE le KMZ elle-même
+        // en Virtual Stick (LecteurMissionKmz — le même moteur que la simulation, branché
+        // sur le VRAI pilote). Serveur, KMZ et parseur vérifiés sains le 2026-07-25.
+        if (!ca.cineflight.stage.control.CapacitesDrone.supporteWaylinesNatives(pont.modeleDrone())) {
+            executerVolVirtualStick(kmz)
+            return
+        }
         val dlg = com.google.android.material.dialog.MaterialAlertDialogBuilder(this, R.style.DialogCineFlight)
             .setTitle(getString(R.string.ma_dlg_mission_titre))
             .setMessage(getString(R.string.ma_dlg_mission_upload))
@@ -3232,6 +5279,91 @@ class MainActivity : AppCompatActivity() {
                     .setMessage(msg).setPositiveButton(android.R.string.ok, null).show()
             } })
     }
+
+    // Lecteur de mission VIRTUAL STICK sur le VRAI drone (drones sans waylines natives).
+    private var lecteurMissionReel: LecteurMissionKmz? = null
+
+    /**
+     * Exécute une mission KMZ en VIRTUAL STICK sur le vrai drone (audit 2026-07-25) :
+     * même moteur éprouvé que la simulation (LecteurMissionKmz), branché sur le VRAI
+     * pilote. Décolle automatiquement si nécessaire, trace le parcours sur la carte,
+     * bouton ARRÊT + RTH à tout moment. Les gardes pré-vol ont déjà été passées par
+     * executerVol (connexion, GPS, batterie) + la confirmation explicite du pilote.
+     */
+    private fun executerVolVirtualStick(kmz: java.io.File) {
+        val lect = LecteurMissionKmz(pilote, pont,
+            onProgression = { i, n, etat ->
+                runOnUiThread { dlgMissionVs?.setMessage(getString(R.string.ma_dlg_waypoint, i) + " / $n\n$etat") }
+                try {
+                    val e = pont.lireEtat(pilote.enVol)
+                    ca.cineflight.stage.control.JournalVol.etatSimple(
+                        altM = e.altitudeAgl, capDeg = e.capDeg.toDouble(),
+                        lat = e.latitude, lon = e.longitude,
+                        pitch = 0f, roll = 0f, throttle = 0f, yaw = 0f,
+                        batteriePct = e.batteriePct, satellites = e.satellites,
+                        phase = "wp $i/$n — $etat")
+                } catch (_: Throwable) {}
+            },
+            onTermine = {
+                runOnUiThread {
+                    dlgMissionVs?.dismiss(); dlgMissionVs = null
+                    lecteurMissionReel = null
+                    try { ca.cineflight.stage.control.JournalVol.terminer("mission terminée") } catch (_: Throwable) {}
+                    com.google.android.material.dialog.MaterialAlertDialogBuilder(this, R.style.DialogCineFlight)
+                        .setTitle(getString(R.string.ma_dlg_mission_termine))
+                        .setMessage(getString(R.string.ma_mission_vs_fin))
+                        .setPositiveButton(android.R.string.ok, null).show()
+                }
+            })
+        val n = lect.charger(kmz)
+        if (n < 2) {
+            android.widget.Toast.makeText(this, getString(R.string.ma_toast_mission_vide, n),
+                android.widget.Toast.LENGTH_LONG).show()
+            return
+        }
+        lecteurMissionReel = lect
+        android.util.Log.i("CineFlightMission", "exécution VIRTUAL STICK : $n waypoints (${kmz.name})")
+        try {
+            val e0 = pont.lireEtat(pilote.enVol)   // état relu ICI (`ev` appartient à l'appelant)
+            ca.cineflight.stage.control.JournalVol.demarrer(this, "MISSION_VS",
+                "fichier=${kmz.name} waypoints=$n drone=${pont.modeleDrone()}" +
+                " batt=${e0.batteriePct}% sat=${e0.satellites} enVol=${pilote.enVol}" +
+                " inverserRollPitch=${ca.cineflight.stage.control.PontDjiReel.INVERSER_ROLL_PITCH}")
+        } catch (_: Throwable) {}
+        dlgMissionVs = com.google.android.material.dialog.MaterialAlertDialogBuilder(this, R.style.DialogCineFlight)
+            .setTitle(getString(R.string.ma_dlg_mission_titre))
+            .setMessage(getString(R.string.ma_mission_vs_decollage))
+            .setCancelable(false)
+            .setNegativeButton(R.string.ma_dlg_arret_rth) { _, _ ->
+                try { lect.arreter() } catch (_: Exception) {}
+                lecteurMissionReel = null
+                try { ca.cineflight.stage.control.JournalVol.terminer("mission ARRÊTÉE + RTH par le pilote") } catch (_: Throwable) {}
+                pont.lancerRth { }
+            }
+            .show()
+        if (!modeAuto) basculerMode(true)
+        tracerParcoursMission(lect.pointsParcours())
+        val lancerLecture = {
+            lifecycleScope.launch {
+                delay(2000)                       // stabilisation après décollage
+                lect.lancer(lifecycleScope)
+            }
+            Unit
+        }
+        if (!pilote.enVol) {
+            pilote.decoller { ok ->
+                runOnUiThread {
+                    if (!ok) {
+                        dlgMissionVs?.dismiss(); dlgMissionVs = null
+                        lecteurMissionReel = null
+                        android.widget.Toast.makeText(this, getString(R.string.p3_decollage_echec),
+                            android.widget.Toast.LENGTH_LONG).show()
+                    } else lancerLecture()
+                }
+            }
+        } else lancerLecture()
+    }
+    private var dlgMissionVs: androidx.appcompat.app.AlertDialog? = null
 
     private fun verifierMissionComplete() {
         if (!recoChargee || recoPosesChargees.size < 2) {
@@ -3425,6 +5557,16 @@ class MainActivity : AppCompatActivity() {
         try { if (miniVisible) miniCarteVue?.onResume() } catch (_: Exception) {}
         try { chargerRailDepuisCarte() } catch (_: Exception) {}
         try { ouvrirSujetSiLumiereEnAttente() } catch (_: Exception) {}
+        // Tâche d'assemblage différé demandée depuis l'écran de la file.
+        // ⚠ LA DEMANDE VIENT DES PRÉFÉRENCES, PLUS D'UN INTENT. L'ancienne version lisait
+        // `intent.getLongExtra(...)` — mais faute de `onNewIntent`, `getIntent()` rend
+        // toujours l'intention de LANCEMENT de l'app : l'extra n'arrivait jamais et
+        // « Assembler maintenant » ne faisait rien, sans message. Corrigé le 2026-07-28.
+        // `prendreDemande` efface en lisant : la tâche n'est traitée qu'une fois.
+        try {
+            val id = ca.cineflight.stage.cine.AssemblagesEnAttente.prendreDemande(this)
+            if (id != 0L) traiterAssemblageEnAttente(id)
+        } catch (_: Exception) {}
     }
 
     /** Au retour de la carte : si un rail A/B a ete defini la-bas, le charger dans le Cable-Cam. */
@@ -3489,7 +5631,7 @@ class MainActivity : AppCompatActivity() {
             .setCancelable(false)
             .create()
         dlg.setOnShowListener {
-            dlg.getButton(android.app.AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+            dlg.getButton(android.content.DialogInterface.BUTTON_POSITIVE).setOnClickListener {
                 val nom = champ.text.toString().trim()
                 if (nom.isEmpty()) {
                     champ.error = getString(R.string.ma_nom_erreur)

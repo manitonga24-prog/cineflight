@@ -58,6 +58,17 @@ class PontDjiReelCockpit(
     @Volatile private var sdPresente: Boolean = false        // carte SD insérée + utilisable
     @Volatile private var sdMinutesRestantes: Int = -1       // minutes vidéo restantes ; -1 = inconnu
 
+    /**
+     * Espace restant sur la carte, en OCTETS ; -1 = inconnu.
+     *
+     * Il était déjà lu (`getStorageLeftCapacity`) mais jeté : seules les minutes de vidéo
+     * en étaient tirées. Or c'est lui qui permet de refuser AVANT le décollage une capture
+     * 3D de 96 photos qui ne tiendrait pas — une carte pleine au 40ᵉ cliché, c'est une
+     * batterie et un déplacement perdus pour un jeu inexploitable.
+     */
+    @Volatile var octetsLibresCarte: Long = -1L
+        private set
+
     // Point de décollage capturé nous-mêmes (pas de clé home incertaine).
     @Volatile private var latHome: Double = Double.NaN
     @Volatile private var lonHome: Double = Double.NaN
@@ -125,60 +136,45 @@ class PontDjiReelCockpit(
 
     /**
      * Lit l'état de la carte SD du drone (présence + temps vidéo restant).
-     * MSDK 5.10 : les noms de clés stockage varient selon la version, donc on
-     * tente plusieurs clés connues par réflexion. Si aucune ne répond (ex. Mini 3
-     * qui n'expose pas la clé), on laisse les valeurs neutres (false / -1) et le
-     * cockpit affiche "—" sans planter. Lecture best-effort, jamais bloquante.
+     * MSDK v5 : LA clé stockage est `KeyCameraStorageInfos` (doc officielle CameraKey) —
+     * les 7 anciens noms candidats (KeyCameraSDCardIsInserted, KeySDCardIsInserted, etc.)
+     * N'EXISTENT PAS en v5 : l'icône disquette affichait « absente » avec une carte SD
+     * réellement présente (constaté 2026-07-25). Structure rendue :
+     * CameraStorageInfos.getCameraStorageInfoList() -> List<CameraStorageInfo> avec
+     * getStorageType() (SDCARD / mémoire interne), getStorageState() (insertion),
+     * getStorageLeftCapacity() (Mo) et getAvailableVideoDuration() (secondes).
+     * Parse par réflexion, best-effort, jamais bloquant ; sur échec on GARDE les
+     * dernières valeurs connues. À appeler sur le FIL PRINCIPAL uniquement.
      */
     private fun majStockage() {
         val km = try { KeyManager.getInstance() } catch (_: Throwable) { return }
-
-        // --- présence carte SD : on essaie les noms de clés connus ---
-        val nomsClesPresence = listOf(
-            "KeyCameraSDCardIsInserted", "KeySDCardIsInserted",
-            "KeyCameraStorageState", "KeySDCardInsertState"
-        )
-        var presence: Boolean? = null
-        for (nom in nomsClesPresence) {
-            presence = lireBoolCamera(km, nom) ?: continue
-            break
+        try {
+            val champ = CameraKey::class.java.getField("KeyCameraStorageInfos").get(null)
+            val cle = creerCleCameraCiblee(champ) ?: creerCleReflexion(champ) ?: return
+            val mg = km.javaClass.methods.firstOrNull { it.name == "getValue" && it.parameterTypes.size == 1 } ?: return
+            val infos = mg.invoke(km, cle) ?: return
+            val liste = infos.javaClass.getMethod("getCameraStorageInfoList").invoke(infos) as? List<*> ?: return
+            fun nomEnum(o: Any?, m: String): String? =
+                try { (o?.javaClass?.getMethod(m)?.invoke(o) as? Enum<*>)?.name } catch (_: Throwable) { null }
+            fun entier(o: Any?, m: String): Int? =
+                try { (o?.javaClass?.getMethod(m)?.invoke(o) as? Number)?.toInt() } catch (_: Throwable) { null }
+            // Entrée CARTE SD en priorité ; repli sur la première entrée (mémoire interne).
+            val sd = liste.firstOrNull { nomEnum(it, "getStorageType")?.contains("SD") == true }
+                ?: liste.firstOrNull() ?: return
+            val etat = nomEnum(sd, "getStorageState") ?: ""
+            val resteMo = entier(sd, "getStorageLeftCapacity") ?: -1
+            // Présence : état d'insertion positif (INSERTED mais pas NOT_INSERTED),
+            // sinon repli sur une capacité restante > 0 (une carte lue = une carte présente).
+            sdPresente = (etat.contains("INSERT") && !etat.contains("NOT")) || resteMo > 0
+            // Mio -> octets. On garde -1 quand la lecture a échoué : « inconnu » et
+            // « zéro » ne veulent pas dire la même chose, et les confondre ferait refuser
+            // tous les vols dès que le SDK ne répond pas.
+            octetsLibresCarte = if (resteMo >= 0) resteMo.toLong() * 1024L * 1024L else -1L
+            val secondes = entier(sd, "getAvailableVideoDuration") ?: -1
+            sdMinutesRestantes = if (secondes >= 0) secondes / 60 else -1
+        } catch (e: Throwable) {
+            Log.w("PontDjiReelCockpit", "stockage v5 indisponible: " + e.message)
         }
-
-        // --- temps vidéo restant (secondes) : noms connus ---
-        val nomsClesTemps = listOf(
-            "KeyCameraSDCardAvailableRecordingTimeInSeconds",
-            "KeySDCardAvailableRecordingTimeInSeconds",
-            "KeyCameraVideoRecordRemainTime"
-        )
-        var secondes: Int? = null
-        for (nom in nomsClesTemps) {
-            secondes = lireIntCamera(km, nom) ?: continue
-            break
-        }
-
-        // Si on a un temps valide, la carte est forcément présente.
-        sdPresente = presence ?: (secondes != null && secondes >= 0)
-        sdMinutesRestantes = if (secondes != null && secondes >= 0) secondes / 60 else -1
-    }
-
-    /** Lit une clé CameraKey booléenne par réflexion ; null si indisponible. */
-    private fun lireBoolCamera(km: Any, nomCle: String): Boolean? {
-        return try {
-            val champ = CameraKey::class.java.getField(nomCle).get(null)
-            val cle = creerCleReflexion(champ) ?: return null
-            val getValue = km.javaClass.getMethod("getValue", cle.javaClass.superclass ?: cle.javaClass)
-            (getValue.invoke(km, cle) as? Boolean)
-        } catch (_: Throwable) { null }
-    }
-
-    /** Lit une clé CameraKey entière par réflexion ; null si indisponible. */
-    private fun lireIntCamera(km: Any, nomCle: String): Int? {
-        return try {
-            val champ = CameraKey::class.java.getField(nomCle).get(null)
-            val cle = creerCleReflexion(champ) ?: return null
-            val getValue = km.javaClass.getMethod("getValue", cle.javaClass.superclass ?: cle.javaClass)
-            (getValue.invoke(km, cle) as? Number)?.toInt()
-        } catch (_: Throwable) { null }
     }
 
     /**
@@ -208,9 +204,15 @@ class PontDjiReelCockpit(
         return hypot((lo - lonHome) * mLon, (la - latHome) * mLat)
     }
 
+    private var dernierStockageMs = 0L
     override fun lireEtat(enVol: Boolean): EtatCockpit {
         majHome()
-        majStockage()
+        // SUR LE FIL PRINCIPAL (surtout PAS de fil de fond : la concurrence SDK déconnecte le
+        // drone, cf. CLAUDE.md). Mais THROTTLÉ : l'état carte SD change lentement, inutile de
+        // refaire 7 getValue à chaque appel (~6/s). Une fois toutes les 2 s allège le fil UI
+        // sans aucun accès concurrent au SDK.
+        val now = System.currentTimeMillis()
+        if (now - dernierStockageMs >= 2000L) { dernierStockageMs = now; majStockage() }
         return EtatCockpit(
             connecte = estConnecte(),
             enVol = enVol,
@@ -227,6 +229,10 @@ class PontDjiReelCockpit(
             signalRcPct = signalRc,
             signalVideoPct = signalVideo,
             enregistre = enregistreEnCours(),
+            // Durée d'enregistrement lue au DRONE (CameraKey.KeyRecordingTime, secondes) :
+            // juste même si l'enregistrement a été lancé depuis la RADIOCOMMANDE. -1 si la
+            // clé ne répond pas -> l'app affiche alors son propre chronomètre.
+            secondesEnregistrement = if (enregistreEnCours()) lireSecondesEnregistrement() else -1,
             gimbalPitchDeg = gimbalPitch,
             carteSdPresente = sdPresente,
             minutesEnregRestantes = sdMinutesRestantes,
@@ -235,48 +241,346 @@ class PontDjiReelCockpit(
         )
     }
 
+    /**
+     * Durée d'enregistrement en cours, en SECONDES, lue au drone
+     * (`CameraKey.KeyRecordingTime`, doc officielle CameraKey v5). -1 si indisponible.
+     * Clé CIBLÉE (#506). À appeler sur le FIL PRINCIPAL (règle SDK mono-fil).
+     */
+    private fun lireSecondesEnregistrement(): Int {
+        return try {
+            val champ = CameraKey::class.java.getField("KeyRecordingTime").get(null)
+            val cle = creerCleCameraCiblee(champ) ?: creerCleReflexion(champ) ?: return -1
+            val km = KeyManager.getInstance()
+            val mg = km.javaClass.methods.firstOrNull { it.name == "getValue" && it.parameterTypes.size == 1 }
+            (mg?.invoke(km, cle) as? Number)?.toInt() ?: -1
+        } catch (_: Throwable) { -1 }
+    }
+
+    private val handlerPhoto = android.os.Handler(android.os.Looper.getMainLooper())
+
+    /** Ancien contrat (tir-et-oublie) conservé : délègue à la version confirmée, sans callback. */
     override fun declencherPhoto() {
-        // bascule mode PHOTO avant le shoot (sinon -511 si la camera est en mode video,
-        // ce qui arrive apres un reglage resolution/fps qui force VIDEO_NORMAL).
-        try {
-            val clsMode = Class.forName("dji.sdk.keyvalue.value.camera.CameraMode")
-            val photoMode = clsMode.enumConstants?.firstOrNull { (it as Enum<*>).name == "PHOTO_NORMAL" }
-                ?: clsMode.enumConstants?.firstOrNull { (it as Enum<*>).name == "PHOTO" }
-            if (photoMode != null) {
-                val cleMode = KeyTools.createKey(CameraKey.KeyCameraMode)
-                KeyManager.getInstance().setValue(cleMode, photoMode as dji.sdk.keyvalue.value.camera.CameraMode,
-                    object : CommonCallbacks.CompletionCallback {
-                        override fun onSuccess() { shootPhotoMaintenant() }
-                        override fun onFailure(error: dji.v5.common.error.IDJIError) {
-                            Log.w("PontDjiReelCockpit", "mode photo echoue (${error.description()}), tentative directe")
-                            shootPhotoMaintenant()
-                        }
-                    })
-            } else {
-                shootPhotoMaintenant()
-            }
-        } catch (e: Throwable) {
-            Log.w("PontDjiReelCockpit", "bascule mode photo ex: ${e.message}")
-            shootPhotoMaintenant()
+        declencherPhotoConfirmee { ok, detail ->
+            if (!ok) Log.e("PontDjiReelCockpit", detail ?: "Échec photo")
         }
     }
 
-    private fun shootPhotoMaintenant() {
-        KeyManager.getInstance().performAction(
-            KeyTools.createKey(CameraKey.KeyStartShootPhoto), null,
-            object : CommonCallbacks.CompletionCallbackWithParam<dji.sdk.keyvalue.value.common.EmptyMsg> {
-                override fun onSuccess(t: dji.sdk.keyvalue.value.common.EmptyMsg?) {
-                    Log.i("PontDjiReelCockpit", "Photo prise")
+    /**
+     * Prend UNE photo et ne rend le résultat qu'APRÈS la réponse du SDK — commande ACCEPTÉE
+     * (onSuccess) ou REFUSÉE (onFailure) — plus un court délai d'écriture du fichier.
+     * L'ancien `declencherPhoto()` ne remontait RIEN à l'appelant : le panorama comptait donc
+     * chaque photo comme prise, même refusée (carte pleine, caméra occupée, mauvais mode).
+     * Ici, un refus est signalé et le panorama peut s'interrompre proprement.
+     */
+    fun declencherPhotoConfirmee(onFini: (Boolean, String?) -> Unit) {
+        val termine = java.util.concurrent.atomic.AtomicBoolean(false)
+        fun finir(ok: Boolean, detail: String?) {
+            if (termine.compareAndSet(false, true)) {
+                if (ok) Log.i("PontDjiReelCockpit", "Photo confirmée (commande acceptée)")
+                else Log.e("PontDjiReelCockpit", detail ?: "Échec photo")
+                onFini(ok, detail)
+            }
+        }
+        // Stoppe toute TÂCHE photo en cours ou résiduelle (PHOTO_PANORAMA / PHOTO_INTERVAL /
+        // PHOTO_SUPER_RESOLUTION). Doc DJI v5 (CameraKey.KeyStopShootPhoto) : c'est le seul
+        // moyen de sortir la caméra d'une tâche laissée par DJI Fly ; sinon KeyStartShootPhoto
+        // répond cannot_start_task_on_weak_gps dès que le GPS est faible (au sol, intérieur).
+        // Best-effort : l'échec (caméra déjà libre) est ignoré et on enchaîne.
+        fun stopperTachePhoto(puis: () -> Unit) {
+            try {
+                KeyManager.getInstance().performAction(
+                    KeyTools.createCameraKey(CameraKey.KeyStopShootPhoto,
+                        dji.sdk.keyvalue.value.common.ComponentIndexType.LEFT_OR_MAIN,
+                        dji.sdk.keyvalue.value.common.CameraLensType.CAMERA_LENS_DEFAULT), null,
+                    object : CommonCallbacks.CompletionCallbackWithParam<dji.sdk.keyvalue.value.common.EmptyMsg> {
+                        override fun onSuccess(t: dji.sdk.keyvalue.value.common.EmptyMsg?) {
+                            Log.i("PontDjiReelCockpit", "Tâche photo stoppée (KeyStopShootPhoto)")
+                            puis()
+                        }
+                        override fun onFailure(error: dji.v5.common.error.IDJIError) { puis() }
+                    })
+            } catch (e: Throwable) { Log.w("PontDjiReelCockpit", "stop tâche photo ex: ${e.message}"); puis() }
+        }
+        // Bascule la caméra en PHOTO_NORMAL puis enchaîne après `delaiMs` de stabilisation
+        // (sinon -511 si la caméra est en mode vidéo, ou tir refusé pendant la transition).
+        // Mode obtenu par RÉFLEXION (nom d'enum incertain selon la version SDK).
+        fun basculerModePhotoPuis(delaiMs: Long, puis: () -> Unit) {
+            try {
+                val clsMode = Class.forName("dji.sdk.keyvalue.value.camera.CameraMode")
+                val photoMode = clsMode.enumConstants?.firstOrNull { (it as Enum<*>).name == "PHOTO_NORMAL" }
+                    ?: clsMode.enumConstants?.firstOrNull { (it as Enum<*>).name == "PHOTO" }
+                if (photoMode != null) {
+                    KeyManager.getInstance().setValue(
+                        KeyTools.createCameraKey(CameraKey.KeyCameraMode,
+                            dji.sdk.keyvalue.value.common.ComponentIndexType.LEFT_OR_MAIN,
+                            dji.sdk.keyvalue.value.common.CameraLensType.CAMERA_LENS_DEFAULT),
+                        photoMode as dji.sdk.keyvalue.value.camera.CameraMode,
+                        object : CommonCallbacks.CompletionCallback {
+                            override fun onSuccess() { handlerPhoto.postDelayed({ puis() }, delaiMs) }
+                            override fun onFailure(error: dji.v5.common.error.IDJIError) {
+                                Log.w("PontDjiReelCockpit", "mode photo échoué (${error.description()}), tentative directe")
+                                puis()
+                            }
+                        })
+                } else puis()
+            } catch (e: Throwable) {
+                Log.w("PontDjiReelCockpit", "bascule mode photo ex: ${e.message}")
+                puis()
+            }
+        }
+        // UNE seule récupération WEAK_GPS par prise (anti-boucle).
+        val recuperationWeakGps = java.util.concurrent.atomic.AtomicBoolean(false)
+        // TIR — VARIANTES DE CLÉ, dans l'ordre. Le ciblage objectif (#506) était censé être
+        // obligatoire… mais CONSTAT 2026-07-25 : à 15-16 satellites, tir ciblé refusé -472
+        // CANNOT_START_TASK_ON_WEAK_GPS, caméra pourtant en PHOTO_NORMAL (DIAG ciblé). Sur
+        // un MONO-objectif (Mini 4 Pro), le ciblage LENS peut router l'action vers le
+        // sous-système « tâche vision » (pano), qui exige le GPS. Variante 2 = clé NUE,
+        // la forme canonique du support DJI (#537). Chaque refus est journalisé avec sa
+        // variante -> le Logcat dira laquelle passe sur ce matériel.
+        fun shoot(variante: Int = 0) {
+            try {
+                val cle = when (variante) {
+                    0 -> KeyTools.createCameraKey(CameraKey.KeyStartShootPhoto,
+                        dji.sdk.keyvalue.value.common.ComponentIndexType.LEFT_OR_MAIN,
+                        dji.sdk.keyvalue.value.common.CameraLensType.CAMERA_LENS_DEFAULT)
+                    1 -> KeyTools.createCameraKey(CameraKey.KeyStartShootPhoto,
+                        dji.sdk.keyvalue.value.common.ComponentIndexType.LEFT_OR_MAIN,
+                        dji.sdk.keyvalue.value.common.CameraLensType.CAMERA_LENS_WIDE)
+                    else -> KeyTools.createKey(CameraKey.KeyStartShootPhoto)
                 }
-                override fun onFailure(error: dji.v5.common.error.IDJIError) {
-                    Log.e("PontDjiReelCockpit", "Échec photo: $error")
-                }
-            })
+                KeyManager.getInstance().performAction(cle, null,
+                    object : CommonCallbacks.CompletionCallbackWithParam<dji.sdk.keyvalue.value.common.EmptyMsg> {
+                        override fun onSuccess(t: dji.sdk.keyvalue.value.common.EmptyMsg?) {
+                            // Commande ACCEPTÉE : on laisse ~1 s à la caméra pour ÉCRIRE le
+                            // fichier avant d'avancer (sinon le panorama pivote pendant l'écriture).
+                            Log.i("PontDjiReelCockpit", "Photo ACCEPTÉE (variante=$variante)")
+                            handlerPhoto.postDelayed({ finir(true, null) }, 1000L)
+                        }
+                        override fun onFailure(error: dji.v5.common.error.IDJIError) {
+                            if (variante < 2) {
+                                Log.w("PontDjiReelCockpit", "Photo refusée variante=$variante " +
+                                    "(${error.errorCode()}) -> variante ${variante + 1}")
+                                shoot(variante + 1)
+                                return
+                            }
+                            // description() est souvent null : on compose CODE + hint, ET on
+                            // ajoute le contexte des blocages RÉELS (carte SD) pour diagnostiquer.
+                            val base = try {
+                                val parts = listOf(
+                                    error.errorCode(),
+                                    error.description(),
+                                    try { error.hint() } catch (_: Throwable) { null }
+                                ).filter { !it.isNullOrBlank() }
+                                if (parts.isEmpty()) error.toString() else parts.joinToString(" · ")
+                            } catch (_: Throwable) { error.toString() }
+                            // RÉCUPÉRATION : cannot_start_task_on_weak_gps = la caméra est
+                            // restée dans un mode TÂCHE (panorama/QuickShot). On stoppe la
+                            // tâche, on force PHOTO_NORMAL, et on retire UNE fois.
+                            if (base.contains("WEAK_GPS", ignoreCase = true) &&
+                                recuperationWeakGps.compareAndSet(false, true)) {
+                                Log.w("PontDjiReelCockpit",
+                                    "WEAK_GPS -> stop tâche + PHOTO_NORMAL + nouvel essai")
+                                stopperTachePhoto { basculerModePhotoPuis(400L) { shoot() } }
+                                return
+                            }
+                            try { majStockage() } catch (_: Throwable) {}
+                            // DIAGNOSTIC WEAK_GPS : lectures CIBLÉES (la lecture non ciblée
+                            // peut rendre le cache SDK, pas l'état réel de la caméra — #506).
+                            if (base.contains("WEAK_GPS", ignoreCase = true)) {
+                                handlerPhoto.post {
+                                    Log.e("PontDjiReelCockpit", "DIAG WEAK_GPS : mode_cible=" +
+                                        (lireCameraBrutCible("KeyCameraMode") ?: "?") +
+                                        " pano_en_cours=" +
+                                        (lireCameraBrutCible("KeyIsShootingPhotoPanorama") ?: "?") +
+                                        " mode_pano=" +
+                                        (lireCameraBrutCible("KeyPhotoPanoramaMode") ?: "?") +
+                                        " satellites=" +
+                                        this@PontDjiReelCockpit.base.nbSatellitesActuel())
+                                }
+                            }
+                            val ctx = "carte SD=" + if (sdPresente) "présente" else "ABSENTE/inconnue"
+                            // ⚠ HISTORIQUE DU DIAGNOSTIC (2026-07-25) : d'abord attribué au
+                            // GPS (satellites=0 en intérieur)… RÉFUTÉ ensuite : -472 aussi à
+                            // 15-16 satellites, home point capturé, caméra PHOTO_NORMAL au
+                            // DIAG ciblé. Le libellé WEAK_GPS du firmware ne décrit donc PAS
+                            // la vraie condition. Piste en cours : la FORME de la clé (les
+                            // 3 variantes ci-dessus). Croiser avec DJI Fly au même endroit.
+                            // REMÈDE ÉTABLI 2026-07-25 : -472 persistant = état caméra rémanent
+                            // que le MSDK ne peut ni voir ni réparer. UNE ouverture de DJI Fly
+                            // (photo test) réinitialise la caméra. Cause probable : coupure
+                            // brutale pendant une opération caméra (essais E-03, surchauffe).
+                            val hintGps = if (base.contains("WEAK_GPS", ignoreCase = true))
+                                " | état caméra rémanent probable : ouvrir DJI Fly, prendre une photo test, fermer, puis revenir dans CineFlight"
+                            else ""
+                            val info = "$base | $ctx$hintGps"
+                            Log.e("PontDjiReelCockpit", "Échec KeyStartShootPhoto : $info")
+                            finir(false, info)
+                        }
+                    })
+            } catch (e: Throwable) { finir(false, "Exception photo : ${e.message}") }
+        }
+        // CHEMIN NOMINAL. En MSDK v5, le mode de prise EST KeyCameraMode (PHOTO_NORMAL,
+        // PHOTO_PANORAMA, PHOTO_INTERVAL...). Les clés KeyPhotoShootMode / KeyShootPhotoMode /
+        // KeyCameraFlatMode n'existent PAS en v5 (vérifié doc officielle CameraKey) :
+        // l'ancienne boucle de candidats par réflexion ne faisait RIEN — supprimée.
+        // Séquence : lire le mode (diagnostic Logcat) -> si mode tâche ou inconnu, stopper
+        // la tâche -> forcer PHOTO_NORMAL -> tirer. Une photo UNIQUE n'exige pas de GPS.
+        val modeActuel = lireCameraEnum("KeyCameraMode")
+        if (modeActuel == "PHOTO_NORMAL") {
+            basculerModePhotoPuis(0L) { shoot() }   // déjà en photo simple : aucun délai
+        } else {
+            stopperTachePhoto { basculerModePhotoPuis(400L) { shoot() } }
+        }
     }
 
     override fun reglerGimbalPitch(pitchDeg: Float) {
         gimbalPitch = pitchDeg
         orienterNacelle(pitchDeg, 0f, false)   // délégué à base
+    }
+
+    // ── VERROUILLAGE D'EXPOSITION (panorama, 2026-07-26) ────────────────────────────
+    // Constat terrain : jointures VISIBLES sur un panorama assemblé — une moitié nettement
+    // plus claire que l'autre. Cause : l'exposition AUTOMATIQUE se réajuste à chaque
+    // rotation (ciel d'un côté, sous-bois de l'autre), donc chaque photo a une luminosité
+    // différente et l'assembleur ne peut pas fondre les jointures.
+    // REMÈDE (pratique standard des apps pano) : figer ISO + vitesse sur les valeurs
+    // MESURÉES avant la séquence, puis restaurer l'automatique à la fin.
+    @Volatile private var expoVerrouillee = false
+
+    /**
+     * Fige l'exposition sur les valeurs COURANTES (lues à la caméra) pour toute la durée
+     * du panorama. Best-effort : si la lecture échoue, on ne verrouille pas plutôt que de
+     * figer une valeur inventée (une exposition fausse est pire qu'une exposition qui varie).
+     * @return true si le verrouillage a réellement été appliqué.
+     */
+    /**
+     * Fige la BALANCE DES BLANCS pour la durée d'un panorama.
+     *
+     * POURQUOI C'EST LE VERROUILLAGE LE PLUS IMPORTANT. Sur ce point, toutes les sources
+     * s'accordent : en automatique, la balance dérive d'une image à l'autre et chaque
+     * direction prend une teinte différente. Or un écart de COULEUR se rattrape très mal au
+     * raccord, alors qu'un écart de LUMINOSITÉ, Hugin sait l'égaliser par optimisation
+     * photométrique. On verrouille donc ce que le logiciel ne sait pas réparer.
+     *
+     * On fige la balance TELLE QU'ELLE EST — on n'impose pas une température arbitraire.
+     * Celle que la caméra a choisie au premier cliché convient à la scène ; la figer suffit,
+     * et forcer 5500 K trahirait les lumières de fin de journée.
+     *
+     * ⚠ Liste blanche de noms de clé, comme partout ailleurs. Si rien ne correspond, on ne
+     * force RIEN et on le DIT : une balance qu'on croit figée et qui dérive donnerait un
+     * panorama en camaïeu sans que personne comprenne pourquoi.
+     */
+    fun verrouillerBalanceBlancs(): String {
+        // 1) Lire la valeur courante : c'est elle qu'on veut conserver.
+        val actuel = lireCameraBrutCible("KeyWhiteBalance")
+            ?: lireCameraBrutCible("KeyCameraWhiteBalance")
+        // 2) Trouver la constante de mode « manuel / personnalisé » du SDK.
+        val clsNoms = listOf(
+            "dji.sdk.keyvalue.value.camera.WhiteBalancePreset",
+            "dji.sdk.keyvalue.value.camera.CameraWhiteBalancePreset",
+        )
+        var manuel: Any? = null
+        for (n in clsNoms) {
+            val cls = try { Class.forName(n) } catch (_: Throwable) { continue }
+            val consts = cls.enumConstants ?: continue
+            manuel = consts.firstOrNull {
+                val s = (it as Enum<*>).name.uppercase()
+                s.contains("MANUAL") || s.contains("CUSTOM")
+            }
+            if (manuel != null) break
+            Log.w("PontDjiReelCockpit", "$n sans constante manuelle : " +
+                consts.joinToString { (it as Enum<*>).name })
+        }
+        if (manuel == null) return "balance des blancs NON figée : mode manuel introuvable dans ce SDK"
+        for (nomCle in listOf("KeyWhiteBalance", "KeyCameraWhiteBalance")) {
+            val champ = try { CameraKey::class.java.getField(nomCle).get(null) } catch (_: Throwable) { continue }
+            val cle = creerCleCameraCiblee(champ) ?: continue
+            try {
+                val km = KeyManager.getInstance()
+                val ms = km.javaClass.methods.firstOrNull {
+                    it.name == "setValue" && it.parameterTypes.size == 3
+                } ?: continue
+                ms.invoke(km, cle, manuel, object : CommonCallbacks.CompletionCallback {
+                    override fun onSuccess() {
+                        Log.i("PontDjiReelCockpit", "balance des blancs FIGÉE (était $actuel)")
+                    }
+                    override fun onFailure(error: dji.v5.common.error.IDJIError) {
+                        Log.w("PontDjiReelCockpit", "balance des blancs refusée : ${error.description()}")
+                    }
+                })
+                return "balance des blancs figée (était ${actuel ?: "?"}, clé $nomCle)"
+            } catch (e: Throwable) {
+                Log.w("PontDjiReelCockpit", "balance des blancs : ${e.message}")
+            }
+        }
+        return "balance des blancs NON figée : aucune clé exploitable dans ce SDK"
+    }
+
+    /**
+     * Fige ISO et vitesse pour toute la séquence. Rend une description de ce qui a été
+     * TENTÉ ; le résultat RÉEL part au journal une seconde plus tard.
+     *
+     * ⚠⚠ DÉFAUT CORRIGÉ (2026-07-28) — L'ANCIENNE VERSION DÉCLARAIT SANS VÉRIFIER.
+     * Elle posait `expoVerrouillee = true` juste après avoir DEMANDÉ le mode manuel, sans
+     * jamais relire ce que la caméra avait retenu, et son résultat était jeté par un
+     * `try { } catch { }` chez l'appelant. C'était donc un état d'INTENTION, pas de fait —
+     * la même famille de défaut que « armé sans détecteur » ou « mode soccer pré-armé ».
+     *
+     * MESURE QUI L'A RÉVÉLÉ : sur le panorama `eca54f3db18e`, les expositions estimées par
+     * Hugin s'étalent sur **2,48 EV**, en oscillant avec l'azimut — clair dos au soleil,
+     * sombre face à lui. C'est la signature d'une exposition restée AUTOMATIQUE. Le verrou
+     * n'avait jamais tenu, et personne ne pouvait le savoir : rien n'était journalisé.
+     * Conséquence visible : des rectangles de luminosité dans le panorama fini.
+     */
+    fun verrouillerExposition(): String {
+        if (expoVerrouillee) return "exposition : déjà verrouillée"
+        val isoBrut = lireIsoBrut()          // ex. "ISO_400"
+        val shutBrut = lireShutterBrut()     // ex. "SHUTTER_1_120"
+        val iso = isoBrut?.let { Regex("(\\d+)").find(it)?.groupValues?.get(1)?.toIntOrNull() }
+        val shut = shutBrut?.removePrefix("SHUTTER_")?.replace('_', '/')
+        if (iso == null || shut.isNullOrBlank()) {
+            // ⚠ CE REFUS SE DIT MAINTENANT. Il n'allait qu'au Logcat, effacé en quelques
+            // heures : le panorama sortait avec des jointures visibles et rien n'expliquait
+            // pourquoi, des semaines plus tard.
+            val m = "!! exposition NON verrouillée (lecture impossible : iso=$isoBrut" +
+                    " vitesse=$shutBrut) — les jointures seront visibles"
+            Log.w("PontDjiReelCockpit", m)
+            return m
+        }
+        reglerModeExpo("MANUAL")
+        handlerPhoto.postDelayed({
+            try { reglerIso(iso); reglerShutter(shut) } catch (_: Throwable) {}
+        }, 300L)   // laisse le mode MANUAL s'appliquer avant de poser les valeurs
+        // ⚠ VÉRIFICATION DIFFÉRÉE, SUR LE FIL PRINCIPAL. On relit ce que la caméra a
+        // RÉELLEMENT retenu : une demande acceptée par le SDK n'est pas un réglage appliqué,
+        // ce projet en a fait l'expérience assez souvent. Le fil principal est imposé —
+        // lire les clés depuis un fil de fond avait déstabilisé la liaison le 2026-07-24.
+        handlerPhoto.postDelayed({
+            val mode = try { lireModeExpoBrut() } catch (_: Throwable) { null }
+            val iso2 = try { lireIsoBrut() } catch (_: Throwable) { null }
+            val sh2 = try { lireShutterBrut() } catch (_: Throwable) { null }
+            val tenu = mode?.contains("MANUAL", ignoreCase = true) == true
+            val m = if (tenu)
+                "exposition VERROUILLÉE et vérifiée : mode=$mode iso=$iso2 vitesse=$sh2"
+            else
+                "!! EXPOSITION NON TENUE : mode=$mode (attendu MANUAL) iso=$iso2" +
+                " vitesse=$sh2 — l'auto-exposition va dériver et les jointures seront visibles"
+            Log.i("PontDjiReelCockpit", m)
+            try { JournalVol.evenement(m) } catch (_: Throwable) {}
+            if (!tenu) try { JournalVol.anomalie("EXPOSITION_NON_TENUE mode=$mode") } catch (_: Throwable) {}
+        }, 1200L)
+        expoVerrouillee = true
+        val m = "exposition demandée en MANUEL : ISO $iso, vitesse $shut (vérification dans 1 s)"
+        Log.i("PontDjiReelCockpit", m)
+        return m
+    }
+
+    /** Restaure l'exposition AUTOMATIQUE (fin ou annulation du panorama). Idempotent. */
+    fun deverrouillerExposition() {
+        if (!expoVerrouillee) return
+        expoVerrouillee = false
+        try { reglerModeExpo("AUTO") } catch (_: Throwable) {}
+        Log.i("PontDjiReelCockpit", "exposition rendue à l'automatique")
     }
 
     override fun lancerRth(onFini: (Boolean) -> Unit) {
@@ -317,6 +621,27 @@ class PontDjiReelCockpit(
      *  - Applique via setValue(cle, valeur, callback) trouve par reflexion (3 args).
      *  Aucun crash si le drone ne supporte pas : tout est try/catch + logs.
      */
+    /**
+     * Comme [creerCleReflexion] mais CIBLÉE composant/objectif (LEFT_OR_MAIN + objectif par
+     * défaut) — obligatoire sur Mini 4 Pro (#506) sinon les réglages caméra sont ignorés.
+     * Cherche KeyTools.createCameraKey(keyInfo, ComponentIndexType, CameraLensType) par réflexion.
+     */
+    private fun creerCleCameraCiblee(champ: Any?): Any? {
+        if (champ == null) return null
+        return try {
+            val comp = dji.sdk.keyvalue.value.common.ComponentIndexType.LEFT_OR_MAIN
+            val lens = dji.sdk.keyvalue.value.common.CameraLensType.CAMERA_LENS_DEFAULT
+            var res: Any? = null
+            for (m in KeyTools::class.java.methods) {
+                if (m.name == "createCameraKey" && m.parameterTypes.size == 3 &&
+                    m.parameterTypes[0].isAssignableFrom(champ.javaClass)) {
+                    res = m.invoke(null, champ, comp, lens); break
+                }
+            }
+            res
+        } catch (_: Throwable) { null }
+    }
+
     private fun reglerCameraEnum(
         keyName: String,
         enumClassName: String,
@@ -356,9 +681,13 @@ class PontDjiReelCockpit(
                 Log.w("PontDjiReelCockpit", "$keyName: aucune valeur pour \"$choisirNom\""); return
             }
 
-            // 3) Appliquer via setValue(cle, valeur, callback) par reflexion
+            // 3) Appliquer via setValue(cle, valeur, callback) par reflexion.
+            // ⚠ CIBLAGE OBLIGATOIRE (Mini 4 Pro, #506) : clé ciblée composant/objectif EN
+            // PRIORITÉ ; sinon le SDK IGNORE le réglage en silence (mode de prise inchangé
+            // -> panorama persistant -> cannot_start_task_on_weak_gps). Repli non ciblé.
             val champKey = dji.sdk.keyvalue.key.CameraKey::class.java.getField(keyName).get(null)
-            val cle = creerCleReflexion(champKey) ?: run { Log.w("PontDjiReelCockpit", "$keyName: createKey echoue"); return }
+            val cle = creerCleCameraCiblee(champKey) ?: creerCleReflexion(champKey)
+                ?: run { Log.w("PontDjiReelCockpit", "$keyName: createKey echoue"); return }
             val km = KeyManager.getInstance()
             val m = km.javaClass.methods.firstOrNull { it.name == "setValue" && it.parameterTypes.size == 3 }
             if (m == null) { Log.w("PontDjiReelCockpit", "$keyName: setValue(3 args) introuvable"); return }
@@ -378,6 +707,126 @@ class PontDjiReelCockpit(
     }
 
     // ===================== Lecture etat camera reel =====================
+    /**
+     * Lit une CameraKey CIBLÉE (LEFT_OR_MAIN + LENS_DEFAULT) et rend la valeur brute (ou null).
+     * DIAGNOSTIC : la lecture NON ciblée (lireCameraEnum) peut rendre le cache SDK au lieu de
+     * l'état réel de la caméra sur Mini 4 Pro (#506). À appeler sur le FIL PRINCIPAL.
+     */
+    /**
+     * Règle le format d'enregistrement des photos : JPEG, DNG (RAW), ou les deux.
+     *
+     * @param mode 0 = JPEG seul · 1 = DNG seul · 2 = DNG + JPEG.
+     * @return un texte décrivant ce qui a RÉELLEMENT été fait — appliqué, déjà bon, ou
+     *   impossible. Jamais un silence : c'est un réglage qui décide de ce qui sera écrit
+     *   sur la carte, et le pilote doit pouvoir le vérifier après coup.
+     *
+     * ⚠ LISTE BLANCHE stricte, comme pour toute clé caméra de ce projet. Si la clé ou la
+     * constante n'existe pas dans ce MSDK, on ne force RIEN et on le dit.
+     */
+    fun reglerFormatPhoto(mode: Int): String {
+        val cherche = when (mode) {
+            0 -> listOf("JPEG")
+            1 -> listOf("RAW", "DNG")
+            else -> listOf("RAW_JPEG", "JPEG_RAW", "RAWJPEG")
+        }
+        val clsNoms = listOf(
+            "dji.sdk.keyvalue.value.camera.PhotoFileFormat",
+            "dji.sdk.keyvalue.value.camera.PhotoStorageFormat",
+        )
+        var valeur: Any? = null
+        for (n in clsNoms) {
+            val cls = try { Class.forName(n) } catch (_: Throwable) { continue }
+            val consts = cls.enumConstants ?: continue
+            // Pour « les deux », on exige un libellé contenant RAW **et** JPEG : un simple
+            // « contient RAW » attraperait le RAW seul et écrirait le mauvais format.
+            valeur = if (mode == 2)
+                consts.firstOrNull { val s = (it as Enum<*>).name.uppercase()
+                    s.contains("RAW") && s.contains("JPEG") }
+            else consts.firstOrNull { c ->
+                val s = (c as Enum<*>).name.uppercase()
+                cherche.any { s == it || s.startsWith(it) } &&
+                    !(mode == 1 && s.contains("JPEG")) && !(mode == 0 && s.contains("RAW"))
+            }
+            if (valeur != null) break
+            Log.w("PontDjiReelCockpit", "$n : aucune constante pour mode=$mode " +
+                "(disponibles : " + consts.joinToString { (it as Enum<*>).name } + ")")
+        }
+        if (valeur == null) return "format photo NON réglé : constante introuvable dans ce SDK"
+        for (nomCle in listOf("KeyPhotoFileFormat", "KeyPhotoStorageFormat")) {
+            val champ = try { CameraKey::class.java.getField(nomCle).get(null) } catch (_: Throwable) { continue }
+            val cle = creerCleCameraCiblee(champ) ?: continue
+            try {
+                val km = KeyManager.getInstance()
+                val ms = km.javaClass.methods.firstOrNull {
+                    it.name == "setValue" && it.parameterTypes.size == 3
+                } ?: continue
+                ms.invoke(km, cle, valeur, object : CommonCallbacks.CompletionCallback {
+                    override fun onSuccess() {
+                        Log.i("PontDjiReelCockpit", "format photo = ${(valeur as Enum<*>).name}")
+                    }
+                    override fun onFailure(error: dji.v5.common.error.IDJIError) {
+                        Log.w("PontDjiReelCockpit", "format photo refusé : ${error.description()}")
+                    }
+                })
+                return "format photo demandé : ${(valeur as Enum<*>).name} (clé $nomCle)"
+            } catch (e: Throwable) {
+                Log.w("PontDjiReelCockpit", "format photo : ${e.message}")
+            }
+        }
+        return "format photo NON réglé : aucune clé exploitable dans ce SDK"
+    }
+
+    /**
+     * Résumé des réglages RÉELLEMENT appliqués dans la caméra, lus au drone.
+     *
+     * POURQUOI. Ces réglages viennent de la caméra, pas de l'app : ils survivent aux
+     * redémarrages et à un passage par une autre application. Les photos du 2026-07-27
+     * sortaient en 16:9 — un quart de la hauteur du capteur jeté — depuis des semaines,
+     * sans que rien ne l'affiche nulle part. Un pilote ne peut pas corriger ce qu'il ne
+     * voit pas.
+     *
+     * ⚠ On lit, on n'écrit RIEN ici. Et une clé absente n'est pas une erreur : chaque
+     * drone expose ce qu'il veut. Ce qui manque est simplement omis du résumé, jamais
+     * remplacé par une valeur supposée.
+     */
+    fun resumeReglagesCamera(): Map<String, String> {
+        val res = LinkedHashMap<String, String>()
+        // Libellé -> noms de clé acceptés, du plus précis au plus général.
+        val aLire = listOf(
+            "format" to listOf("KeyPhotoRatio", "KeyPhotoAspectRatio"),
+            "taille photo" to listOf("KeyPhotoSize", "KeyPhotoFileFormat"),
+            "vidéo" to listOf("KeyVideoResolutionFrameRate"),
+            "mode" to listOf("KeyCameraMode"),
+            "couleur" to listOf("KeyCameraColor", "KeyVideoColorMode"),
+        )
+        for ((libelle, noms) in aLire) {
+            for (n in noms) {
+                val v = lireCameraBrutCible(n)
+                if (!v.isNullOrBlank()) { res[libelle] = lisible(v); break }
+            }
+        }
+        return res
+    }
+
+    /** Rend un nom d'énum SDK présentable : `RATIO_16_COLON_9` -> `16:9`. */
+    private fun lisible(brut: String): String {
+        var s = brut.removePrefix("RATIO_").removePrefix("RESOLUTION_")
+            .removePrefix("RATE_").removePrefix("PHOTO_").removePrefix("SIZE_")
+        s = s.replace("_COLON_", ":").replace("FPS", " im/s").replace('_', ' ')
+        return s.trim()
+    }
+
+    private fun lireCameraBrutCible(keyName: String): String? {
+        return try {
+            val champ = dji.sdk.keyvalue.key.CameraKey::class.java.getField(keyName).get(null)
+            val cle = creerCleCameraCiblee(champ) ?: return null
+            val km = KeyManager.getInstance()
+            val mg = km.javaClass.methods.firstOrNull { it.name == "getValue" && it.parameterTypes.size == 1 }
+            val v = mg?.invoke(km, cle) ?: return null
+            (v as? Enum<*>)?.name ?: v.toString()
+        } catch (_: Throwable) { null }
+    }
+
     /** Lit la valeur actuelle d'une CameraKey et retourne le nom d'enum brut (ou null). */
     private fun lireCameraEnum(keyName: String): String? {
         return try {

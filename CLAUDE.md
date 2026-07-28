@@ -2038,6 +2038,45 @@ Presets rangés par NOMBRE DE PHOTOS croissant, avec la durée affichée.
 `dureeEstimeeS()` CALIBRÉE sur un vol réel : 25 photos en 218 s le 2026-07-27 → 8,7 s par
 cliché dont 3 s de délais configurés, donc 5,7 s d'overhead fixe. La formule redonne 217 s.
 
+### ⚠⚠ LE VERROU D'EXPOSITION N'A JAMAIS TENU (2026-07-28) — mesuré, pas supposé
+
+SYMPTÔME : le panorama `eca54f3db18e`, géométriquement juste, montre des RECTANGLES de
+luminosité — chaque photo apparaît en bloc. Visible surtout depuis que la couture n'est
+plus optimisée (`--no-optimize`, imposé par le plantage d'enblend au pôle) : le fondu
+multibande masque de PETITS écarts, pas des écarts francs.
+
+MESURE (`_atelier/diag_exposition.py`) : on lit le paramètre `Eev` de chaque image dans le
+projet Hugin après `autooptimiser -m` — l'exposition que Hugin a dû corriger.
+**Écart total : 2,48 EV**, et surtout il OSCILLE avec l'azimut : clair vers les photos
+000-014, creux à −2,37 vers 024-036, remontée vers 052-060. C'est la signature d'une
+exposition restée AUTOMATIQUE qui s'adapte en balayant — face au soleil puis dos au soleil.
+Un verrou qui tient donne une ligne plate, pas un cycle.
+
+CAUSE DANS LE CODE : `verrouillerExposition()` posait `expoVerrouillee = true` juste après
+avoir DEMANDÉ le mode manuel, sans jamais relire ce que la caméra avait retenu — et son
+résultat était jeté par un `try { } catch { }` chez l'appelant. Un état d'INTENTION, pas de
+fait. **Même famille que « armé sans détecteur » et « mode soccer pré-armé »**, la
+cinquième occurrence de ce motif dans ce projet.
+⚠ Et le contraste était sous nos yeux : le résultat de `verrouillerBalanceBlancs()` partait
+au journal depuis le 27 juillet ; celui de l'exposition, non.
+
+→ CORRECTIF : `verrouillerExposition()` rend une DESCRIPTION (comme la balance des blancs),
+elle part au journal, et une VÉRIFICATION différée de 1,2 s relit `KeyExposureMode`,
+`KeyISO`, `KeyShutterSpeed` et écrit ce qui a réellement été retenu —
+`EXPOSITION_NON_TENUE mode=…` en anomalie si le mode n'est pas MANUAL. Lecture sur le fil
+principal : lire les clés depuis un fil de fond avait déstabilisé la liaison le 2026-07-24.
+Le refus « lecture ISO/vitesse impossible » est journalisé lui aussi, au lieu du seul Logcat.
+
+⚠ RESTE À VÉRIFIER EN VOL : que le mode MANUAL est effectivement accordé. Le correctif
+garantit qu'on le DEMANDE et qu'on SAIT s'il est refusé — pas qu'il est obtenu. C'est la
+même réserve que pour le Virtual Stick de la capture 3D.
+
+⚠ SECOND DÉFAUT, DISTINCT, NON CORRIGÉ : les sentiers se DÉDOUBLENT aux jointures. La voie
+`angles_seuls` place les images d'après le cap rapporté par le drone sans laisser
+l'optimiseur ajuster — à 1° près, sur 8192 px de large, cela fait déjà 23 px de décalage.
+La vraie solution serait d'optimiser les positions EN VERROUILLANT l'image d'ancrage, pour
+corriger les décalages locaux sans pouvoir faire pivoter la sphère. À concevoir.
+
 ### Exposition, balance des blancs, photométrie (2026-07-27) — vérifié sur sources
 - **Balance des blancs FIGÉE** au début de chaque panorama (`verrouillerBalanceBlancs`).
   C'est le seul point où toutes les sources s'accordent : en auto elle dérive d'une image à
