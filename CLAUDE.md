@@ -1325,6 +1325,26 @@ approche le gigaoctet → la capture 3D aurait échoué SYSTÉMATIQUEMENT, aprè
 ⚠ Le jeu n'est proposé à l'atelier QU'APRÈS `finir` : un envoi interrompu ne peut pas
 partir en reconstruction à moitié.
 
+### ⚠⚠ CETTE GARANTIE ÉTAIT FAUSSE — jeu tronqué reconstruit en silence (2026-07-28)
+
+Écrite dans la documentation, absente du code. `creer_modele` (premier lot) déclarait
+`etat="en_attente_ressources"` — l'un des états que `/api/travaux` propose à l'atelier.
+Le travail devenait donc visible **dès le premier lot**, pendant que les suivants montaient.
+MESURÉ : l'expéditeur annonce `total 30`, l'ouvrier télécharge **11 photos**, reconstruit
+dessus et dépose le modèle. Reproduit deux fois de suite (Essai 2, Essai 3), 11/30 chaque
+fois. Aucune ligne d'alerte : le seul indice était un décompte dans une trace de progression.
+⚠ PORTÉE : la course entre l'envoi et l'interrogation se produit à CHAQUE capture. Le
+client aurait reçu un modèle calculé sur un tiers de ses photos, sans avertissement.
+→ DEUX correctifs, parce qu'une garantie tenue par un seul bout n'en est pas une :
+1. `patch_modele3d_reception.py` — `creer_modele` pose `etat="reception"` et ne lance rien.
+   La décision de reconstruire appartient à `/finir`, seul endroit qui sait le jeu complet.
+2. `ouvrier_cineflight.py` — RECOMPTE la liste après le transfert. Si elle a grandi, le jeu
+   n'était pas complet : rien n'est reconstruit, le travail est repris au tour suivant.
+   Une panne réseau sur ce second appel ne condamne pas le travail (on ne juge pas sur
+   l'absence de mesure).
+LEÇON : un état intermédiaire doit être posé par le code qui l'introduit, pas seulement
+décrit dans la documentation. Ce que le commentaire promettait, personne ne l'appliquait.
+
 ### ⚠ ARCHIVE EN FLUX ABANDONNÉE (2026-07-28) — transfert fichier par fichier
 `photos.zip` construisait l'archive en mémoire par morceaux : après chaque photo il lisait
 le tampon puis le TRONQUAIT. Or `ZipFile` suit sa position d'écriture pour composer le

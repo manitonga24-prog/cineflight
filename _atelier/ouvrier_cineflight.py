@@ -156,6 +156,26 @@ def telecharger(j, t):
         print("\r    %3d %%  (%d/%d fichiers, %.0f / %.0f Mo)"
               % (pct, i, len(liste), recu / 1e6, total_mo), end="")
     print()
+
+    # ⚠ ON RECOMPTE APRÈS COUP. Le serveur ne devrait proposer un travail qu'une fois le
+    # jeu complet — mais c'est exactement ce qui a échoué le 2026-07-28 : le travail
+    # devenait visible dès le premier lot, l'atelier téléchargeait 11 photos sur 30 et
+    # reconstruisait dessus sans que rien ne le signale. Une garantie tenue par un seul
+    # bout de la chaîne n'est pas une garantie. Si la liste a grandi pendant le transfert,
+    # le jeu n'était pas complet : on jette et on reprend au tour suivant.
+    try:
+        r2 = requests.get(SERVEUR + "/api/travaux/%s/liste" % t["id"],
+                          headers=entetes(j), timeout=60)
+        r2.raise_for_status()
+        apres = len(r2.json().get("photos", []))
+    except requests.RequestException:
+        apres = len(liste)          # injoignable : on ne condamne pas sur une panne reseau
+    if apres != len(liste):
+        print("  ⚠ JEU INCOMPLET : %d photos au debut, %d a la fin — envoi encore en cours."
+              % (len(liste), apres))
+        print("    Rien n'est reconstruit. Le travail sera repris au prochain tour.")
+        return None
+
     os.rename(tmp, dossier_photos)
     return cible, False
 
