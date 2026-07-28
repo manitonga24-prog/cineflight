@@ -1406,6 +1406,161 @@ le maillage n'était jamais envoyé tout seul, il fallait effacer le dossier pou
 Le dépôt attend deux relevés de taille identiques : RealityScan écrit progressivement, et
 un fichier tronqué serait accepté par le serveur sans que rien ne le signale.
 
+### ANNEAU DE FAÇADE — viser la mi-hauteur, pas le sol (2026-07-28)
+
+DÉFAUT DE CONCEPTION, trouvé en répondant à « on peut améliorer ? ». Toute la géométrie de
+`CaptureOrbite3D` visait le SOL au centre de l'orbite : une façade verticale n'était donc
+jamais photographiée de face, même par l'anneau le plus rasant (−24° au mieux). Or ce qui
+n'est vu que de biais se reconstruit en surfaces étirées — visible dès qu'on s'approche
+d'un mur dans la visionneuse.
+→ `planifier(..., hauteurSujetM)` : le point visé monte à la MI-HAUTEUR du sujet, et
+`alt = hauteurCentre + R·tan|pitch|`. `anneauFacade()` place un anneau à cette hauteur,
+regard quasi horizontal (mesuré : sujet de 20 m à 30 m de rayon → **−3,8° à 12 m**).
+- **Le plancher de 12 m reste souverain** : s'il oblige à monter au-dessus de la mi-hauteur,
+  l'inclinaison se creuse d'autant. On ne descend pas pour un angle, près d'un mur moins
+  que jamais. Le plafond de 90 m reste absolu lui aussi.
+- **DEUX conditions d'ajout** : une hauteur DÉCLARÉE (`hauteurSujetM > 0` — sans elle il n'y
+  a pas de façade, juste un anneau rasant visant le sol) ET ≥ 8° de nouveauté angulaire
+  (`ECART_ANGULAIRE_MIN_DEG` — sur un sujet bas il tomberait à 2-3° de l'anneau existant :
+  18 photos et 1 min 30 de vol pour rien).
+  ⚠ La première condition manquait au premier jet : à 50 m de rayon, l'anneau s'ajoutait
+  même pour `hauteurSujetM=0` → **120 clichés au lieu de 96**, alors que j'avais annoncé un
+  plan inchangé. Démenti par le test existant
+  `la_qualite_maximale_quatre_anneaux_reste_realisable_sur_les_trois_rayons`.
+  LEÇON (encore) : une non-régression se vérifie sur TOUTE la plage, pas sur le cas qu'on
+  a en tête. Je l'avais contrôlée à 30 m et affirmée partout.
+- UI : une question « Hauteur du sujet » avant la confirmation, valeur approximative, 0 par
+  défaut. Saisie illisible → 0, jamais un plantage ni une hauteur inventée. Le message de
+  confirmation annonce le nombre RÉEL d'anneaux (il disait « 3 » en dur).
+
+### PLANCHER ABAISSÉ À 8 m — case à cocher, jamais un défaut (2026-07-28)
+
+Sur une maison ordinaire (8-12 m), le plancher de 12 m force un regard à −11°..−24° : la
+façade repart en raccourci, précisément le défaut que l'anneau devait corriger. À 8 m elle
+devient quasi frontale (mesuré : sujet 10 m à 30 m de rayon → **−5,7°**).
+⚠ MAIS à 8 m le drone vole **sous la cime des arbres et à hauteur des fils** (6-10 m), que
+l'évitement d'obstacles ne voit pas fiablement. Le plancher de 12 m ne protège pas du sol :
+il protège de ça.
+→ `ALT_MIN_FACADE_M = 8.0`, appliqué UNIQUEMENT à l'anneau de façade et SEULEMENT si le
+pilote coche la case, vol par vol, après avoir regardé le site. Même doctrine que le mode
+banc : une borne de sécurité s'abaisse par une décision humaine tracée. Un plancher global
+à 8 m a été ÉCARTÉ — il s'appliquerait aussi aux sites que personne n'a évalués, et une
+borne relâchée « en général » ne se resserre jamais.
+- Avertissement affiché SEULEMENT à la coche (permanent, il devient du décor).
+- `Plan.plancherM` et `Plan.hauteurSujetM` reportés au journal :
+  `hauteur_sujet=… plancher=… PLANCHER_ABAISSE=OUI alt_min_plan=…`.
+- Fail-closed : toute valeur hors bornes est ramenée dans [8, 12] (test sur −50, 0, 2, 40).
+
+### CARTE AVANT LA CAPTURE — `CarteOrbite3DActivity` (2026-07-28)
+
+Le plan est juste sur le papier ; ce qu'aucun calcul ne connaît, c'est ce qu'il y a AUTOUR.
+Écran satellite (osmdroid + tuiles Esri, comme les autres cartes) avec le **cercle rouge**
+de la trajectoire et un **point jaune par station** — les points, pas seulement le cercle :
+le drone s'ARRÊTE à chacun, et un obstacle sur une station pèse plus qu'un obstacle frôlé
+entre deux. Boutons Annuler / Lancer ; le plan est TRANSPORTÉ (jamais recalculé là-bas,
+sinon les deux écrans pourraient diverger) et consommé au retour dans les deux cas.
+⚠ Écrit à l'écran, pas seulement ici : l'image satellite est ancienne et vue du dessus —
+elle ne montre **ni la hauteur des arbres ni les câbles**. Elle aide à décider, elle ne
+remplace pas un regard sur le site.
+
+**APERÇU AU SOL** : drone éteint ou posé, la carte s'ouvre centrée sur le TÉLÉPHONE, avec
+un bandeau qui le dit et **aucun bouton de lancement** — un cercle qu'on prendrait pour le
+plan réel serait pire que pas de carte. Utile pour repérer arbres et fils avant de partir.
+
+⚠⚠ **LE CERCLE AFFICHÉ NE VENAIT PAS DU MÊME CALCUL QUE LE PLAN.** Constaté au premier
+essai : les stations tombaient HORS du cercle rouge. La géométrie du plan était pourtant
+vérifiée juste (approximation plane et formule géodésique concordent au millimètre à 20 m,
+mesuré). C'était le tracé, confié à `Polygon.pointsAsCircle` d'osmdroid, dont le modèle de
+Terre n'est pas le nôtre. → `CaptureOrbite3D.pointsCercle()` : le cercle et les stations
+partagent désormais la MÊME formule, ils coïncident par construction, et
+`le_cercle_affiche_passe_exactement_par_les_stations` l'exige sur 4 rayons.
+LEÇON : une carte de sécurité doit être dessinée par le code qui calcule la trajectoire.
+Deux sources pour la même vérité, c'est une source de trop.
+
+**DÉFAUTS D'AFFICHAGE corrigés au passage** (deux empilés, le premier masquait le second) :
+1. Champ, case et avertissement créés avec le contexte de l'ACTIVITÉ n'héritent pas de
+   `DialogCineFlight` → texte sombre sur fond `#1C2126`, invisibles. Couleurs explicites.
+2. `MainActivity` est en **PAYSAGE** : un dialogue portant à la fois un long `setMessage`
+   ET une vue personnalisée écrase la seconde à zéro — l'écran n'affichait que le titre.
+   → plus de `setMessage`, tout dans un `ScrollView`.
+- 7 tests JVM ajoutés, dont `le_plancher_d_altitude_reste_souverain_sur_un_sujet_bas` et
+  `aucun_anneau_de_facade_quand_il_n_apporterait_rien`.
+⚠ NON VOLÉ. Comme tout le mode Modèle 3D.
+
+### DEUX MOTIFS DE PLUS (2026-07-28) — logique PURE écrite, UI NON câblée
+
+**Orbite vers l'EXTÉRIEUR** (`CaptureOrbite3D.planifierVersExterieur`) — pour un lieu CREUX
+(cour, carrière, gradins). ⚠ CE N'EST PAS L'ORBITE NORMALE AVEC UN SIGNE INVERSÉ :
+- vers l'intérieur, l'altitude DÉCOULE de l'inclinaison (`R·tan|pitch|`), le point visé est
+  le centre ; vers l'extérieur il n'y a AUCUN point visé — l'altitude est choisie, et
+  l'inclinaison décide seulement du cadrage. Dériver l'altitude n'aurait aucun sens.
+- le RECOUVREMENT change de formule : vers l'intérieur deux prises regardent le même objet
+  depuis deux points (le rayon se simplifie) ; vers l'extérieur on pivote devant des choses
+  lointaines → formule de PANORAMA `(champ − pas)/champ`. Plus permissive, et c'est le signe
+  que ces images se JUXTAPOSENT au lieu de se croiser.
+→ PORTÉE HONNÊTE : ce mode MONTRE un lieu, il n'en reconstruit pas la géométrie fine.
+
+**Quadrillage** (`cine/QuadrillageAerien.kt`, PUR, 13 tests) — pour un TERRAIN ENTIER.
+Lignes parallèles en boustrophédon + second balayage PERPENDICULAIRE + passage oblique.
+- **C'est l'ALTITUDE qui commande tout** : elle fixe l'empreinte, la finesse et le nombre de
+  photos. Doubler l'altitude divise par 4 les clichés et par 2 la finesse.
+  `distanceAuSolCmParPixel` le CHIFFRE (60 m → 2,59 cm/px) au lieu de le laisser deviner.
+- **Champ VERTICAL ≠ horizontal** : 82° h → **66,2° v** en 4:3. Les confondre fausse le
+  recouvrement dans l'axe de vol, celui qui compte le plus. Test dédié.
+- **Second balayage indispensable** : sans lui les surfaces verticales ne sont vues que d'un
+  côté et se reconstruisent en biseau. Il double les photos, c'est le prix.
+- **Oblique** : un quadrillage strictement nadir donne un modèle écrasé — toits justes,
+  façades absentes. Même défaut que l'orbite qui visait le sol.
+- Refus chiffrés : 400 clichés max, altitude 20–120 m, côtés 20–400 m, recouvrement
+  frontal ≥ 70 % / latéral ≥ 60 %. Mesuré : 300×400 m à 40 m → 1567 clichés → REFUSÉ.
+⚠ L'orbite inversée n'est PAS câblée à l'UI. Le quadrillage l'est (voir ci-dessous).
+
+### QUADRILLAGE — interface (2026-07-28)
+
+Parcours : Recettes → « Quadrillage du terrain » → altitude + case oblique → **marquer le
+COIN A au drone** → **coin opposé** → récapitulatif chiffré → carte → Lancer.
+- **La zone se définit par DEUX COINS marqués au drone**, pas par une saisie ni sur l'image
+  satellite : le pilote regarde le terrain. Même geste que les « points marqués » de la
+  visite, déjà éprouvé. Position du DRONE, jamais du téléphone.
+- ⚠ Deux points ne définissent pas l'orientation d'un rectangle (il en faudrait trois) →
+  **rectangle aligné nord-sud / est-ouest**, ce qui est PRÉVISIBLE. Le SENS DE VOL, lui,
+  suit automatiquement le plus grand côté : moins de virages, moins de batterie.
+  ⚠⚠ **CORRECTION D'UNE AFFIRMATION TROP CONFIANTE (revue de Christian, 2026-07-28)** :
+  j'avais écrit qu'un terrain oblique ne coûtait « que de la batterie, pas un risque ».
+  FAUX. Sur un terrain en biais, le rectangle cardinal DÉPASSE la zone voulue — le drone
+  peut survoler le voisin, un chemin, ou s'approcher d'obstacles étrangers au terrain.
+  → Avertissement NON CONDITIONNEL au récapitulatif (deux points ne permettent pas de
+  DÉTECTER le biais, donc on ne peut que prévenir) + renvoi à la carte, seul vrai contrôle.
+  → À FAIRE : marquage à TROIS points (coin, puis côté et orientation, puis largeur) pour
+  suivre un terrain oblique. C'est la vraie solution ; l'avertissement n'est qu'un palliatif.
+
+### REVUE DE CHRISTIAN (2026-07-28) — moteur générique VÉRIFIÉ, batterie ajoutée
+
+Question posée : « le quadrillage se convertit en plan d'orbite » — le moteur n'impose-t-il
+pas des comportements d'orbite (viser un centre, refermer le parcours, recalculer le lacet,
+relier le dernier point au premier) ?
+→ VÉRIFIÉ DANS LE CODE, et la réponse est non. `executerCapture3D` fait, pour chaque
+cliché : `allerA(lat, lon, alt)` → `orienterVers(cap)` → nacelle → photo. Aucun centre,
+aucun bouclage, aucun lacet dérivé, aucun lien dernier→premier. Le cap est une valeur
+TRANSPORTÉE.
+⚠ MAIS LES NOMS MENTAIENT : `Cliche.capVersCentreDeg` contenait un cap de balayage.
+Renommé `capDeg`. Un champ dont le nom décrit COMMENT il a été calculé plutôt que CE QU'IL
+CONTIENT finit par tromper — et ici le lecteur suivant commande un aéronef.
+→ AJOUTÉ : `BATTERIE_PLANCHER_MISSION_PCT = 25`, contrôlé À CHAQUE CLICHÉ. La batterie
+n'était vérifiée qu'AVANT le décollage, sur une estimation supposant un vent nul ; un vent
+de face peut doubler la consommation. Le retour automatique du firmware existe mais se
+déclenche plus bas et décide seul du moment.
+RESTE À ÉPROUVER EN VOL (rien de tout cela n'est prouvé par les tests) : ordre réel des
+lignes, stabilité du lacet en demi-tour, arrêt d'urgence pendant un virage, déclenchement
+effectif de chaque photo, fin de mission. Premier essai : petit rectangle, peu de lignes,
+sans viser une reconstruction.
+- **L'exécution réutilise `executerCapture3D`** via `Plan.versPlanOrbite()`. Écrire un
+  second moteur de vol dupliquerait les garde-fous (autorité, arrêt d'urgence, reprise
+  manuelle, journal) avec la certitude qu'ils divergeraient. Un seul chemin, éprouvé.
+- `CarteOrbite3DActivity` dessine un RECTANGLE quand `coins_lats/lons` sont fournis, le
+  cercle sinon. Mêmes garde-fous qu'avant : espace carte, batterie, aperçu au sol.
+⚠ NON VOLÉ.
+
 ### VOIE RETENUE (2026-07-27) : reconstruction sur le PC (RTX 3090), dépôt sur le serveur
 Christian a une **RTX 3090** (24 Go VRAM, 10 496 cœurs CUDA) — très au-dessus des exigences
 de **RealityScan** (ex-RealityCapture, Epic) : gratuit sous 1 M$ de revenus, 16-32 Go de RAM,
@@ -1501,6 +1656,34 @@ correspond). Un signe inversé donne une image MIROIR, invisible sur un paysage 
 ⚠ RELEVÉ AU PASSAGE : `Fill sky 58,9 %` — le preset Simple ne couvre que +30°..−90°, donc
 **plus de la moitié de la sphère est du remplissage**. À revoir (preset couvrant plus haut).
 
+### ⚠⚠ AUCUN ASSEMBLAGE NE DÉMARRAIT PLUS — une parenthèse (2026-07-28)
+
+Trouvé en cherchant pourquoi deux jeux de 61 photos, reçus à 10 h 14 et 10 h 16, n'avaient
+produit aucune image. `ps aux` : aucun `nona`, `enblend`, `cpfind` — le calcul n'avait
+jamais commencé. Le journal du service portait la cause :
+
+```
+args=(job_id, din, out_jpg, int(largeur_max, _pano_angles))
+TypeError: 'list' object cannot be interpreted as an integer
+```
+
+Le `, _pano_angles` ajouté par `patch_api_angles.py` s'était glissé **à l'intérieur** de
+l'appel à `int()`, qui l'a pris pour une base numérique. L'exception tombait juste avant le
+démarrage du fil de calcul : photos reçues, écrites sur disque, et rien d'autre.
+→ `patch_pano_parenthese.py` : `int(largeur_max), _pano_angles`.
+
+⚠⚠ **LA COMPILATION NE PROUVE RIEN — troisième fois.** `int(a, b)` est une signature
+LÉGITIME : les deux formes passent `py_compile` sans broncher (vérifié). Or c'est
+exactement ce contrôle qui avait servi à valider le déploiement du patch. Même famille que
+le fichier vide déclaré valide par `py_compile`, que le code de retour 0 de RealityScan
+sans maillage produit, et que la commande `enblend` juste dont le RÉSULTAT était faux.
+RÈGLE : un déploiement se valide par un essai de bout en bout, jamais par la compilation.
+
+⚠ SYMPTÔME TROMPEUR : côté app, la tâche restait dans « assemblages en attente » — ce qui
+faisait chercher du côté du téléphone et du drone. Le serveur répondait 500 et écrivait la
+trace dans son journal, invisible tant qu'on ne le lisait pas. Le premier geste utile a été
+`journalctl -u cineflight | grep -v clicker`.
+
 ### Assemblage DIFFÉRÉ (2026-07-27) — « maintenant ou plus tard »
 Rapatrier 50 photos + attendre le serveur = ~20 min pendant lesquelles le drone est
 immobilisé, souvent à la meilleure lumière. À la fin d'une capture, choix explicite.
@@ -1514,6 +1697,16 @@ immobilisé, souvent à la meilleure lumière. À la fin d'une capture, choix ex
   disparaître la trace d'un vol.
 - Supprimer une tâche n'efface JAMAIS les photos (dit dans la confirmation).
 - ⚠ Ne pas formater la carte avant d'avoir vidé la file (rappelé à la mise en file).
+- ⚠⚠ DÉFAUT (2026-07-28) : **« Assembler maintenant » ne faisait RIEN**. L'écran de la file
+  renvoyait l'identifiant à `MainActivity` dans un Intent `FLAG_ACTIVITY_REORDER_TO_FRONT` ;
+  or `MainActivity` n'a pas de `onNewIntent`, donc `getIntent()` rend toujours l'intention
+  de LANCEMENT de l'app. `getLongExtra` lisait 0, et le bouton refermait l'écran sans un mot.
+  → La demande passe par les préférences (`demanderTraitement` / `prendreDemande`, qui
+  efface en lisant) : plus de dépendance au mode de lancement, à l'ordre de la pile ni à la
+  délivrance d'une intention. Drone éteint, on obtient maintenant « drone requis » au lieu
+  du silence.
+  LEÇON : un Intent envoyé à une activité déjà vivante n'arrive PAS si elle ne l'accepte
+  pas explicitement. Le silence complet était le symptôme le plus coûteux à diagnostiquer.
 
 ### Espace carte vérifié AVANT capture (2026-07-27)
 `getStorageLeftCapacity` était lu puis JETÉ (seules les minutes vidéo en sortaient) →
