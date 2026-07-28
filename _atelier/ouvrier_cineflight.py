@@ -64,7 +64,14 @@ def travaux(j):
     if r.status_code == 403:
         print("  jeton REFUSE par le serveur — verifie CINE_OUVRIER_JETON")
         return []
-    r.raise_for_status()
+    if r.status_code == 404:
+        # Le code le plus probable au premier lancement : la route n'existe pas encore.
+        print("  /api/travaux INTROUVABLE sur le serveur — patch_travaux_ouvrier.py"
+              " n'est pas applique, ou le service n'a pas redemarre")
+        return []
+    if r.status_code != 200:
+        print("  reponse inattendue du serveur : HTTP %d" % r.status_code)
+        return []
     return r.json().get("travaux", [])
 
 

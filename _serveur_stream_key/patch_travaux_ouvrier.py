@@ -37,6 +37,7 @@ BLOC = '''
 #  Voir patch_travaux_ouvrier.py. Le PC appelle, le serveur repond : aucun port
 #  a ouvrir cote atelier.
 # ─────────────────────────────────────────────────────────────────────────────
+from starlette.requests import Request as _OuvrierRequest
 _OUVRIER_JETON_FICHIER = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                                       "ouvrier_token.txt")
 
@@ -63,7 +64,7 @@ def _ouvrier_verifier(request):
 
 
 @app.get("/api/travaux")
-async def ouvrier_travaux(request: Request):
+async def ouvrier_travaux(request: _OuvrierRequest):
     """Jeux de photos en attente de calcul, du plus ancien au plus recent."""
     _ouvrier_verifier(request)
     import json as _j, glob as _g, time as _t
@@ -99,7 +100,7 @@ async def ouvrier_travaux(request: Request):
 
 
 @app.get("/api/travaux/{mid}/photos.zip")
-async def ouvrier_photos(mid: str, request: Request):
+async def ouvrier_photos(mid: str, request: _OuvrierRequest):
     """Les photos d'un travail, en une archive. Lecture seule : rien n'est efface."""
     _ouvrier_verifier(request)
     from fastapi import HTTPException
