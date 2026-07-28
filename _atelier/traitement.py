@@ -59,6 +59,20 @@ PARAMS = os.environ.get("CINE_EXPORT_PARAMS", os.path.join(ICI, "export_params.x
 # pour l'interface et le rendu stéréo (deux yeux = deux rendus).
 TRIANGLES = int(os.environ.get("CINE_TRIANGLES", "500000"))
 
+# ⚠ NIVEAU DE DÉTAIL — « preview » | « normal » | « high ».
+# Le niveau gouverne la résolution des cartes de profondeur : `high` les calcule à pleine
+# résolution d'image, d'où un temps et une mémoire nettement supérieurs.
+# NORMAL PAR DÉFAUT, et ce n'est pas de la timidité : le maillage est de toute façon ramené
+# à TRIANGLES pour tenir dans un casque, donc l'essentiel du détail gagné en `high` est
+# jeté juste après. Ce qui s'améliore vraiment en `high`, c'est la JUSTESSE de la forme
+# (arêtes moins arrondies, petits reliefs préservés) — à juger sur un vol réel, pas ici.
+_MODELES = {"preview": "-calculatePreviewModel",
+            "normal": "-calculateNormalModel",
+            "high": "-calculateHighModel"}
+QUALITE = os.environ.get("CINE_QUALITE", "normal").strip().lower()
+if QUALITE not in _MODELES:
+    QUALITE = "normal"
+
 # 6 h : au-delà, quelque chose est bloqué (fenêtre de connexion, erreur avalée). Mieux vaut
 # rendre la main et le DIRE que laisser un processus muet occuper la machine.
 DELAI_MAX_S = int(os.environ.get("CINE_DELAI_TRAITEMENT", str(6 * 3600)))
@@ -150,7 +164,7 @@ def commande(exe, dossier_photos, sortie_glb, projet, journal):
         "-align",
         "-selectMaximalComponent",
         "-setReconstructionRegionAuto",
-        "-calculateNormalModel",
+        _MODELES[QUALITE],
         "-selectMarginalTriangles",
         "-removeSelectedTriangles",
         "-simplify", str(TRIANGLES),
@@ -201,9 +215,9 @@ def traiter(dossier_travail, sur_fin=None):
         # le total d'un passage a l'autre et laissait croire a des photos apparues seules.
         n_photos = len([n for n in os.listdir(photos)
                         if n.lower().endswith((".jpg", ".jpeg", ".png", ".tif", ".tiff"))])
-        print("  RealityScan %s : demarrage (%d photos, cible %d triangles)"
+        print("  RealityScan %s : demarrage (%d photos, qualite %s, cible %d triangles)"
               % ("sans interface" if autonome() else "AVEC INTERFACE (1er passage)",
-                 n_photos, TRIANGLES))
+                 n_photos, QUALITE.upper(), TRIANGLES))
         if not autonome():
             print("    ⚠ regarde l'ecran : s'il ouvre une boite d'export, enregistre les")
             print("      reglages vers %s — les passages suivants seront autonomes." % PARAMS)
