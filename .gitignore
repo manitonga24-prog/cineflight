@@ -73,3 +73,8 @@ verification_degagement_clicker.txt
 gate_vol_*.txt
 gate_full.txt
 gate_hover_observation.txt
+
+# Atelier PC — secrets et sorties locales, JAMAIS sur un depot public
+_atelier/jeton.txt
+_atelier/*.log
+_atelier/__pycache__/

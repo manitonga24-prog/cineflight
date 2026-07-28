@@ -26,6 +26,7 @@ disparaître parce qu'un script a tourné.
 
 import os
 import sys
+import threading
 import time
 
 try:
@@ -33,6 +34,11 @@ try:
 except ImportError:
     print("Il manque la bibliotheque `requests`.  ->  py -m pip install requests")
     sys.exit(1)
+
+try:
+    import traitement
+except ImportError:
+    traitement = None      # l'atelier fonctionne sans : le calcul reste manuel
 
 SERVEUR = os.environ.get("CINE_SERVEUR", "https://cineflight.ca")
 DOSSIER = os.environ.get("CINE_ATELIER", os.path.join(os.path.expanduser("~"), "CineFlight_Atelier"))
@@ -208,6 +214,24 @@ def surveiller_depots(j, attentes):
             del attentes[mid]                       # livré : on cesse de surveiller
 
 
+def lancer_traitement(mid, dossier):
+    """
+    Démarre la reconstruction sur un fil de fond.
+
+    ⚠ SUR UN FIL, PAS EN DIRECT. Un calcul dure des heures ; le faire dans la boucle
+    principale suspendrait l'interrogation du serveur pendant tout ce temps — l'atelier
+    paraîtrait mort, et un second travail arrivé entre-temps ne serait même pas rapatrié.
+    Le verrou de `traitement` garantit qu'un seul calcul tourne malgré ce parallélisme.
+    """
+    def travail():
+        def fini(ok, msg):
+            marque = "OK" if ok else "ECHEC"
+            print("\n%s  %s %s : %s\n" % (time.strftime("%H:%M:%S"), marque, mid, msg))
+        traitement.traiter(dossier, sur_fin=fini)
+
+    threading.Thread(target=travail, daemon=True).start()
+
+
 def main():
     j = jeton()
     if not j:
@@ -217,6 +241,13 @@ def main():
     print("Atelier CineFlight")
     print("  serveur : %s" % SERVEUR)
     print("  dossier : %s" % DOSSIER)
+    auto = False
+    if traitement is not None:
+        auto, detail = traitement.pret()
+        # On DIT lequel des deux modes tourne. Sans cette ligne, un traitement qui ne se
+        # declenche pas ressemble a un traitement en cours.
+        print("  calcul  : %s" % ("AUTOMATIQUE (%s)" % os.path.basename(detail) if auto
+                                  else "MANUEL — %s" % detail))
     print("  je regarde toutes les %d s. Ctrl+C pour arreter.\n" % PERIODE_S)
     connus = set()
     attentes = {}          # travaux téléchargés, dont on guette le maillage
@@ -244,10 +275,15 @@ def main():
                                      "taille": None}
                 print("\n  ===============================================================")
                 print("  PHOTOS PRETES : %s" % os.path.join(dossier, "photos"))
-                print("  1. Ouvre RealityScan et traite ce dossier.")
-                print("  2. Exporte le maillage en .glb DANS :")
-                print("     %s" % dossier)
-                print("  Le depot se fera TOUT SEUL des que le fichier sera complet.")
+                if auto:
+                    print("  Reconstruction lancee. Elle dure de 20 min a plusieurs heures.")
+                    print("  Le depot suivra tout seul.")
+                    lancer_traitement(t["id"], dossier)
+                else:
+                    print("  1. Ouvre RealityScan et traite ce dossier.")
+                    print("  2. Exporte le maillage en .glb DANS :")
+                    print("     %s" % dossier)
+                    print("  Le depot se fera TOUT SEUL des que le fichier sera complet.")
                 print("  ===============================================================\n")
                 # Un signal sonore : le PC tourne souvent sans qu'on le regarde.
                 try:
