@@ -134,6 +134,60 @@ def telecharger(j, t):
     return cible
 
 
+def deposer(j, mid, url_depot, glb):
+    """Envoie le maillage au serveur. Rend True si le serveur l'a accepté."""
+    mo = os.path.getsize(glb) / 1e6
+    print("  depot de %s (%.0f Mo) ..." % (os.path.basename(glb), mo), end=" ")
+    sys.stdout.flush()
+    try:
+        with open(glb, "rb") as f:
+            r = requests.post(SERVEUR + url_depot,
+                              files={"file": (os.path.basename(glb), f, "model/gltf-binary")},
+                              timeout=3600)
+    except requests.RequestException as e:
+        print("echec reseau (%s)" % e.__class__.__name__); return False
+    if r.status_code != 200:
+        # Le serveur refuse ce qui n'est pas du glTF ou fait moins de 1 Kio : un mauvais
+        # format donnerait une page noire chez le client, sans indice.
+        print("REFUSE : HTTP %d — %s" % (r.status_code, r.text[:200])); return False
+    print("accepte.")
+    print("  ===============================================================")
+    print("  MODELE EN LIGNE : %s/modele3d/%s" % (SERVEUR, mid))
+    print("  ===============================================================\n")
+    return True
+
+
+def surveiller_depots(j, attentes):
+    """
+    Guette l'apparition d'un `.glb` dans les dossiers de travail, et le dépose seul.
+
+    ⚠ ON ATTEND QUE LE FICHIER SOIT STABLE. RealityScan écrit le maillage progressivement :
+    l'envoyer pendant l'écriture donnerait un fichier tronqué que le serveur accepterait
+    peut-être — et le client verrait un modèle incomplet sans que rien ne le signale.
+    Deux relevés de taille identiques à une minute d'intervalle valent preuve d'écriture
+    terminée.
+
+    @param attentes dict id -> {"dossier", "url_depot", "taille"} des travaux à surveiller.
+    """
+    for mid in list(attentes.keys()):
+        info = attentes[mid]
+        glbs = [os.path.join(info["dossier"], n) for n in os.listdir(info["dossier"])
+                if n.lower().endswith(".glb")]
+        if not glbs:
+            continue
+        glb = max(glbs, key=os.path.getmtime)      # le plus récent, s'il y en a plusieurs
+        taille = os.path.getsize(glb)
+        if taille < 1024:
+            continue
+        if info.get("taille") != taille:
+            info["taille"] = taille                 # encore en cours d'écriture
+            print("  %s : maillage en cours d'ecriture (%.0f Mo)"
+                  % (mid, taille / 1e6))
+            continue
+        if deposer(j, mid, info["url_depot"], glb):
+            del attentes[mid]                       # livré : on cesse de surveiller
+
+
 def main():
     j = jeton()
     if not j:
@@ -145,8 +199,12 @@ def main():
     print("  dossier : %s" % DOSSIER)
     print("  je regarde toutes les %d s. Ctrl+C pour arreter.\n" % PERIODE_S)
     connus = set()
+    attentes = {}          # travaux téléchargés, dont on guette le maillage
     while True:
         try:
+            # D'ABORD les dépôts : un maillage prêt ne doit pas attendre le tour suivant.
+            if attentes:
+                surveiller_depots(j, attentes)
             liste = travaux(j)
             nouveaux = [t for t in liste if t["id"] not in connus]
             if not liste:
@@ -161,12 +219,14 @@ def main():
                 if dossier is None:
                     print("  (deja telecharge)")
                     continue
+                attentes[t["id"]] = {"dossier": dossier, "url_depot": t["url_depot"],
+                                     "taille": None}
                 print("\n  ===============================================================")
                 print("  PHOTOS PRETES : %s" % os.path.join(dossier, "photos"))
                 print("  1. Ouvre RealityScan et traite ce dossier.")
-                print("  2. Exporte le maillage en .glb")
-                print("  3. Depose-le :")
-                print('     curl.exe -F "file=@modele.glb" %s%s' % (SERVEUR, t["url_depot"]))
+                print("  2. Exporte le maillage en .glb DANS :")
+                print("     %s" % dossier)
+                print("  Le depot se fera TOUT SEUL des que le fichier sera complet.")
                 print("  ===============================================================\n")
                 # Un signal sonore : le PC tourne souvent sans qu'on le regarde.
                 try:
