@@ -1374,6 +1374,36 @@ FORME était vérifiée et pas le RÉSULTAT.
 haut. C'est le bon indicateur, mais il n'est connu qu'après le rendu complet — rejeter
 imposerait 20 min de plus dans une autre voie. Décision de conception, pas correction.
 
+### CAUSE RÉELLE DU PLANTAGE : `--wrap` MANQUANT (2026-07-28) — trouvée par bissection
+
+**TROIS HYPOTHÈSES SUCCESSIVEMENT RÉFUTÉES PAR LA MESURE**, chacune coûtant ~25 min :
+1. « plantage passager » → rejouer la même commande replante à l'identique.
+2. « c'est l'optimisation de couture » → `--no-optimize` seul échoue aussi.
+3. « c'est une couche dégénérée » → la plus petite fait 1,16 Mo, rien d'anormal.
+
+**LA BISSECTION A TRANCHÉ** (`_atelier/diag_enblend.py`, 7 exécutions au lieu de 61) :
+60 premières couches → OK ; en ajoutant la 61ᵉ → plantage. La coupable est
+`remap0060.tif`, **8192 × 683** — la largeur ENTIÈRE du canevas. Signature d'une couche
+AU PÔLE : au zénith une seule photo s'étale sur les 360° de longitude. C'est la prise que
+le préréglage « ciel complet » ajoute en dernier — d'où un défaut qui n'apparaît QUE sur
+les panoramas à ciel complet.
+
+**LA CAUSE EST UNE CONJONCTION**, ce qui explique pourquoi chaque hypothèse prise seule
+était fausse : sans `--wrap`, la couture au méridien 0°/360° est traitée comme un bord
+d'image ; sans `--no-optimize`, l'optimiseur de Dijkstra la suit hors du cadre et l'accès
+mémoire part dans le vide. Mesuré : `--wrap` seul → sortie de 8 octets ; `--no-optimize`
+seul → plantage ; **les deux → 69 Mo, 8192×4096, les 61 couches fusionnées**.
+
+→ `patch_pano_wrap.py` ajoute `--wrap=horizontal` à la commande de BASE. Les paliers de
+secours ajoutent `--no-optimize` quand il le faut, donc seulement sur les jeux à pôle.
+⚠ **CE N'EST PAS QU'UN CONTOURNEMENT** : `--wrap` est le réglage JUSTE pour un
+équirectangulaire. Tous les panoramas assemblés jusqu'ici avaient leur raccord 0°/360°
+mélangé comme un bord d'image — invisible sur un ciel uni, visible sur un horizon net.
+
+LEÇON : trois suppositions n'ont rien donné, la bissection a donné la réponse en sept
+essais. Quand une hypothèse est démentie deux fois, arrêter d'en formuler une troisième et
+construire l'instrument qui mesure.
+
 ### ⚠⚠ `File` NON IMPORTÉ — tout le site à terre (2026-07-28)
 
 `patch_travaux_pano.py` écrivait `file: UploadFile = File(...)`. `UploadFile` est bien dans

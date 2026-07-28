@@ -49,6 +49,19 @@ object PanoramaAssemblage {
     }
 
     /**
+     * Lien de la VISIONNEUSE 360/VR du dernier panorama assemblé (2026-07-26), ou null.
+     * Le même lien fonctionne en casque (Quest, immersion WebXR), sur téléphone
+     * (gyroscope) et sur ordinateur (souris) — rien à installer côté client.
+     */
+    @Volatile var dernierLienVr: String? = null
+        private set
+
+    /** Identifiant serveur du dernier panorama assemblé — sert à composer une VISITE
+     *  (plusieurs panoramas reliés) sans recopier aucune image. */
+    @Volatile var dernierJobId: String? = null
+        private set
+
+    /**
      * Assemble en 360 via le serveur. A APPELER SUR UN THREAD DE FOND.
      * onProgres(message, pct 0..100) ; onFini(fichier image ou null).
      */
@@ -58,30 +71,76 @@ object PanoramaAssemblage {
         baseUrl: String,
         maxCote: Int = 3500,
         largeurMax: Int = 12000,
+        /**
+         * Cap et inclinaison de CHAQUE cliché, dans l'ordre de `photos`. L'app les connaît
+         * exactement (`PanoramaGrille`) ; sans eux, le serveur doit les redécouvrir à partir
+         * des pixels — ce qui échoue sur le ciel (aucune texture) et, surtout, fait
+         * atterrir deux panoramas d'une même paire stéréo dans des repères DIFFÉRENTS.
+         * Mesuré au vol du 2026-07-27 : 2,6° d'écart vertical entre les deux yeux.
+         * null = ancien comportement, strictement inchangé.
+         */
+        angles: List<Pair<Float, Float>>? = null,
         onProgres: (String, Int) -> Unit,
         onFini: (File?) -> Unit
     ) {
         try {
+            // ⚠ REMIS À ZÉRO À CHAQUE APPEL. `dernierJobId` est lu par l'appelant APRÈS
+            // chaque lot ; s'il gardait la valeur du lot précédent, un lot en échec
+            // ferait croire à une réussite et le MÊME panorama serait compté deux fois.
+            dernierJobId = null
+            dernierLienVr = null
             if (photos.size < 2) { onProgres("Pas assez de photos.", 0); onFini(null); return }
             val tmp = File(context.cacheDir, "pano_tmp_" + System.currentTimeMillis()).apply { mkdirs() }
             val reduites = ArrayList<File>()
+            val indicesConserves = HashSet<Int>()
             for ((i, p) in photos.withIndex()) {
                 onProgres("Preparation des photos", (i * 30) / photos.size)
-                reduire(p, tmp, maxCote, 90)?.let { reduites.add(it) }
+                reduire(p, tmp, maxCote, 90)?.let { reduites.add(it); indicesConserves.add(i) }
             }
             if (reduites.size < 2) { onProgres("Reduction impossible.", 0); onFini(null); return }
             android.util.Log.i(TAG, "reduites ${reduites.size}/${photos.size} - envoi au serveur")
             onProgres("Envoi au serveur", 30)
-            val jobId = uploader(reduites, baseUrl, largeurMax)
+            // ⚠ Les angles suivent les photos RÉELLEMENT envoyées : si la réduction en a
+            // écarté une, l'angle correspondant doit sauter aussi, sinon tout le reste est
+            // décalé d'un cran et l'assemblage guidé serait pire que l'automatique.
+            val anglesEnvoyes = if (angles == null || angles.size != photos.size) {
+                if (angles != null) android.util.Log.w(TAG,
+                    "angles ignorés : ${angles.size} pour ${photos.size} photos")
+                null
+            } else photos.indices.filter { indicesConserves.contains(it) }.map { angles[it] }
+            val jobId = uploader(reduites, baseUrl, largeurMax, anglesEnvoyes)
             android.util.Log.i(TAG, "job_id=$jobId")
             if (jobId == null) { onProgres("Envoi echoue.", 0); onFini(null); return }
             var etat = "en_cours"; var essais = 0
+            // `attente_atelier` sort de la boucle comme un état FINAL : inutile
+            // d'interroger vingt minutes un serveur qui n'assemblera pas.
             while (etat == "en_cours" && essais < 240) {
                 Thread.sleep(5000); essais++
                 val j = interrogerJob(baseUrl, jobId)
                 etat = j?.optString("etat", "en_cours") ?: "en_cours"
                 if (essais % 3 == 0) android.util.Log.i(TAG, "poll #$essais etat=$etat")
                 onProgres("Assemblage en cours", (60 + essais.coerceAtMost(34)))
+            }
+            // ⚠ « attente_atelier » N'EST PAS UN ÉCHEC (2026-07-28).
+            //
+            // Depuis que l'assemblage est délégué au PC — `cpfind` occupait 1,26 Go et
+            // quinze minutes de processeur sur un droplet d'un seul cœur —, le serveur
+            // REÇOIT les photos et s'arrête là. Il ne rendra donc jamais `termine`.
+            // L'ancien code concluait « Assemblage échoué » alors que tout allait bien :
+            // aucun lien pour l'utilisateur, et la tâche restant en file, il aurait tout
+            // renvoyé une seconde fois.
+            //
+            // Ce qui compte est acquis dès cet instant : les photos sont SUR LE SERVEUR.
+            // Le lien est donc valide tout de suite — la page affichera le panorama dès
+            // que l'atelier l'aura déposé.
+            if (etat == "attente_atelier") {
+                dernierJobId = jobId
+                dernierLienVr = "$baseUrl/vr/$jobId"
+                android.util.Log.i(TAG, "delegue a l'atelier : $dernierLienVr")
+                try { tmp.deleteRecursively() } catch (_: Exception) {}
+                onProgres("Photos reçues — assemblage à l'atelier", 100)
+                onFini(null)      // pas d'image LOCALE : elle n'existe pas encore
+                return
             }
             if (etat != "termine") { onProgres("Assemblage echoue.", 0); onFini(null); return }
             onProgres("Recuperation du panorama", 96)
@@ -90,14 +149,25 @@ object PanoramaAssemblage {
             val ok = telechargerImage(baseUrl, jobId, outImg)
             try { tmp.deleteRecursively() } catch (_: Exception) {}
             android.util.Log.i(TAG, "resultat: " + (if (ok) outImg.absolutePath else "echec"))
-            if (ok) { onProgres("Panorama pret", 100); onFini(outImg) }
+            if (ok) {
+                // LIEN VR (2026-07-26) : le panorama reste sur le serveur ; cette URL
+                // l'ouvre en 360 — immersion en casque (Quest), gyroscope sur téléphone,
+                // souris sur PC. UN SEUL lien à partager, rien à installer pour le client.
+                dernierJobId = jobId
+                dernierLienVr = "$baseUrl/vr/$jobId"
+                android.util.Log.i(TAG, "lien VR : $dernierLienVr")
+                onProgres("Panorama pret", 100); onFini(outImg)
+            }
             else { onProgres("Telechargement echoue.", 0); onFini(null) }
         } catch (e: Exception) {
             onProgres("Erreur : " + (e.message ?: "?"), 0); onFini(null)
         }
     }
 
-    private fun uploader(photos: List<File>, baseUrl: String, largeurMax: Int): String? {
+    private fun uploader(
+        photos: List<File>, baseUrl: String, largeurMax: Int,
+        angles: List<Pair<Float, Float>>? = null,
+    ): String? {
         val boundary = "----CineFlightPano" + System.currentTimeMillis()
         var conn: HttpURLConnection? = null
         return try {
@@ -111,6 +181,18 @@ object PanoramaAssemblage {
                 setChunkedStreamingMode(0)
             }
             DataOutputStream(conn.outputStream).use { out ->
+                if (angles != null) {
+                    // Champ de formulaire AVANT les fichiers : le serveur le lit sans avoir
+                    // à tamponner les images, qui pèsent plusieurs dizaines de mégaoctets.
+                    val json = angles.joinToString(",", "[", "]") {
+                        "[%.3f,%.3f]".format(java.util.Locale.US, it.first, it.second)
+                    }
+                    out.writeBytes("--$boundary\r\n")
+                    out.writeBytes("Content-Disposition: form-data; name=\"angles\"\r\n\r\n")
+                    out.write(json.toByteArray(Charsets.UTF_8))
+                    out.writeBytes("\r\n")
+                    android.util.Log.i(TAG, "angles transmis : ${angles.size} clichés")
+                }
                 for (f in photos) {
                     out.writeBytes("--$boundary\r\n")
                     out.writeBytes("Content-Disposition: form-data; name=\"files\"; filename=\"${f.name}\"\r\n")
