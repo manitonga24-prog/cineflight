@@ -76,7 +76,13 @@ def travaux(j):
 
 def telecharger(j, t):
     """
-    Rapatrie un travail, UNE PHOTO À LA FOIS. Rend le dossier local, ou None.
+    Rapatrie un travail, UNE PHOTO À LA FOIS. Rend (dossier, deja_la), ou None en cas
+    d'échec.
+
+    ⚠ « DÉJÀ LÀ » N'EST PAS UN ÉCHEC. La première version rendait None dans les deux cas :
+    un travail déjà rapatrié n'entrait donc jamais dans la liste des dépôts surveillés, et
+    le maillage n'était jamais envoyé tout seul. Il fallait effacer le dossier pour réarmer
+    l'automatisme — piège silencieux, découvert le 2026-07-28.
 
     ⚠ POURQUOI PAS UNE ARCHIVE. La première version téléchargeait un zip construit en flux
     par le serveur : il se corrompait en route et le transfert mourait à 97 Mo sur 249,
@@ -85,8 +91,22 @@ def telecharger(j, t):
     rapatriement depuis le drone, qui a déjà fait ses preuves.
     """
     cible = os.path.join(DOSSIER, t["id"])
-    if os.path.isdir(os.path.join(cible, "photos")):
-        return None                      # deja fait : on ne retelecharge pas
+    dossier_photos = os.path.join(cible, "photos")
+    if os.path.isdir(dossier_photos):
+        # Deja rapatrie : on ne retelecharge pas, MAIS on rend le dossier pour que la
+        # surveillance du maillage s'arme quand meme.
+        n = len([x for x in os.listdir(dossier_photos)
+                 if os.path.isfile(os.path.join(dossier_photos, x))])
+        attendu = t.get("photos")
+        if attendu and n != attendu:
+            # Un dossier `photos` incomplet ne devrait pas exister (le rapatriement passe
+            # par `_photos_partiel`), mais une version anterieure du script a pu en laisser.
+            # On le DIT au lieu de laisser croire que tout est pret.
+            print("  ⚠ deja telecharge mais %d fichier(s) sur %d attendus." % (n, attendu))
+            print("    Efface %s pour relancer le rapatriement." % dossier_photos)
+        else:
+            print("  (deja telecharge : %d photos)" % n)
+        return cible, True
     os.makedirs(cible, exist_ok=True)
     # Dossier PARTIEL le temps du transfert : un dossier `photos` complet signifie
     # « travail entier ». Un transfert interrompu ne doit jamais le laisser croire.
@@ -130,8 +150,8 @@ def telecharger(j, t):
         print("\r    %3d %%  (%d/%d fichiers, %.0f / %.0f Mo)"
               % (pct, i, len(liste), recu / 1e6, total_mo), end="")
     print()
-    os.rename(tmp, os.path.join(cible, "photos"))
-    return cible
+    os.rename(tmp, dossier_photos)
+    return cible, False
 
 
 def deposer(j, mid, url_depot, glb):
@@ -215,10 +235,11 @@ def main():
             for t in nouveaux:
                 connus.add(t["id"])
                 print("\n%s  NOUVEAU TRAVAIL : %s" % (time.strftime("%H:%M:%S"), t["titre"]))
-                dossier = telecharger(j, t)
-                if dossier is None:
-                    print("  (deja telecharge)")
+                rendu = telecharger(j, t)
+                if rendu is None:
+                    connus.discard(t["id"])   # echec : a reproposer au tour suivant
                     continue
+                dossier, deja = rendu
                 attentes[t["id"]] = {"dossier": dossier, "url_depot": t["url_depot"],
                                      "taille": None}
                 print("\n  ===============================================================")
