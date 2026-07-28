@@ -42,6 +42,12 @@ BLOC = '''
 #  FILE DE TRAVAUX PANORAMA POUR L'ATELIER PC (2026-07-28)
 #  Voir patch_travaux_pano.py. Le serveur ne calcule plus les panoramas.
 # ─────────────────────────────────────────────────────────────────────────────
+# ⚠ IMPORTS EXPLICITES. `UploadFile` et `File` sont evalues A L'IMPORT DU MODULE dans la
+# signature de `ouvrier_pano_resultat` — pas a l'appel. `File` n'etant pas dans l'espace de
+# noms d'app.py, le service tombait au demarrage avec `NameError`, et tout le site rendait
+# 502. Meme famille que le piege `Request` du 2026-07-27 : un bloc injecte ne doit rien
+# supposer des imports du fichier cible.
+from fastapi import File as _OuvrierFile, UploadFile as _OuvrierUpload
 _PANO_RACINE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "_pano_jobs")
 
 
@@ -127,7 +133,7 @@ async def ouvrier_pano_angles(mid: str, request: _OuvrierRequest):
 
 
 @app.post("/api/travaux_pano/{mid}/resultat")
-async def ouvrier_pano_resultat(mid: str, file: UploadFile = File(...)):
+async def ouvrier_pano_resultat(mid: str, file: _OuvrierUpload = _OuvrierFile(...)):
     """
     Depot du panorama assemble.
 
