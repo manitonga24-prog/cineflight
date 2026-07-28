@@ -1374,7 +1374,37 @@ FORME était vérifiée et pas le RÉSULTAT.
 haut. C'est le bon indicateur, mais il n'est connu qu'après le rendu complet — rejeter
 imposerait 20 min de plus dans une autre voie. Décision de conception, pas correction.
 
-### CAUSE RÉELLE DU PLANTAGE : `--wrap` MANQUANT (2026-07-28) — trouvée par bissection
+### ⚠⚠ CORRECTION DU DIAGNOSTIC CI-DESSOUS (2026-07-28, plus tard) — c'était MON code
+
+Ce qui suit accusait `--wrap` manquant. **C'était faux**, et la mesure sur les couches de
+PRODUCTION l'a établi :
+
+| commande | résultat |
+|---|---|
+| d'origine | plantage `0xC0000005` |
+| `--wrap=horizontal` | plantage |
+| **`--no-optimize`** | **OK, 69 Mo** |
+| **`--wrap` + `--no-optimize`** | **OK, 69 Mo** |
+
+`--no-optimize` suffit, et `--wrap` n'est ni cause ni obstacle. **La vraie cause était un
+défaut de mon propre correctif** : `patch_pano_enblend_secours.py` construisait les paliers
+en écrivant `list(cmd) + ["--no-optimize"]`. Or `cmd` finit par les 61 NOMS DE FICHIERS —
+l'option arrivait donc APRÈS eux, et `enblend` ne l'appliquait pas. Les deux paliers
+rejouaient la commande d'origine et échouaient forcément, faisant abandonner une géométrie
+juste au profit d'une sphère basculée, trois fois de suite.
+→ `patch_pano_secours_ordre.py` : les options s'insèrent après l'EXÉCUTABLE.
+`--wrap` est CONSERVÉ — il reste le réglage juste pour un équirectangulaire.
+
+⚠⚠ **POURQUOI J'AI CRU LE CONTRAIRE**, et c'est la leçon la plus utile de la journée :
+1. Mon essai manuel « réussi » portait sur des couches produites SANS `autooptimiser -m`
+   (mode `--rapide` du diagnostic). **Ce n'étaient pas les données de la production.**
+2. J'avais vérifié dans un bac à sable que les options étaient bien placées — pour la
+   COMMANDE DE BASE, pas pour les variantes que mon correctif construisait.
+Vérifier le cas qu'on a en tête et conclure pour tous les autres. Troisième occurrence de
+la même erreur en une journée, après la non-régression de l'anneau de façade contrôlée à
+un seul rayon et le test d'import qui ne pouvait pas voir le traceback.
+
+### DIAGNOSTIC INITIAL (partiellement erroné, conservé pour la méthode)
 
 **TROIS HYPOTHÈSES SUCCESSIVEMENT RÉFUTÉES PAR LA MESURE**, chacune coûtant ~25 min :
 1. « plantage passager » → rejouer la même commande replante à l'identique.

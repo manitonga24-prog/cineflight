@@ -109,6 +109,18 @@ def preparer(travail, work, rapide):
     if not stitch._ecrire_positions(pto, angles, log):
         raise SystemExit("l'ecriture des positions a echoue")
 
+    # ⚠ PHOTOMÉTRIE — ÉTAPE OUBLIÉE AU PREMIER JET, ET C'ÉTAIT LE DÉFAUT DE L'INSTRUMENT.
+    # La production applique `autooptimiser -m` avant de remapper. Elle modifie les
+    # paramètres d'exposition de chaque image, donc les couches que produit `nona`.
+    # Sans elle, le diagnostic fusionnait des couches DIFFÉRENTES de celles qui plantent :
+    # mon essai manuel « réussi » ne portait pas sur les mêmes données que l'atelier.
+    # Un instrument qui ne reproduit pas la chaîne réelle mesure autre chose.
+    if rapide:
+        log("  ⚠ autooptimiser -m saute (mode rapide) : les couches NE SERONT PAS")
+        log("    celles de la production. A n'employer que pour degrossir.")
+    else:
+        run(["autooptimiser", "-m", "-o", pto, pto])
+
     run(["pano_modify", "--projection=2", "--fov=360x180",
          "--canvas=%dx%d" % (LARGEUR, HAUTEUR),
          "--crop=0,%d,0,%d" % (LARGEUR, HAUTEUR), "-o", pto, pto])
@@ -119,17 +131,41 @@ def preparer(travail, work, rapide):
     return couches
 
 
-def essai_enblend(couches, work, etiquette):
-    """Rend True si enblend ABOUTIT sur ce sous-ensemble."""
+def essai_enblend(couches, work, etiquette, options=()):
+    """
+    Rend True si enblend ABOUTIT sur ce sous-ensemble avec ces options.
+
+    ⚠ ON VÉRIFIE LE FICHIER, PAS LE CODE DE RETOUR. Mesuré le 2026-07-28 :
+    `--wrap=horizontal` seul rend un code nul ET une sortie de HUIT OCTETS. Un code de
+    sortie satisfait n'est pas un panorama.
+    """
     sortie = os.path.join(work, "essai_%s.tif" % etiquette)
     if os.path.exists(sortie):
         os.remove(sortie)
-    code, d = run(["enblend", "--compression=LZW", "-f", "%dx%d" % (LARGEUR, HAUTEUR),
+    code, d = run(["enblend"] + list(options) +
+                  ["--compression=LZW", "-f", "%dx%d" % (LARGEUR, HAUTEUR),
                    "-o", sortie] + couches, tolere_echec=True)
-    ok = code == 0 and os.path.exists(sortie)
-    log("    %d couches -> %s (code %d, %.0f s)"
-        % (len(couches), "OK" if ok else "PLANTAGE", code, d))
+    taille = os.path.getsize(sortie) if os.path.exists(sortie) else 0
+    ok = code == 0 and taille > 1_000_000
+    log("    %d couches%s -> %s (code %d, %.0f Mo, %.0f s)"
+        % (len(couches), (" " + " ".join(options)) if options else "",
+           "OK" if ok else "ECHEC", code, taille / 1e6, d))
     return ok
+
+
+# Les combinaisons à éprouver, de la plus légère à la plus dégradée. On s'arrête à la
+# PREMIÈRE qui aboutit : inutile de dégrader plus que nécessaire.
+COMBINAISONS = [
+    ("d'origine", ()),
+    ("wrap", ("--wrap=horizontal",)),
+    ("no-optimize", ("--no-optimize",)),
+    ("wrap + no-optimize", ("--wrap=horizontal", "--no-optimize")),
+    ("wrap + no-optimize + nft", ("--wrap=horizontal", "--no-optimize",
+                                  "--primary-seam-generator=nearest-feature-transform")),
+    ("wrap + fine-mask", ("--wrap=horizontal", "--fine-mask")),
+    ("wrap + no-optimize + coarse 16", ("--wrap=horizontal", "--no-optimize",
+                                        "--coarse-mask=16")),
+]
 
 
 def main(args):
@@ -157,13 +193,28 @@ def main(args):
     else:
         log("  aucune couche anormalement petite")
 
-    log("\n--- confirmation du plantage sur le jeu COMPLET ---")
-    if essai_enblend(couches, work, "complet"):
-        log("\nLE JEU COMPLET PASSE. Le plantage n'est donc pas reproductible ici :")
-        log("ne conclus rien de plus, et refais tourner l'atelier pour verifier.")
+    log("\n--- 1. quelle combinaison d'options aboutit ? ---")
+    log("    (on s'arrete a la premiere qui marche : inutile de degrader davantage)")
+    gagnante = None
+    for nom, options in COMBINAISONS:
+        log("  essai : %s" % nom)
+        if essai_enblend(couches, work, nom.replace(" ", "_").replace("+", ""), options):
+            gagnante = (nom, options)
+            break
+    if gagnante:
+        log("\n=== RESULTAT ===")
+        log("COMBINAISON QUI ABOUTIT : %s" % gagnante[0])
+        log("  arguments : %s" % (" ".join(gagnante[1]) or "(aucun)"))
+        if gagnante[0] == "d'origine":
+            log("\n⚠ LE JEU COMPLET PASSE SANS RIEN CHANGER. Le plantage n'est donc pas")
+            log("  reproductible ici : ne conclus rien, et compare les couches de ce")
+            log("  dossier avec celles de la production.")
+        else:
+            log("\nA reporter dans cine_panorama_stitch.py, commande enblend.")
         return 0
 
-    log("\n--- bissection : plus petit prefixe qui plante ---")
+    log("\nAUCUNE combinaison n'aboutit. On cherche la couche fautive.")
+    log("\n--- 2. bissection : plus petit prefixe qui plante ---")
     # Invariant : `bon` passe, `mauvais` plante. On resserre.
     bon, mauvais = 0, len(couches)
     while mauvais - bon > 1:
