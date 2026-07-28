@@ -1314,6 +1314,84 @@ ouvrir chez Christian (c'est ce qui bloquait SSH).
   (téléchargement, décompression atomique `_photos_partiel` → `photos`, idempotence,
   refus du mauvais jeton).
 
+### PANORAMAS ASSEMBLÉS SUR LE PC (2026-07-28) — le serveur ne calcule plus rien
+
+DÉCLENCHEUR MESURÉ : `cpfind` sur 61 photos a occupé **1,26 Go et 15 min de processeur**
+sur le droplet (1 vCPU) sans finir — et ce n'était que la première des six étapes. Pendant
+ce temps le site ne servait plus personne.
+→ Même architecture que la 3D : `GET /api/travaux_pano`, téléchargement photo par photo,
+jeton `X-Cine-Ouvrier`, dépôt par `POST /api/travaux_pano/{id}/resultat`.
+- **L'assembleur est SERVI par le serveur** (`GET /api/atelier/assembleur`), pas recopié :
+  `cine_panorama_stitch.py` a reçu 5 correctifs successifs, une copie sur le PC divergerait
+  au premier suivant. Vérifié en sortie : `enblend -f 8192x4096` est bien présent.
+- **Fichier-témoin** `assemblage_sur_pc.flag` : présent → le serveur reçoit et s'arrête ;
+  absent → comportement d'origine. Sans le fichier RIEN ne change — un déploiement
+  incomplet ne peut pas laisser les panoramas sans personne pour les assembler.
+- **Dépôt refusé si l'image n'est pas en 2:1** (mesuré côté serveur, pas promis côté PC).
+- ⚠ Hugin est ENTIÈREMENT PROCESSEUR : la 3090 n'y sert à rien. Le gain vient des cœurs et
+  de la mémoire. La carte sert à l'autre file, RealityScan, où CUDA est obligatoire.
+**RÉSULTAT VÉRIFIÉ** : 25 photos → 8192×4096 en **3 min 03 s**, déposé automatiquement,
+enchaînement immédiat sur le travail suivant. Le droplet n'y était jamais arrivé.
+61 photos avec angles → **21 min 39 s**, voie `angles_seuls` prise comme prévu.
+
+### PREMIÈRE PREUVE DU PRÉRÉGLAGE « CIEL COMPLET » (2026-07-28)
+Mesuré sur deux panoramas assemblés à la suite :
+- ancien préréglage (25 photos, nacelle bridée à +30°) → **`Fill sky 59,1 %`** : plus de la
+  moitié de la sphère était du remplissage inventé, pas de la photo.
+- préréglage ciel complet (61 photos, nacelle à +60°) → **`Fill sky 9,0 %`**.
+Le plafond de nacelle porté à +60° était donc bien le défaut, et le correctif tient. À
+retenir pour les clients : c'est ce qui distingue un ciel réel d'un ciel comblé.
+
+### ⚠⚠ UN PLANTAGE D'OUTIL A LIVRÉ UNE SPHÈRE BASCULÉE (2026-07-28)
+
+Deux panoramas d'une même paire stéréo, 61 photos, mêmes angles, assemblés à la suite :
+
+| travail | voie | ciel comblé | résultat |
+|---|---|---|---|
+| `277a3c293f89` | `angles_seuls` | **9,0 %** | horizon juste |
+| `eca54f3db18e` | `angles_optimises` | **30,7 %** | **sphère basculée** |
+
+CAUSE : `!! tentative angles_seuls abandonnee : Echec enblend (code 3221225477)`.
+`0xC0000005` = violation d'accès mémoire — **enblend n'a pas refusé, il s'est planté**. Le
+repli a pris le relais, et `autooptimiser -n` a retouché la géométrie jusqu'à faire pivoter
+la sphère : exactement « l'horizon en tente » du 2026-07-27.
+
+⚠ ET RIEN NE L'A VU. Les seuls contrôles en aval sont « le fichier existe » et « il fait
+2:1 » — une sphère pivotée passe les deux. L'indicateur existait pourtant, imprimé à
+l'écran : 9 % contre 30,7 % de ciel comblé, même lieu, même préréglage. Encore une fois la
+FORME était vérifiée et pas le RÉSULTAT.
+
+→ `patch_pano_reessai.py`, deux correctifs :
+1. **Réessayer un PLANTAGE, jamais un REFUS.** Un petit code non nul = l'outil a jugé et
+   rejeté, le refaire ne changerait rien. Un signal (code négatif, Unix) ou une exception
+   native (≥ 0xC0000000, Windows) = il est mort sans juger — ça vaut une seconde tentative.
+   Réessayer aveuglément doublerait l'attente sur chaque vraie erreur.
+2. **Un repli de voie se DIT** (`!! REPLI D'ASSEMBLAGE`). Sur une paire stéréo, deux yeux
+   assemblés par des voies différentes ne fusionnent pas ; ça doit apparaître au journal,
+   pas dans le casque.
+
+⚠ NON FAIT, à décider à froid : REJETER un résultat dont le ciel comblé est anormalement
+haut. C'est le bon indicateur, mais il n'est connu qu'après le rendu complet — rejeter
+imposerait 20 min de plus dans une autre voie. Décision de conception, pas correction.
+
+### ⚠⚠ `File` NON IMPORTÉ — tout le site à terre (2026-07-28)
+
+`patch_travaux_pano.py` écrivait `file: UploadFile = File(...)`. `UploadFile` est bien dans
+app.py, `File` NON — et ces noms sont évalués À L'IMPORT DU MODULE. `NameError` au
+démarrage, service en boucle d'échec (19 redémarrages), **502 sur tout le site**.
+⚠ MÊME FAMILLE que le piège `Request` du 2026-07-27, déjà documenté : « un bloc injecté ne
+doit rien supposer des imports du fichier cible ». J'avais vérifié un des deux noms.
+
+⚠⚠ **ET LE DIAGNOSTIC A TRAÎNÉ SUR UN TEST QUI MENTAIT.** `python -c "import app" 2>&1 |
+tail -25` a répondu « tout va bien » DEUX fois (Python système, puis venv). Faux : la trace
+part sur stderr (non tamponné), les `print` sur stdout (tamponné quand redirigé) et se
+vident À LA SORTIE — ils chassent le traceback hors des dernières lignes.
+RÈGLE : pour voir une erreur d'import, **jeter stdout** — `python -c "import app" > /dev/null`.
+Le silence vaut réussite. J'avais construit un test structurellement incapable de voir ce
+qu'il cherchait, puis conclu de son silence.
+⚠ AU PASSAGE : le service tourne avec `/root/cineflight_web/.venv/bin/python` — la note
+« Python SYSTÈME, pas de venv » plus haut dans ce fichier est PÉRIMÉE.
+
 ### ⚠⚠ CLOUDFLARE : 100 Mo PAR REQUÊTE (2026-07-28) — envoi par lots
 Un envoi de 249 Mo a été coupé **avant d'atteindre le serveur** : rien dans les journaux
 nginx, rien dans ceux du service, et côté client une erreur SSL sans explication. Plan
