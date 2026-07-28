@@ -56,22 +56,22 @@ def entetes(j):
     return {"X-Cine-Ouvrier": j}
 
 
+class Refuse(Exception):
+    """L'appel a échoué. ⚠ DISTINCT d'une liste vide : afficher « rien en attente »
+    après un refus ferait croire que tout va bien alors que rien ne fonctionne —
+    c'est ce qui a masqué des heures de 403 le 2026-07-28."""
+
+
 def travaux(j):
     r = requests.get(SERVEUR + "/api/travaux", headers=entetes(j), timeout=30)
     if r.status_code == 503:
-        print("  le serveur n'a pas de jeton installe (voir patch_travaux_ouvrier.py)")
-        return []
+        raise Refuse("le serveur n'a pas de jeton installe (voir patch_travaux_ouvrier.py)")
     if r.status_code == 403:
-        print("  jeton REFUSE par le serveur — verifie CINE_OUVRIER_JETON")
-        return []
+        raise Refuse("jeton REFUSE — le jeton de ce PC ne correspond pas a celui du serveur")
     if r.status_code == 404:
-        # Le code le plus probable au premier lancement : la route n'existe pas encore.
-        print("  /api/travaux INTROUVABLE sur le serveur — patch_travaux_ouvrier.py"
-              " n'est pas applique, ou le service n'a pas redemarre")
-        return []
+        raise Refuse("/api/travaux INTROUVABLE — patch non applique, ou service non redemarre")
     if r.status_code != 200:
-        print("  reponse inattendue du serveur : HTTP %d" % r.status_code)
-        return []
+        raise Refuse("reponse inattendue : HTTP %d" % r.status_code)
     return r.json().get("travaux", [])
 
 
@@ -125,7 +125,10 @@ def main():
             liste = travaux(j)
             nouveaux = [t for t in liste if t["id"] not in connus]
             if not liste:
-                print("%s  rien en attente" % time.strftime("%H:%M:%S"))
+                # Une ligne par tour, avec l'heure : on doit pouvoir vérifier d'un coup
+                # d'œil que l'atelier veille encore, sans noyer l'écran.
+                print("%s  rien en attente (%d travaux connus)"
+                      % (time.strftime("%H:%M:%S"), len(connus)))
             for t in nouveaux:
                 connus.add(t["id"])
                 print("\n%s  NOUVEAU TRAVAIL : %s" % (time.strftime("%H:%M:%S"), t["titre"]))
@@ -145,6 +148,8 @@ def main():
                     print("\a", end="", flush=True)
                 except Exception:
                     pass
+        except Refuse as e:
+            print("%s  ECHEC : %s" % (time.strftime("%H:%M:%S"), e))
         except requests.RequestException as e:
             print("%s  serveur injoignable (%s) — nouvel essai dans %d s"
                   % (time.strftime("%H:%M:%S"), e.__class__.__name__, PERIODE_S))
