@@ -2071,11 +2071,38 @@ Le refus « lecture ISO/vitesse impossible » est journalisé lui aussi, au lieu
 garantit qu'on le DEMANDE et qu'on SAIT s'il est refusé — pas qu'il est obtenu. C'est la
 même réserve que pour le Virtual Stick de la capture 3D.
 
-⚠ SECOND DÉFAUT, DISTINCT, NON CORRIGÉ : les sentiers se DÉDOUBLENT aux jointures. La voie
+⚠ SECOND DÉFAUT, DISTINCT : les sentiers se DÉDOUBLENT aux jointures. La voie
 `angles_seuls` place les images d'après le cap rapporté par le drone sans laisser
 l'optimiseur ajuster — à 1° près, sur 8192 px de large, cela fait déjà 23 px de décalage.
-La vraie solution serait d'optimiser les positions EN VERROUILLANT l'image d'ancrage, pour
-corriger les décalages locaux sans pouvoir faire pivoter la sphère. À concevoir.
+
+### VOIE ANCRÉE — ESSAYÉE, MESURÉE, RÉTROGRADÉE (2026-07-28)
+
+IDÉE : optimiser les positions en excluant l'image 0 des variables du `.pto`. L'ancrage
+empêche alors l'optimiseur de faire pivoter l'ensemble, tout en corrigeant les décalages
+entre images voisines. C'est la manière standard sous Hugin, et elle devait donner
+« l'horizon droit ET les jointures continues ».
+
+MESURE, même jeu de 61 photos, même préréglage :
+
+| voie | ciel comblé | résultat visuel |
+|---|---|---|
+| `angles_seuls` | **9,0 %** | sphère droite, sentiers dédoublés |
+| `angles_affines` | **27,8 %** | sphère droite, **tiers supérieur en aplat gris** |
+
+L'ancrage a bien empêché la rotation — c'était son objet — mais il a laissé l'optimiseur
+DISPERSER les images, creusant des trous que le remplissage a dû combler.
+
+HYPOTHÈSE NON VÉRIFIÉE sur la cause : j'ai libéré trois paramètres par image (cap,
+inclinaison, roulis). Or seul le CAP est bruité — il vient de la boussole. L'inclinaison et
+le roulis viennent de la NACELLE, mécaniquement précise. Les libérer laisse les images
+dériver verticalement. **Une variante n'optimisant que le lacet reste à éprouver.**
+
+→ `patch_pano_ancree_rang.py` : `angles_seuls` repasse en tête. La voie ancrée reste en
+SECOND — si le placement brut échoue un jour, elle vaut mieux que `angles_optimises`, qui
+fait pivoter la sphère. On ne supprime pas un outil qu'on vient de construire ; on le met
+au rang que la mesure lui donne.
+
+⚠ Quatrième hypothèse démentie de la journée. Le dédoublement des sentiers reste OUVERT.
 
 ### Exposition, balance des blancs, photométrie (2026-07-27) — vérifié sur sources
 - **Balance des blancs FIGÉE** au début de chaque panorama (`verrouillerBalanceBlancs`).
