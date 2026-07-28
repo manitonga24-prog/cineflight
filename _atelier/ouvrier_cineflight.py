@@ -27,7 +27,6 @@ disparaître parce qu'un script a tourné.
 import os
 import sys
 import time
-import zipfile
 
 try:
     import requests
@@ -76,36 +75,62 @@ def travaux(j):
 
 
 def telecharger(j, t):
-    """Rapatrie et decompresse un travail. Rend le dossier local, ou None."""
+    """
+    Rapatrie un travail, UNE PHOTO À LA FOIS. Rend le dossier local, ou None.
+
+    ⚠ POURQUOI PAS UNE ARCHIVE. La première version téléchargeait un zip construit en flux
+    par le serveur : il se corrompait en route et le transfert mourait à 97 Mo sur 249,
+    sans reprise possible. Fichier par fichier, chaque photo a sa taille annoncée, se
+    retente seule, et une erreur ne coûte que celle-là. C'est le même principe que le
+    rapatriement depuis le drone, qui a déjà fait ses preuves.
+    """
     cible = os.path.join(DOSSIER, t["id"])
     if os.path.isdir(os.path.join(cible, "photos")):
         return None                      # deja fait : on ne retelecharge pas
     os.makedirs(cible, exist_ok=True)
-    zipf = os.path.join(cible, "photos.zip")
-    mo = t.get("octets", 0) / 1e6
-    print("  telechargement de %s — %d photos, %.0f Mo" % (t["id"], t.get("photos", 0), mo))
-    with requests.get(SERVEUR + t["url_photos"], headers=entetes(j),
-                      stream=True, timeout=1800) as r:
-        r.raise_for_status()
-        recu = 0
-        with open(zipf, "wb") as f:
-            for bloc in r.iter_content(chunk_size=1 << 20):
-                if not bloc:
-                    continue
-                f.write(bloc); recu += len(bloc)
-                if mo > 0:
-                    pct = min(100, int(recu / 1e6 / mo * 100))
-                    print("\r    %3d %%  (%.0f / %.0f Mo)" % (pct, recu / 1e6, mo), end="")
-        print()
-    # DECOMPRESSION dans un dossier temporaire puis renommage : un dossier `photos`
-    # existant signifie « travail complet ». Si l'extraction echoue a mi-chemin, on ne
-    # doit pas le laisser croire.
+    # Dossier PARTIEL le temps du transfert : un dossier `photos` complet signifie
+    # « travail entier ». Un transfert interrompu ne doit jamais le laisser croire.
     tmp = os.path.join(cible, "_photos_partiel")
     os.makedirs(tmp, exist_ok=True)
-    with zipfile.ZipFile(zipf) as z:
-        z.extractall(tmp)
+
+    r = requests.get(SERVEUR + "/api/travaux/%s/liste" % t["id"],
+                     headers=entetes(j), timeout=60)
+    r.raise_for_status()
+    liste = r.json().get("photos", [])
+    total_mo = sum(p["octets"] for p in liste) / 1e6
+    print("  telechargement de %s — %d photos, %.0f Mo" % (t["id"], len(liste), total_mo))
+
+    recu = 0
+    for i, p in enumerate(liste, 1):
+        dest = os.path.join(tmp, p["nom"])
+        if os.path.exists(dest) and os.path.getsize(dest) == p["octets"]:
+            recu += p["octets"]          # deja la, taille juste : on saute
+            continue
+        ok = False
+        for essai in (1, 2):             # une seconde chance par photo
+            try:
+                with requests.get(
+                        SERVEUR + "/api/travaux/%s/photo/%s" % (t["id"], p["nom"]),
+                        headers=entetes(j), stream=True, timeout=300) as rp:
+                    rp.raise_for_status()
+                    with open(dest, "wb") as f:
+                        for bloc in rp.iter_content(chunk_size=1 << 20):
+                            if bloc:
+                                f.write(bloc)
+                if os.path.getsize(dest) == p["octets"]:
+                    ok = True; break
+                print("\n    %s : taille inattendue, nouvel essai" % p["nom"])
+            except requests.RequestException as e:
+                print("\n    %s : %s, nouvel essai" % (p["nom"], e.__class__.__name__))
+        if not ok:
+            print("\n  ECHEC sur %s — travail laisse INCOMPLET, il restera propose." % p["nom"])
+            return None
+        recu += p["octets"]
+        pct = min(100, int(recu / 1e6 / max(total_mo, 0.001) * 100))
+        print("\r    %3d %%  (%d/%d fichiers, %.0f / %.0f Mo)"
+              % (pct, i, len(liste), recu / 1e6, total_mo), end="")
+    print()
     os.rename(tmp, os.path.join(cible, "photos"))
-    os.remove(zipf)
     return cible
 
 

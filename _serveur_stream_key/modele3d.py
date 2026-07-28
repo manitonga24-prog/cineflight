@@ -163,8 +163,12 @@ def _reconstruire(mid, dossier):
 
 @router.post("/api/modele3d")
 async def creer_modele(titre: str = Form("Modèle 3D"), files: list[UploadFile] = File(...)):
-    if not files or len(files) < PHOTOS_MIN:
-        raise HTTPException(422, "au moins %d photos sont nécessaires" % PHOTOS_MIN)
+    # ⚠ Le minimum est vérifié à la CLÔTURE (`/finir`), pas ici. Depuis l'envoi par lots —
+    # imposé par la limite de 100 Mo de Cloudflare — le premier lot peut légitimement
+    # contenir moins de PHOTOS_MIN photos. Exiger le minimum dès l'ouverture faisait
+    # échouer tout jeu dont le premier lot était petit.
+    if not files:
+        raise HTTPException(422, "aucune photo dans ce lot")
     mid = uuid.uuid4().hex[:12]
     dossier = os.path.join(_BASE, mid)
     images = os.path.join(dossier, "images")
