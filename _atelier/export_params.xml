@@ -1,0 +1,37 @@
+<!--
+  export_params.xml — parametres d'export .glb pour RealityScan en ligne de commande.
+
+  ORIGINE : bloc <ModelExport> extrait de CineFlight.glb.rsInfo, produit par le premier
+  export du 2026-07-28. RealityScan n'accepte pas un XML ecrit de zero : les cles varient
+  d'une version a l'autre. Pour le regenerer apres une mise a jour, refaire un export
+  depuis l'interface et recopier le bloc <ModelExport> du .rsInfo, puis reappliquer les
+  quatre changements ci-dessous.
+
+  CE QUI DIFFERE DES REGLAGES D'ORIGINE, ET POURQUOI :
+
+  embedTextures        0 -> 1   La texture partait en fichier PNG separe (13 Mo a cote du
+                               .glb). Le serveur ne recoit QUE le .glb : le modele
+                               s'affichait donc gris chez le client, sans aucun message.
+  exportToOneTexture   0 -> 1   Un seul atlas au lieu de tuiles : moins d'appels de rendu,
+                               et surtout un seul fichier a embarquer.
+  oneTextureMaxSide 8192 -> 4096  8192 est la limite HAUTE d'un GPU mobile ; s'y coller ne
+                               laisse rien pour le reste de la scene, et le rendu stereo
+                               d'un casque dessine TOUT deux fois.
+  exportVertexNormals  0 -> 1   Sans normales, les visionneuses glTF les recalculent a
+                               plat : le maillage parait facette, comme taille au couteau.
+-->
+<ModelExport exportBinary="1" exportInfoFile="1" exportVertices="1" exportVertexColors="0"
+   exportVertexColorSpace="0" exportVertexNormals="1" exportTriangles="1"
+   exportTriangleStrips="0" meshColor="1 1 1" tileType="1" exportTextureAlpha="0"
+   exportToOneTexture="1" embedTextures="1" shrinkTextures="0" oneTextureMaxSide="4096"
+   oneTextureUsePow2TexSide="1" exportCoordinateSystemType="0" settingsAnchor="0 0 0"
+   settingsRotation="0 0 0" settingsScale="1 1 1" normalSpace="2" normalRange="0"
+   normalFlip="0 0 0" formatAndVersionUID="glb 000 " exportModelByParts="0"
+   exportRandomPartColor="0" exportCameras="0" exportCamerasAsModelPart="0"
+   exportMaterials="0" numberAsciiFormatting="5" authorComment="" exportedLayerCount="1"
+   classificationLayer="-1" moreDetails="">
+  <Header magic="5786949" version="6"/>
+  <Layer0 type="1" textureLayerIndex="0" textureWicContainerFormat="{1B7CFAF4-713F-473C-BBCD-6137425FAEAF}"
+     textureWicPixelFormat="{6FDDC324-4E03-4BFE-B185-3D77768DC90F}" textureExtension="png"
+     mapQualityToColor="0"/>
+</ModelExport>

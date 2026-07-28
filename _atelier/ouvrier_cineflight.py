@@ -246,8 +246,13 @@ def main():
         auto, detail = traitement.pret()
         # On DIT lequel des deux modes tourne. Sans cette ligne, un traitement qui ne se
         # declenche pas ressemble a un traitement en cours.
-        print("  calcul  : %s" % ("AUTOMATIQUE (%s)" % os.path.basename(detail) if auto
-                                  else "MANUEL — %s" % detail))
+        if auto:
+            print("  calcul  : AUTOMATIQUE — %s" % detail)
+            print("            %s" % ("sans interface" if traitement.autonome()
+                                      else "AVEC INTERFACE tant que les reglages d'export "
+                                           "ne sont pas enregistres"))
+        else:
+            print("  calcul  : MANUEL — %s" % detail)
     print("  je regarde toutes les %d s. Ctrl+C pour arreter.\n" % PERIODE_S)
     connus = set()
     attentes = {}          # travaux téléchargés, dont on guette le maillage

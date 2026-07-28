@@ -95,22 +95,28 @@ def trouver_exe():
     return None
 
 
-def pret():
+def autonome():
     """
-    Rend (True, exe) si le traitement automatique est possible, sinon (False, raison).
+    Le fichier de paramètres d'export est-il là ?
 
-    ⚠ ON NE LANCE RIEN « POUR VOIR ». Une commande RealityScan mal outillée ouvre une
-    fenêtre et attend — sur une machine sans personne devant, elle attend indéfiniment.
+    ⚠ C'EST LUI QUI DÉCIDE DU MODE, et c'est un problème d'œuf et de poule assumé : la
+    boîte de dialogue d'export ne s'ouvre que s'il existe déjà un modèle, donc ce fichier
+    ne peut pas exister avant la première reconstruction réussie.
+    SANS lui  : on tourne INTERFACE VISIBLE. Si RealityScan réclame quelque chose — une
+                connexion Epic, un réglage d'export — on le voit et on répond. Et c'est
+                précisément cette boîte de dialogue qui permet d'enregistrer le fichier
+                manquant : le premier passage fabrique de quoi automatiser les suivants.
+    AVEC lui  : `-headless`, plus personne devant l'écran.
     """
+    return os.path.isfile(PARAMS)
+
+
+def pret():
+    """Rend (True, exe) si on peut lancer quelque chose, sinon (False, raison)."""
     exe = trouver_exe()
     if not exe:
         return False, ("RealityScan introuvable. Definis CINE_REALITYSCAN avec le chemin "
                        "complet de RealityScan.exe.")
-    if not os.path.isfile(PARAMS):
-        return False, ("parametres d'export absents : %s\n"
-                       "    Dans RealityScan : EXPORT > Model > format .glb, "
-                       "textures integrees, puis enregistre les reglages vers ce fichier."
-                       % PARAMS)
     return True, exe
 
 
@@ -131,9 +137,12 @@ def commande(exe, dossier_photos, sortie_glb, projet, journal):
       calculateTexture          -> texture le maillage SIMPLIFIE (l'inverse gaspille)
       exportModel               -> .glb, selon le XML regle depuis l'interface
     """
-    return [
-        exe,
-        "-headless",
+    cmd = [exe]
+    if autonome():
+        # Interface cachee UNIQUEMENT quand on sait exporter sans rien demander. Sinon on
+        # laisse la fenetre : un dialogue invisible est un blocage sans message.
+        cmd += ["-headless"]
+    cmd += [
         "-set", "appQuitOnError=true",      # une erreur ne doit pas figer la machine
         "-setInstanceName", "CineFlightAtelier",
         "-newScene",
@@ -148,9 +157,13 @@ def commande(exe, dossier_photos, sortie_glb, projet, journal):
         "-calculateTexture",
         "-renameSelectedModel", "CineFlight",
         "-save", projet,
-        "-exportModel", "CineFlight", sortie_glb, PARAMS,
-        "-quit",
     ]
+    # Le XML est FACULTATIF : l'exemple officiel d'Epic appelle `-exportModel "Nom"` seul.
+    # Sans lui, RealityScan emploie les derniers reglages d'export — d'ou l'interface
+    # visible, pour pouvoir repondre s'il en demande.
+    cmd += ["-exportModel", "CineFlight", sortie_glb] + ([PARAMS] if autonome() else [])
+    cmd += ["-quit"]
+    return cmd
 
 
 def traiter(dossier_travail, sur_fin=None):
@@ -183,9 +196,17 @@ def traiter(dossier_travail, sur_fin=None):
     with _verrou:
         debut = time.time()
         cmd = commande(exe, photos, sortie, projet, journal)
-        print("  RealityScan : demarrage (%d photos, cible %d triangles)"
-              % (len([n for n in os.listdir(photos)
-                      if os.path.isfile(os.path.join(photos, n))]), TRIANGLES))
+        # ⚠ ON NE COMPTE QUE LES IMAGES. RealityScan depose ses propres fichiers dans le
+        # dossier d'entree (cache, listes) : compter « tous les fichiers » faisait grimper
+        # le total d'un passage a l'autre et laissait croire a des photos apparues seules.
+        n_photos = len([n for n in os.listdir(photos)
+                        if n.lower().endswith((".jpg", ".jpeg", ".png", ".tif", ".tiff"))])
+        print("  RealityScan %s : demarrage (%d photos, cible %d triangles)"
+              % ("sans interface" if autonome() else "AVEC INTERFACE (1er passage)",
+                 n_photos, TRIANGLES))
+        if not autonome():
+            print("    ⚠ regarde l'ecran : s'il ouvre une boite d'export, enregistre les")
+            print("      reglages vers %s — les passages suivants seront autonomes." % PARAMS)
         print("    journal : %s" % journal)
         try:
             with open(journal, "w", encoding="utf-8", errors="replace") as jf:
@@ -215,9 +236,15 @@ def traiter(dossier_travail, sur_fin=None):
         # l'existence d'un fichier exploitable — même leçon que le py_compile satisfait
         # d'un fichier vide.
         if os.path.isfile(sortie) and os.path.getsize(sortie) > 1024:
-            msg = ("maillage produit en %d min (%.0f Mo)"
-                   % (duree / 60, os.path.getsize(sortie) / 1e6))
+            # ⚠ DURÉE EN SECONDES quand c'est court. « 0 min » masquait la seule chose qui
+            # comptait : un calcul anormalement rapide n'a pas calculé grand-chose.
+            duree_txt = ("%d s" % duree) if duree < 600 else ("%d min" % (duree / 60))
+            msg = ("maillage produit en %s (%.1f Mo)"
+                   % (duree_txt, os.path.getsize(sortie) / 1e6))
             print("  " + msg)
+            if duree < 300:
+                print("  ⚠ TRES RAPIDE pour une reconstruction — ouvre le maillage avant de")
+                print("    le croire, et lis %s" % journal)
             if sur_fin:
                 sur_fin(True, msg)
             return True
@@ -236,7 +263,10 @@ if __name__ == "__main__":
     # Usage direct :  python traitement.py <dossier_du_travail>
     if len(sys.argv) < 2:
         ok, r = pret()
-        print("RealityScan : %s" % (r if not ok else "pret (%s)" % r))
+        print("RealityScan : %s" % (r if not ok else "trouve — %s" % r))
+        print("Export      : %s" % ("autonome (%s)" % PARAMS if autonome()
+                                    else "reglages non enregistres — 1er passage avec "
+                                         "interface visible"))
         print("Usage : python traitement.py <dossier contenant `photos`>")
         sys.exit(0 if ok else 1)
     sys.exit(0 if traiter(sys.argv[1]) else 1)
