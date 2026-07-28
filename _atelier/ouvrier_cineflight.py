@@ -40,6 +40,11 @@ try:
 except ImportError:
     traitement = None      # l'atelier fonctionne sans : le calcul reste manuel
 
+try:
+    import assemblage_pano
+except ImportError:
+    assemblage_pano = None # sans Hugin, les panoramas restent assembles par le serveur
+
 SERVEUR = os.environ.get("CINE_SERVEUR", "https://cineflight.ca")
 DOSSIER = os.environ.get("CINE_ATELIER", os.path.join(os.path.expanduser("~"), "CineFlight_Atelier"))
 PERIODE_S = int(os.environ.get("CINE_PERIODE", "60"))
@@ -273,14 +278,40 @@ def main():
                                            "ne sont pas enregistres"))
         else:
             print("  calcul  : MANUEL — %s" % detail)
+    panos = False
+    if assemblage_pano is not None:
+        panos, dp = assemblage_pano.pret()
+        print("  panorama: %s" % ("ATELIER — %s" % dp if panos
+                                  else "laisse au serveur — %s" % dp))
     print("  je regarde toutes les %d s. Ctrl+C pour arreter.\n" % PERIODE_S)
     connus = set()
     attentes = {}          # travaux téléchargés, dont on guette le maillage
+    panos_faits = set()    # panoramas déjà assemblés et déposés dans cette session
     while True:
         try:
             # D'ABORD les dépôts : un maillage prêt ne doit pas attendre le tour suivant.
             if attentes:
                 surveiller_depots(j, attentes)
+            # ── PANORAMAS ────────────────────────────────────────────────────────
+            # Traités AVANT la 3D et de façon BLOQUANTE : un assemblage dure des
+            # minutes, pas des heures, et les enchaîner évite de lancer deux calculs
+            # lourds en même temps sur la même machine.
+            if panos:
+                try:
+                    for tp in assemblage_pano.travaux(j):
+                        if tp["id"] in panos_faits:
+                            continue
+                        print("\n%s  PANORAMA A ASSEMBLER : %s (%d photos)"
+                              % (time.strftime("%H:%M:%S"), tp["id"], tp["photos"]))
+                        if assemblage_pano.traiter(j, tp, dp):
+                            panos_faits.add(tp["id"])
+                        else:
+                            # Non marqué : on réessaiera au tour suivant. Un travail non
+                            # livré ne doit pas disparaître parce qu'un calcul a échoué.
+                            print("  (sera repris au prochain tour)")
+                except Exception as e:
+                    print("%s  panoramas : %s" % (time.strftime("%H:%M:%S"), e))
+
             liste = travaux(j)
             nouveaux = [t for t in liste if t["id"] not in connus]
             if not liste:

@@ -35,6 +35,7 @@ import json
 import html as _html
 import threading
 import time as _time
+from typing import List
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from fastapi.responses import HTMLResponse, Response
 from pydantic import BaseModel
@@ -49,14 +50,22 @@ except Exception:
             "Impossible d'importer get_user_courant depuis cine_auth."
         ) from _e
 
-SERVER_URL_DEFAUT = "rtmps://a.rtmps.youtube.com/live2"
+# IMPORTANT : rtmp:// (port 1935), PAS rtmps:// (TLS). Les drones DJI echouent au
+# handshake TLS avec rtmps ("TLS_Connect failed") : la session s'ouvre mais aucune
+# image ne part. rtmp:// simple fonctionne pour la diffusion depuis le drone.
+SERVER_URL_DEFAUT = "rtmp://a.rtmp.youtube.com/live2"
 
 router = APIRouter(tags=["stream_key"])
 
 _FICHIER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "stream_keys.json")
 _DOSSIER_IMG = os.path.join(os.path.dirname(os.path.abspath(__file__)), "live_images")
 os.makedirs(_DOSSIER_IMG, exist_ok=True)
-_MAX_IMG = 5 * 1024 * 1024   # 5 Mo max par image
+_DOSSIER_VID = os.path.join(os.path.dirname(os.path.abspath(__file__)), "live_videos")
+os.makedirs(_DOSSIER_VID, exist_ok=True)
+_MAX_IMG = 5 * 1024 * 1024    # 5 Mo max par image / photo
+MAX_VID = 50 * 1024 * 1024    # 50 Mo max pour la video d'attente
+_MAX_PHOTOS = 5               # nombre maximum de photos dans le carrousel
+_MODES_MEDIA = ("photos", "video", "")  # interrupteur : un seul mode actif a la fois
 _verrou = threading.Lock()
 
 # Cle d'index secondaire : on stocke aussi le username pour retrouver un compte
@@ -158,6 +167,7 @@ class Entree(BaseModel):
     live_time: str | None = None    # heure du direct (texte libre, ex. 2026-07-25 19:00)
     live_title: str | None = None   # titre du live (optionnel)
     live_desc: str | None = None    # description du live (optionnel)
+    media_mode: str | None = None   # interrupteur media d'attente : "photos" | "video" | ""
 
 
 @router.get("/api/stream_key")
@@ -173,6 +183,10 @@ def get_stream_key(user: dict = Depends(get_user_courant)):
         "live_time": d.get("live_time", ""),
         "live_title": d.get("live_title", ""),
         "live_desc": d.get("live_desc", ""),
+        # Media d'attente (interrupteur) : mode actif + inventaire disponible.
+        "media_mode": d.get("media_mode", ""),
+        "photo_count": int(d.get("photo_count", 0) or 0),
+        "has_video": bool(d.get("has_video")),
         # Lien public stable a partager (isole par compte).
         "live_page": "/live/" + _username(user),
     }
@@ -193,6 +207,11 @@ def post_stream_key(entree: Entree, user: dict = Depends(get_user_courant)):
         champs["live_title"] = entree.live_title.strip()[:120]
     if entree.live_desc is not None:
         champs["live_desc"] = entree.live_desc.strip()[:500]
+    if entree.media_mode is not None:
+        # Bascule explicite de l'interrupteur ; seules 3 valeurs valides, sinon on ignore.
+        mm = entree.media_mode.strip().lower()
+        if mm in _MODES_MEDIA:
+            champs["media_mode"] = mm
     if not champs:
         raise HTTPException(status_code=400, detail="rien a enregistrer")
     _ecrire(user, champs)
@@ -230,18 +249,21 @@ def supprimer_live_image(user: dict = Depends(get_user_courant)):
     return {"ok": True}
 
 
+def _uid_par_username(utilisateur):
+    """Retrouve l'uid (cle de stockage) d'un compte a partir de son username."""
+    cible = (utilisateur or "").strip().lower()
+    with _verrou:
+        for k, v in _charger().items():
+            if isinstance(v, dict) and str(v.get("username", "")).lower() == cible:
+                return k
+    return None
+
+
 @router.get("/live_image/{utilisateur}")
 def get_live_image(utilisateur: str):
     if not _RE_USER.match(utilisateur or ""):
         raise HTTPException(status_code=404, detail="introuvable")
-    infos = _infos_utilisateur(utilisateur)
-    uid = None
-    # Retrouver l'uid a partir du username pour localiser le fichier.
-    with _verrou:
-        for k, v in _charger().items():
-            if isinstance(v, dict) and str(v.get("username", "")).lower() == utilisateur.strip().lower():
-                uid = k
-                break
+    uid = _uid_par_username(utilisateur)
     if uid is None:
         raise HTTPException(status_code=404, detail="introuvable")
     p = _chemin_img(uid)
@@ -250,6 +272,137 @@ def get_live_image(utilisateur: str):
     with open(p, "rb") as f:
         data = f.read()
     return Response(content=data, media_type="image/jpeg",
+                    headers={"Cache-Control": "no-cache"})
+
+
+# ── Carrousel de photos d'attente (jusqu'a 5) : upload authentifie + service public ──
+def _chemin_photo(uid, index) -> str:
+    return os.path.join(_DOSSIER_IMG, str(uid) + "_" + str(index) + ".jpg")
+
+
+def _supprimer_photos(uid):
+    """Supprime toutes les photos {uid}_1.jpg .. {uid}_5.jpg si presentes."""
+    for i in range(1, _MAX_PHOTOS + 1):
+        p = _chemin_photo(uid, i)
+        if os.path.exists(p):
+            try:
+                os.remove(p)
+            except OSError:
+                pass
+
+
+@router.post("/api/live_photos")
+async def upload_live_photos(fichiers: list[UploadFile] = File(...),
+                             user: dict = Depends(get_user_courant)):
+    # Remplace TOUTES les photos du carrousel. Max 5, JPEG/PNG, 5 Mo chacune.
+    if not fichiers:
+        raise HTTPException(status_code=400, detail="aucune photo")
+    if len(fichiers) > _MAX_PHOTOS:
+        raise HTTPException(status_code=400, detail="max 5 photos")
+    contenus = []
+    for f in fichiers:
+        ct = (f.content_type or "").lower()
+        if ct not in ("image/jpeg", "image/jpg", "image/png"):
+            raise HTTPException(status_code=400, detail="format non supporte (JPEG ou PNG)")
+        data = await f.read()
+        if not data:
+            raise HTTPException(status_code=400, detail="fichier vide")
+        if len(data) > _MAX_IMG:
+            raise HTTPException(status_code=400, detail="image trop lourde (max 5 Mo)")
+        contenus.append(data)
+    uid = _uid(user)
+    # On efface d'abord l'ancien lot puis on ecrit le nouveau (1..N).
+    _supprimer_photos(uid)
+    for i, data in enumerate(contenus, start=1):
+        with open(_chemin_photo(uid, i), "wb") as out:
+            out.write(data)
+    _ecrire(user, {"media_mode": "photos", "photo_count": len(contenus)})
+    return {"ok": True, "photo_count": len(contenus)}
+
+
+@router.delete("/api/live_photos")
+def supprimer_live_photos(user: dict = Depends(get_user_courant)):
+    uid = _uid(user)
+    _supprimer_photos(uid)
+    champs = {"photo_count": 0}
+    # Si le mode actif etait "photos", on retombe sur l'interrupteur vide.
+    if str(_lire(user).get("media_mode", "")) == "photos":
+        champs["media_mode"] = ""
+    _ecrire(user, champs)
+    return {"ok": True}
+
+
+@router.get("/live_photo/{utilisateur}/{index}")
+def get_live_photo(utilisateur: str, index: int):
+    if not _RE_USER.match(utilisateur or ""):
+        raise HTTPException(status_code=404, detail="introuvable")
+    if index < 1 or index > _MAX_PHOTOS:
+        raise HTTPException(status_code=404, detail="index invalide")
+    uid = _uid_par_username(utilisateur)
+    if uid is None:
+        raise HTTPException(status_code=404, detail="introuvable")
+    p = _chemin_photo(uid, index)
+    if not os.path.exists(p):
+        raise HTTPException(status_code=404, detail="pas de photo")
+    with open(p, "rb") as f:
+        data = f.read()
+    return Response(content=data, media_type="image/jpeg",
+                    headers={"Cache-Control": "no-cache"})
+
+
+# ── Video d'attente (MP4 en boucle) : upload authentifie + service public ──────────
+def _chemin_vid(uid) -> str:
+    return os.path.join(_DOSSIER_VID, str(uid) + ".mp4")
+
+
+@router.post("/api/live_video")
+async def upload_live_video(fichier: UploadFile = File(...),
+                            user: dict = Depends(get_user_courant)):
+    # Accepte une video (content_type "video/*", ex. video/mp4). Max 50 Mo. Stockee en .mp4.
+    ct = (fichier.content_type or "").lower()
+    if not ct.startswith("video/"):
+        raise HTTPException(status_code=400, detail="format non supporte (video)")
+    data = await fichier.read()
+    if not data:
+        raise HTTPException(status_code=400, detail="fichier vide")
+    if len(data) > MAX_VID:
+        raise HTTPException(status_code=400, detail="video trop lourde (max 50 Mo)")
+    with open(_chemin_vid(_uid(user)), "wb") as f:
+        f.write(data)
+    _ecrire(user, {"media_mode": "video", "has_video": True})
+    return {"ok": True}
+
+
+@router.delete("/api/live_video")
+def supprimer_live_video(user: dict = Depends(get_user_courant)):
+    uid = _uid(user)
+    p = _chemin_vid(uid)
+    if os.path.exists(p):
+        try:
+            os.remove(p)
+        except OSError:
+            pass
+    champs = {"has_video": False}
+    # Si le mode actif etait "video", on retombe sur l'interrupteur vide.
+    if str(_lire(user).get("media_mode", "")) == "video":
+        champs["media_mode"] = ""
+    _ecrire(user, champs)
+    return {"ok": True}
+
+
+@router.get("/live_video/{utilisateur}")
+def get_live_video(utilisateur: str):
+    if not _RE_USER.match(utilisateur or ""):
+        raise HTTPException(status_code=404, detail="introuvable")
+    uid = _uid_par_username(utilisateur)
+    if uid is None:
+        raise HTTPException(status_code=404, detail="introuvable")
+    p = _chemin_vid(uid)
+    if not os.path.exists(p):
+        raise HTTPException(status_code=404, detail="pas de video")
+    with open(p, "rb") as f:
+        data = f.read()
+    return Response(content=data, media_type="video/mp4",
                     headers={"Cache-Control": "no-cache"})
 
 
@@ -278,6 +431,10 @@ _PAGE_LIVE = """<!DOCTYPE html>
   .ratio{ position:relative; width:100%; padding-top:56.25%; background:#000;
           border-radius:12px; overflow:hidden; border:1px solid var(--bord); }
   .ratio iframe{ position:absolute; inset:0; width:100%; height:100%; border:0; }
+  /* Mode attente : le cadre grandit avec son contenu (sinon logo, description
+     et texte d'aide sont coupes par le ratio 16:9 + overflow:hidden). */
+  .ratio.attente{ padding-top:0; }
+  .ratio.attente .vide{ position:relative; inset:auto; min-height:380px; }
   /* Ecran d'attente : degrade bleu CineFlight (plus d'ecran noir avant le live). */
   .vide{ position:absolute; inset:0; display:flex; flex-direction:column;
          align-items:center; justify-content:center; text-align:center; padding:24px;
@@ -302,6 +459,16 @@ _PAGE_LIVE = """<!DOCTYPE html>
   .banniere{ max-width:min(560px,86%); max-height:38vh; width:auto; border-radius:12px;
              margin:4px 0 14px; border:1px solid rgba(79,195,247,.35);
              box-shadow:0 10px 30px rgba(0,0,0,.5); object-fit:contain; }
+  /* Carrousel de photos d'attente : images empilees, fondu entre elles. */
+  .carrousel{ position:relative; display:inline-block; margin:4px 0 14px; max-width:min(560px,86%); }
+  .carrousel .carr-img{ display:block; margin:0; }
+  .carrousel .carr-img:not(:first-child){ position:absolute; inset:0; }
+  .carr-img{ opacity:0; transition:opacity .6s ease; }
+  .carr-img.on{ opacity:1; }
+  .carr-pts{ display:flex; gap:8px; justify-content:center; margin-top:8px; }
+  .carr-pt{ width:9px; height:9px; border-radius:50%; border:0; padding:0; cursor:pointer;
+            background:rgba(159,199,230,.4); transition:background .2s; }
+  .carr-pt.on{ background:var(--accent); }
   .ltitre{ font-size:22px; font-weight:800; color:#fff; margin:2px 0 8px; max-width:560px; }
   .ldesc{ font-size:14px; color:#cfe0f2; margin:2px 0 10px; max-width:520px; line-height:1.45; white-space:pre-wrap; }
   .vide .heure{ margin:2px 0 6px; font-size:14px; color:#8fd0ff; font-weight:600; }
@@ -328,7 +495,7 @@ _PAGE_LIVE = """<!DOCTYPE html>
     %BANDEAU_DIRECT%
   </header>
   <div class="cadre">
-    <div class="ratio">
+    <div class="ratio%MODE_RATIO%">
       %CONTENU%
     </div>
   </div>
@@ -381,6 +548,9 @@ def page_live(utilisateur: str):
     titre = (infos.get("live_title") or "").strip()
     desc = (infos.get("live_desc") or "").strip()
     a_image = bool(infos.get("has_image"))
+    media_mode = str(infos.get("media_mode", "") or "")
+    photo_count = int(infos.get("photo_count", 0) or 0)
+    a_video = bool(infos.get("has_video"))
     vid = extraire_id_youtube(watch) if watch else None
     u = _html.escape(utilisateur)
     qui = ('<span data-fr="Diffusion de ' + u + '" data-en="Broadcast by ' + u + '">'
@@ -406,6 +576,7 @@ def page_live(utilisateur: str):
             "if(f){f.call(c);} else { var l=document.getElementById('lecteur'); if(l&&l.requestFullscreen) l.requestFullscreen(); }}</script>"
         )
         auto = ""  # live present : pas besoin de rafraichir
+        mode_ratio = ""  # live : cadre 16:9 normal
     else:
         # Ecran d'attente bleu CineFlight : drone qui plane + compte a rebours vers l'heure.
         heure_js = _html.escape(heure).replace("'", " ")
@@ -424,9 +595,47 @@ def page_live(utilisateur: str):
         # Titre + description du live (optionnels). Echappes (securite : contenu affiche public).
         bloc_titre = ('<div class="ltitre">' + _html.escape(titre) + '</div>') if titre else ''
         bloc_desc = ('<div class="ldesc">' + _html.escape(desc) + '</div>') if desc else ''
-        # Banniere image (optionnelle) : servie par /live_image/{user}. ?t= casse le cache (par minute).
-        bloc_img = ('<img class="banniere" src="/live_image/' + u + '?t=' + str(int(_time.time() // 60)) +
-                    '" alt="">') if a_image else ''
+        # Media d'attente selon l'interrupteur media_mode ("video" | "photos" | "").
+        # ?t= casse le cache (par minute). Aucun texte a traduire dans ces medias (bilingue-safe).
+        _t = str(int(_time.time() // 60))
+        carrousel_js = ''
+        if media_mode == "video" and a_video:
+            # Mode video : MP4 en boucle, muette, autoplay, playsinline. Reutilise le style .banniere.
+            bloc_img = ('<video class="banniere" autoplay muted loop playsinline '
+                        'src="/live_video/' + u + '?t=' + _t + '"></video>')
+        elif media_mode == "photos" and photo_count > 0:
+            # Mode photos : carrousel automatique (4 s), en boucle, points cliquables.
+            n = min(photo_count, _MAX_PHOTOS)
+            imgs = ''.join(
+                ('<img class="carr-img banniere' + (' on' if i == 1 else '') + '" '
+                 'src="/live_photo/' + u + '/' + str(i) + '?t=' + _t + '" alt="">')
+                for i in range(1, n + 1)
+            )
+            pts = ''.join(
+                ('<button class="carr-pt' + (' on' if i == 1 else '') +
+                 '" data-i="' + str(i - 1) + '" aria-label="' + str(i) + '"></button>')
+                for i in range(1, n + 1)
+            )
+            bloc_img = ('<div class="carrousel" id="carr">' + imgs +
+                        '<div class="carr-pts">' + pts + '</div></div>')
+            # JS carrousel : rotation toutes les 4 s, mise a jour des points, points cliquables.
+            carrousel_js = (
+                "<script>(function(){var c=document.getElementById('carr'); if(!c) return;"
+                "var imgs=c.querySelectorAll('.carr-img'); var pts=c.querySelectorAll('.carr-pt');"
+                "if(imgs.length<2){return;} var i=0, timer=null;"
+                "function show(k){ k=((k%imgs.length)+imgs.length)%imgs.length;"
+                "imgs[i].classList.remove('on'); if(pts[i]) pts[i].classList.remove('on');"
+                "i=k; imgs[i].classList.add('on'); if(pts[i]) pts[i].classList.add('on'); }"
+                "function suivant(){ show(i+1); }"
+                "function relance(){ if(timer) clearInterval(timer); timer=setInterval(suivant,4000); }"
+                "pts.forEach(function(b){ b.onclick=function(){ show(parseInt(b.getAttribute('data-i'),10)||0); relance(); }; });"
+                "relance();})();</script>"
+            )
+        elif a_image:
+            # Comportement actuel : image banniere unique (has_image, mode media vide).
+            bloc_img = ('<img class="banniere" src="/live_image/' + u + '?t=' + _t + '" alt="">')
+        else:
+            bloc_img = ''
         drone_svg = (
             '<svg id="drone" viewBox="0 0 120 90" xmlns="http://www.w3.org/2000/svg">'
             '<g stroke="#4FC3F7" stroke-width="3" fill="none">'
@@ -447,7 +656,6 @@ def page_live(utilisateur: str):
         )
         contenu = (
             '<div class="vide">'
-            '<div class="logo"><span class="cine">Cine</span>Flight</div>'
             '<div class="att"><span class="pt"></span> '
             '<span data-fr="En attente du direct" data-en="Waiting for the live">En attente du direct</span></div>'
             '<h2 data-fr="Le direct va bientot commencer" data-en="The live stream will start soon">Le direct va bientot commencer</h2>'
@@ -485,14 +693,17 @@ def page_live(utilisateur: str):
             "document.getElementById('rm').textContent=p(m);"
             "document.getElementById('rs').textContent=p(s);}"
             "tick(); setInterval(tick,1000);})();</script>"
+            + carrousel_js
         )
         bandeau = ''
         actions = ''
         # Pas encore de live : la page se recharge toutes les 30 s pour capter le debut.
         auto = '<meta http-equiv="refresh" content="30">'
+        mode_ratio = " attente"  # cadre extensible : rien n'est coupe
 
     html = (_PAGE_LIVE
             .replace("%AUTO_REFRESH%", auto)
+            .replace("%MODE_RATIO%", mode_ratio)
             .replace("%QUI%", qui)
             .replace("%BANDEAU_DIRECT%", bandeau)
             .replace("%CONTENU%", contenu)

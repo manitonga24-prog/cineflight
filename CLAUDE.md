@@ -1487,6 +1487,120 @@ Deux sources pour la même vérité, c'est une source de trop.
   `aucun_anneau_de_facade_quand_il_n_apporterait_rien`.
 ⚠ NON VOLÉ. Comme tout le mode Modèle 3D.
 
+### AUDIT DU VOL DÉCOUVERTE (2026-07-28) — 3 défauts, tous silencieux
+
+Demandé après avoir constaté qu'AUCUN journal `DECOUVERTE` n'existe (0 sur 49 vols) :
+l'instrumentation est pourtant en place, au bon endroit (`lancerVol()`, avant tout).
+Le mode n'a donc jamais été mené jusqu'au décollage depuis que le journal existe.
+
+1. **Séquence lancée SANS Virtual Stick.** Après 15 s d'attente, `attendreVsPuisPiloter`
+   démarrait la boucle QUAND MÊME : `majVoyantPilote(false)` passait le voyant au rouge et
+   l'app envoyait ses commandes dans le vide pendant vingt secondes, sans une ligne au
+   journal. Le drone restait en stationnaire → « il ne se passe rien », sans explication.
+   → Le délai dépassé ANNULE la séquence, écrit une anomalie et rend la main.
+2. **Vidéo jamais arrêtée sur le chemin d'échec.** Démarrée au décollage, elle n'était
+   coupée que dans `fin()`. Or `arreter()` est le chemin des échecs ET du passage en
+   arrière-plan : un appel entrant laissait la caméra tourner indéfiniment, remplissant la
+   carte sans que personne le sache. → Coupée aussi dans `arreter()`.
+3. **Montée non aboutie → atterrissage ACCIDENTEL et muet.** Le garde-fou `t < 20.0`
+   sortait de la phase de montée ; ensuite `tMonteeFinie` valant −1, toutes les conditions
+   suivantes étaient fausses et on tombait dans `else -> atterrir()`. Le comportement final
+   était bon, mais atteint par accident et sans un mot. → Condition explicite, anomalie
+   journalisée (altitude, durée, cible) et message à l'écran.
+
+Vérifié par simulation : montée normale → séquence complète ; montée très lente ou
+throttle sans effet → abandon annoncé à t=20 s.
+
+### REVUE DE CHRISTIAN — nettoyage unique + codes de journal (2026-07-28)
+
+**`nettoyerMission(raison, libererVs)` : SORTIE UNIQUE.** `fin()`, `arreter()` et
+`poserAuto()` y passent tous. Motif exact de sa demande : deux chemins censés faire la même
+chose finissent toujours par diverger — c'est ce qui avait laissé la vidéo tourner. Ordre
+imposé : commandes coupées → vidéo arrêtée → autorité libérée. `libererVs=false` pendant un
+atterrissage automatique (le SDK se pose seul, couper l'autorité au milieu n'apporte rien).
+VÉRIFIÉ par lecture : `arreterEnregistrement` et `activerVirtualStick(false)` n'apparaissent
+plus QU'À L'INTÉRIEUR de `nettoyerMission`. Aucun autre chemin de sortie.
+
+**Codes structurés au journal**, au lieu d'une phrase : `VS_NON_ACCORDE`, `MONTEE_TIMEOUT`,
+`ALTITUDE_CIBLE_NON_ATTEINTE`, `BATTERIE_CRITIQUE`, `ATTERRISSAGE_SECURITE cause=…`,
+`NETTOYAGE_MISSION raison=… video_coupee=… vs_libere=…`. La phrase explique, le code se
+compte — c'est ce qui rend un journal exploitable sur des dizaines de vols.
+
+**`BATT_CRITIQUE = 15 %` pendant la démo.** Le contrôle d'avant décollage (30 %) ne dit rien
+de ce qui suit : une cellule fatiguée s'effondre en quelques secondes sous charge.
+
+**Vérifié sans modification** : l'état affiché ne passe jamais à « mission en cours » avant
+l'acquittement du VS (`boucle()` n'est plus appelée que sur `pret`, l'écran affiche
+« stabilisation » pendant l'attente) ; le plafond est déjà un plafond DUR
+(`if (throttle > 0 && alt >= ALT_PLAFOND_M) throttle = 0`), pas une cible.
+
+⚠ RESTE OUVERT — **arrière-plan prolongé**. Aujourd'hui : `onPause` → stationnaire + main
+rendue, sans limite de temps. Christian propose un délai court puis une action de sécurité
+définie (atterrissage ou RTH). NON IMPLÉMENTÉ volontairement : c'est un NOUVEAU comportement
+autonome, qui poserait l'aéronef alors que le pilote a peut-être repris les manches. À
+décider et à qualifier, pas à ajouter en passant.
+
+### ⚠⚠ PREMIER ESSAI EN VOL DU MODÈLE 3D (2026-07-28) — 4 ÉCHECS, cause trouvée
+
+Journaux `vol_20260728_0918..0921_MODELE_3D.log` : quatre tentatives, chacune arrêtée en
+**moins d'une seconde**, toutes avec la même ligne :
+```
+!! visite interrompue pendant transit : virtual_stick=false mode_auto=true
+```
+CAUSE : `executerCapture3D` ne DEMANDE JAMAIS le Virtual Stick. Il n'est demandé que dans
+`decoller()` (bouton DÉCOLLER de l'app), dans le panorama, et dans `basculerMode(true)`.
+Or la capture 3D EXIGE `pilote.enVol` — elle ne passe donc pas par le chemin de décollage
+qui l'aurait obtenu, et si `modeAuto` était DÉJÀ vrai, `basculerMode` n'est pas rappelé.
+Un pilote qui décolle aux manches, ou qui était déjà en mode auto, part sans autorité.
+⚠ C'est EXACTEMENT le défaut documenté pour Phase 3 le 2026-07-22 (« le VS n'est demandé
+que dans decoller() »), jamais appliqué à ce mode. Troisième écran touché par la même
+famille de défaut, après Phase3 et MainActivity.
+→ CORRECTIF : le VS est demandé explicitement AVANT le premier cliché, avec ATTENTE de
+l'acquittement du SDK (4 s), ligne `EVT virtual stick avant capture : accorde=…`, et refus
+ANNONCÉ À L'ÉCRAN avant le vol (`ma_3d_vs_refuse`) au lieu d'un arrêt silencieux au premier
+transit. Une capture qui ne peut pas commander l'aéronef doit le dire au pilote, pas
+l'écrire dans un journal qu'il lira le lendemain.
+⚠ RESTE À VÉRIFIER EN VOL : que le SDK accorde effectivement le VS dans cette situation.
+Le correctif garantit qu'on le DEMANDE et qu'on SAIT s'il est refusé — pas qu'il est
+accordé.
+Relevé au passage, sain : `format photo : déjà en 4:3 (RATIO_4COLON3)` sur les 4 essais —
+la sonde `SondeFormatPhoto`, jusqu'ici jamais exécutée, fonctionne et trouve la bonne clé.
+
+### AUDIT DU COMPORTEMENT DE VOL — MODÈLE 3D (2026-07-28) — 4 défauts
+
+**1. L'ALTITUDE N'ENTRAIT PAS DANS LE CRITÈRE D'ARRIVÉE.** `allerA` ne testait que la
+distance HORIZONTALE (`if (dist < tolM) break`). Le drone pouvait être au bon point au sol
+et encore des dizaines de mètres plus bas — la photo partait quand même. Or sur une orbite,
+l'altitude EST la géométrie de l'anneau.
+MESURÉ par simulation : montée vers l'anneau haut (5 m → 54 m, 30 m de distance) →
+l'ancien critère déclarait l'arrivée à **25,7 m, soit 28 m sous la cible**. Un tiers du plan
+photographié au mauvais endroit, sans une ligne au journal.
+→ `dist < tolM && |alt − altCible| < 1,5 m`.
+
+**2. L'ANTI-BLOCAGE DE 120 s CONTINUAIT COMME SI DE RIEN N'ÉTAIT.** Le `break` rendait
+`true` : l'appelant croyait le point atteint, orientait et déclenchait. Deux minutes sans
+arriver signifie vent, évitement d'obstacle qui bloque, ou commandes sans effet — aucun de
+ces cas ne justifie de photographier. → `TRANSIT_TIMEOUT` au journal + mission arrêtée.
+
+**3. ⚠⚠ LA MISSION SURVIVAIT À L'ARRIÈRE-PLAN.** `onStop` arrêtait la boucle pilote mais
+laissait `visiteEnCours=true`. La coroutine continuait donc à « voler » : `allerA`
+soumettait des commandes à une boucle ARRÊTÉE, le transit n'aboutissait jamais, et
+l'anti-blocage faisait prendre la photo quand même. Scénario complet : **54 clichés du même
+point, sur près de deux heures**, aéronef en stationnaire, personne devant l'écran.
+→ `onStop` interrompt toute mission (`MISSION_INTERROMPUE cause=ecran_arriere_plan`).
+Même règle que Phase 3 et le vol découverte — troisième application de la même doctrine.
+
+**4. Queue de mission non gardée.** Depuis (3), la fin de capture peut s'exécuter écran
+absent → `BadTokenException` en affichant un dialogue. Tout est sous `try/catch` : perdre
+la proposition d'assemblage est fâcheux, planter pendant un RTH l'est davantage.
+
+**AJOUTÉ** : `CAP_NON_ATTEINT` quand `orienterVers` expire (on CONTINUE — quelques degrés
+ne ruinent pas une reconstruction, mais si toutes les prises portent cette ligne, c'est le
+lacet qu'il faut corriger, pas les photos).
+
+**VÉRIFIÉ SAIN** : le moteur est bien générique (aucun centre, aucun bouclage) ; batterie
+contrôlée à chaque cliché ET dans `allerA` ; arrêt propre si un quart des photos est refusé.
+
 ### DEUX MOTIFS DE PLUS (2026-07-28) — logique PURE écrite, UI NON câblée
 
 **Orbite vers l'EXTÉRIEUR** (`CaptureOrbite3D.planifierVersExterieur`) — pour un lieu CREUX
@@ -1560,6 +1674,37 @@ sans viser une reconstruction.
 - `CarteOrbite3DActivity` dessine un RECTANGLE quand `coins_lats/lons` sont fournis, le
   cercle sinon. Mêmes garde-fous qu'avant : espace carte, batterie, aperçu au sol.
 ⚠ NON VOLÉ.
+
+### AUDIT DU COMPORTEMENT DE VOL — QUADRILLAGE (2026-07-28)
+
+Le quadrillage réutilisant `executerCapture3D`, les 4 défauts corrigés pour l'orbite
+(altitude dans l'arrivée, `TRANSIT_TIMEOUT`, arrêt à `onStop`, queue gardée) le couvrent
+aussi. Deux défauts lui sont PROPRES :
+
+**1. ⚠⚠ DURÉE SOUS-ESTIMÉE D'UN FACTEUR 2,2.** Le planificateur supposait 6 m/s et 4 s par
+cliché ; l'exécuteur vole à **3 m/s**, RALENTIT dans les dix derniers mètres, et attend
+2 s + 0,6 s + 1,2 s + déclenchement à chaque station. Mesuré sur 100 × 100 m à 60 m
+(104 photos) : **11 min 26 s annoncées, 24 min 47 s réelles**.
+⚠ PORTÉE : la batterie exigée avant décollage se calcule sur cette durée. Sous-estimer d'un
+facteur deux fait partir une mission qui revient à moitié faite — et un jeu photogrammétrique
+incomplet ne se rattrape pas, il se revole.
+→ `dureeSautS()` reproduit la loi d'approche de `allerA`, et la durée somme les sauts RÉELS
+(les transits entre passages sont longs, ceux d'une ligne courts, la loi n'est pas linéaire).
+Le retour au point de départ est INCLUS. Une seule loi, deux usages : deux modèles finissent
+toujours par diverger.
+Conséquence assumée : beaucoup de quadrillages sont désormais annoncés comme dépassant une
+batterie, et le sont réellement. 100 × 150 m à 40 m → 64 min, donc refusé. C'est la vérité.
+
+**2. Le journal annonçait des valeurs d'ORBITE.** Le plan converti portait
+`hauteur_sujet=0m plancher=12m` — un quadrillage n'a pas de sujet et son plancher est de
+20 m. Des valeurs fausses écrites avec l'autorité d'une mesure.
+→ `Plan.motif` (`ORBITE`|`QUADRILLAGE`) ; le journal écrit `passages=` au lieu d'`anneaux=`
+et n'écrit hauteur/plancher que pour une orbite.
+
+**VÉRIFIÉ SAIN** : le lacet s'inverse bien à chaque ligne (boustrophédon), donc le passage
+oblique couvre les DEUX directions de vol.
+⚠ LIMITE CONNUE : les façades perpendiculaires au sens de vol ne sont vues qu'en nadir (le
+second balayage n'a pas d'oblique). Un bâtiment orienté en travers sera moins bien rendu.
 
 ### VOIE RETENUE (2026-07-27) : reconstruction sur le PC (RTX 3090), dépôt sur le serveur
 Christian a une **RTX 3090** (24 Go VRAM, 10 496 cœurs CUDA) — très au-dessus des exigences
