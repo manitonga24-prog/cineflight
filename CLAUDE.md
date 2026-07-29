@@ -1263,6 +1263,37 @@ décalées en rotation et le cerveau ne fusionne pas.
   l'état à `en_attente_ressources` en CONSERVANT les photos, au lieu de lancer un calcul que
   l'OOM killer tuera sans message. La page dit exactement ce qui manque.
 
+### MÉNAGE DES CORRECTIFS (2026-07-28) — inventaire, git local, fichiers entiers
+
+Une vingtaine de correctifs empilés sur `app.py` et `cine_panorama_stitch.py` : chaque
+nouveau patch devait deviner ce que les précédents avaient laissé. C'est ce qui a produit
+la parenthèse fausse et le `File` manquant (502 sur tout le site).
+
+**1. INVENTAIRE AVANT TOUT** : `_serveur_stream_key/etat_serveur.py` — cherche le MARQUEUR
+que chaque correctif laisse dans les fichiers, rend appliqué/MANQUE, détecte la forme
+cassée de la parenthèse. À lancer avant de figer quoi que ce soit, et après tout doute.
+
+**2. GIT LOCAL SUR LE SERVEUR** (`/root/cineflight_web/.git`, jamais poussé) : historique,
+diff et retour arrière pour `app.py`, qui ne peut PAS aller sur le dépôt GitHub — le dépôt
+est PUBLIC et app.py peut porter des secrets (JWT CineAuth notamment). `.gitignore` serveur :
+tokens, stream_keys.json, `_pano_jobs/`, `modeles3d/`, `.venv/`, `*.avant_*`.
+Les dizaines de `app.py.avant_*` sont remplacées par l'historique git (déplacées dans
+`anciennes_sauvegardes/`, non suivies).
+
+**3. `cine_panorama_stitch.py` CANONIQUE DANS LE DÉPÔT GitHub** (aucun secret, déjà servi
+à l'atelier par `/api/atelier/assembleur`). Récupéré depuis le serveur par cet endpoint
+même, vérifié par SHA-256 des deux côtés. Déploiement futur : éditer dans le dépôt → push →
+`curl` du fichier ENTIER sur le serveur → `sha256sum` → aucun redémarrage (l'atelier le
+retélécharge à chaque travail). **Plus de patch sur ce fichier.**
+
+**4. `app.py` : les patchs restent le véhicule** (la console DigitalOcean corrompt les gros
+collages), mais avec le git local ils deviennent vérifiables (`git diff` après application)
+et réversibles (`git checkout`). Chaque application = un commit local.
+
+RÈGLE DE VALIDATION inchangée : un déploiement se valide par un essai de bout en bout,
+jamais par la compilation — et les erreurs d'import se lisent avec
+`python -c "import app" > /dev/null` (jeter stdout, garder stderr).
+
 ### DÉPLOIEMENT SERVEUR — passer par GitHub, PAS par la console (2026-07-27)
 
 DÉPLOYÉ ET VÉRIFIÉ : `/vr3d/x` et `/modele3d/x` rendent 404 (route présente, objet absent).
