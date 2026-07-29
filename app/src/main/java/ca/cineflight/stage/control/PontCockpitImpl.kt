@@ -470,50 +470,102 @@ class PontDjiReelCockpit(
      * force RIEN et on le DIT : une balance qu'on croit figée et qui dérive donnerait un
      * panorama en camaïeu sans que personne comprenne pourquoi.
      */
+    /**
+     * Fige la balance des blancs sur la température COURANTE de la caméra.
+     *
+     * ⚠⚠ RÉÉCRITE LE 2026-07-29 D'APRÈS LA DOCUMENTATION DJI. L'ancienne version cherchait
+     * une constante d'énumération « MANUAL » dans `WhiteBalancePreset` /
+     * `CameraWhiteBalancePreset`, et échouait toujours — au vol du 2026-07-29 :
+     * « balance des blancs NON figée : mode manuel introuvable dans ce SDK ». Elle ne
+     * pouvait pas réussir : **`KeyWhiteBalance` n'attend pas une énumération mais une
+     * STRUCTURE**, `CameraWhiteBalanceInfo`, qui porte deux champs —
+     * `setWhiteBalanceMode(CameraWhiteBalanceMode)` et `setColorTemperature(Integer)`.
+     * Aucune liste blanche de constantes n'aurait pu trouver ce qui n'existe pas.
+     * Réf. api-reference-v5 · Value_Camera_Struct_CameraWhiteBalance.
+     *
+     * DEUX PIÈGES DE LA DOCUMENTATION, respectés ici :
+     *  - la température ne peut être posée QUE si le mode est déjà MANUAL — l'ordre compte ;
+     *  - l'unité est la CENTAINE de kelvins, dans [20, 100] : 50 signifie 5000 K.
+     *
+     * ⚠ ON NE DEVINE PAS DE TEMPÉRATURE. Si la caméra n'en rapporte aucune en automatique,
+     * on renonce et on le dit. Imposer 5500 K trahirait une lumière de fin de journée, et
+     * un panorama en camaïeu faux vaut moins qu'un panorama dont on sait la balance libre.
+     */
     fun verrouillerBalanceBlancs(): String {
-        // 1) Lire la valeur courante : c'est elle qu'on veut conserver.
-        val actuel = lireCameraBrutCible("KeyWhiteBalance")
-            ?: lireCameraBrutCible("KeyCameraWhiteBalance")
-        // 2) Trouver la constante de mode « manuel / personnalisé » du SDK.
-        val clsNoms = listOf(
-            "dji.sdk.keyvalue.value.camera.WhiteBalancePreset",
-            "dji.sdk.keyvalue.value.camera.CameraWhiteBalancePreset",
-        )
-        var manuel: Any? = null
-        for (n in clsNoms) {
-            val cls = try { Class.forName(n) } catch (_: Throwable) { continue }
-            val consts = cls.enumConstants ?: continue
-            manuel = consts.firstOrNull {
-                val s = (it as Enum<*>).name.uppercase()
-                s.contains("MANUAL") || s.contains("CUSTOM")
-            }
-            if (manuel != null) break
-            Log.w("PontDjiReelCockpit", "$n sans constante manuelle : " +
-                consts.joinToString { (it as Enum<*>).name })
+        val infoCls = try {
+            Class.forName("dji.sdk.keyvalue.value.camera.CameraWhiteBalanceInfo")
+        } catch (_: Throwable) {
+            return "balance des blancs NON figée : CameraWhiteBalanceInfo absent de ce SDK"
         }
-        if (manuel == null) return "balance des blancs NON figée : mode manuel introuvable dans ce SDK"
-        for (nomCle in listOf("KeyWhiteBalance", "KeyCameraWhiteBalance")) {
-            val champ = try { CameraKey::class.java.getField(nomCle).get(null) } catch (_: Throwable) { continue }
-            val cle = creerCleCameraCiblee(champ) ?: continue
-            try {
-                val km = KeyManager.getInstance()
-                val ms = km.javaClass.methods.firstOrNull {
-                    it.name == "setValue" && it.parameterTypes.size == 3
-                } ?: continue
-                ms.invoke(km, cle, manuel, object : CommonCallbacks.CompletionCallback {
-                    override fun onSuccess() {
-                        Log.i("PontDjiReelCockpit", "balance des blancs FIGÉE (était $actuel)")
-                    }
-                    override fun onFailure(error: dji.v5.common.error.IDJIError) {
-                        Log.w("PontDjiReelCockpit", "balance des blancs refusée : ${error.description()}")
-                    }
-                })
-                return "balance des blancs figée (était ${actuel ?: "?"}, clé $nomCle)"
-            } catch (e: Throwable) {
-                Log.w("PontDjiReelCockpit", "balance des blancs : ${e.message}")
-            }
+        val modeCls = try {
+            Class.forName("dji.sdk.keyvalue.value.camera.CameraWhiteBalanceMode")
+        } catch (_: Throwable) {
+            return "balance des blancs NON figée : CameraWhiteBalanceMode absent de ce SDK"
         }
-        return "balance des blancs NON figée : aucune clé exploitable dans ce SDK"
+        // Liste blanche STRICTE : le nom documenté, rien d'approchant. Ce projet a déjà
+        // écrit dans `KeyFlightMode` en croyant viser une lumière, faute de correspondance
+        // exacte.
+        val manuel = modeCls.enumConstants?.firstOrNull { (it as Enum<*>).name == "MANUAL" }
+            ?: return "balance des blancs NON figée : mode MANUAL absent de " +
+                (modeCls.enumConstants?.joinToString { (it as Enum<*>).name } ?: "?")
+
+        val champ = try { CameraKey::class.java.getField("KeyWhiteBalance").get(null) }
+            catch (_: Throwable) { return "balance des blancs NON figée : KeyWhiteBalance absente" }
+        val cle = creerCleCameraCiblee(champ)
+            ?: return "balance des blancs NON figée : clé non construite"
+        val km = KeyManager.getInstance()
+
+        // 1) LIRE la valeur courante. C'est elle qu'on veut conserver — pas une valeur
+        //    choisie par nous.
+        val courant = try {
+            val mg = km.javaClass.methods.firstOrNull { it.name == "getValue" && it.parameterTypes.size == 1 }
+            mg?.invoke(km, cle)
+        } catch (_: Throwable) { null }
+        val modeCourant = try {
+            courant?.javaClass?.getMethod("getWhiteBalanceMode")?.invoke(courant)
+        } catch (_: Throwable) { null }
+        val tempCourante = try {
+            courant?.javaClass?.getMethod("getColorTemperature")?.invoke(courant) as? Int
+        } catch (_: Throwable) { null }
+
+        if (tempCourante == null || tempCourante !in 20..100) {
+            // ⚠ REFUS HONNÊTE. En automatique, la caméra ne rapporte pas toujours la
+            // température qu'elle applique. Sans elle, figer voudrait dire en inventer une.
+            return "balance des blancs NON figée : la caméra ne rapporte pas de température" +
+                " exploitable (mode=$modeCourant temp=$tempCourante) — elle restera automatique"
+        }
+
+        // 2) CONSTRUIRE la structure : mode MANUEL, puis la température lue.
+        val cible = try {
+            val inst = infoCls.getDeclaredConstructor().newInstance()
+            infoCls.methods.first { it.name == "setWhiteBalanceMode" }.invoke(inst, manuel)
+            infoCls.methods.first { it.name == "setColorTemperature" }.invoke(inst, tempCourante)
+            inst
+        } catch (e: Throwable) {
+            return "balance des blancs NON figée : structure non construite (${e.message})"
+        }
+
+        try {
+            val ms = km.javaClass.methods.firstOrNull {
+                it.name == "setValue" && it.parameterTypes.size == 3
+            } ?: return "balance des blancs NON figée : setValue introuvable"
+            ms.invoke(km, cle, cible, object : CommonCallbacks.CompletionCallback {
+                override fun onSuccess() {
+                    val m = "balance des blancs FIGÉE : MANUAL à ${tempCourante * 100} K"
+                    Log.i("PontDjiReelCockpit", m)
+                    try { JournalVol.evenement(m) } catch (_: Throwable) {}
+                }
+                override fun onFailure(error: dji.v5.common.error.IDJIError) {
+                    val m = "!! balance des blancs REFUSÉE par la caméra : ${error.description()}"
+                    Log.w("PontDjiReelCockpit", m)
+                    try { JournalVol.anomalie(m) } catch (_: Throwable) {}
+                }
+            })
+        } catch (e: Throwable) {
+            return "balance des blancs NON figée : ${e.message}"
+        }
+        return "balance des blancs : MANUAL à ${tempCourante * 100} K demandé" +
+            " (était $modeCourant) — confirmation au journal"
     }
 
     /**
@@ -534,23 +586,24 @@ class PontDjiReelCockpit(
      */
     fun verrouillerExposition(): String {
         if (expoVerrouillee) return "exposition : déjà verrouillée"
-        val isoBrut = lireIsoBrut()          // ex. "ISO_400"
-        val shutBrut = lireShutterBrut()     // ex. "SHUTTER_1_120"
-        val iso = isoBrut?.let { Regex("(\\d+)").find(it)?.groupValues?.get(1)?.toIntOrNull() }
-        val shut = shutBrut?.removePrefix("SHUTTER_")?.replace('_', '/')
-        if (iso == null || shut.isNullOrBlank()) {
-            // ⚠ CE REFUS SE DIT MAINTENANT. Il n'allait qu'au Logcat, effacé en quelques
-            // heures : le panorama sortait avec des jointures visibles et rien n'expliquait
-            // pourquoi, des semaines plus tard.
-            val m = "!! exposition NON verrouillée (lecture impossible : iso=$isoBrut" +
-                    " vitesse=$shutBrut) — les jointures seront visibles"
-            Log.w("PontDjiReelCockpit", m)
-            return m
-        }
+        val isoBrut = lireIsoBrut()          // relevé au vol : "ISO_AUTO"
+        val shutBrut = lireShutterBrut()     // relevé au vol : "SHUTTER_SPEED1_16000"
+        // ⚠⚠ DEUX DÉFAUTS MESURÉS AU VOL DU 2026-07-29, ET C'EST CE JOURNAL QUI LES A DITS.
+        //
+        // 1. L'ISO ne rend PAS un nombre mais `ISO_AUTO`. L'ancien code y cherchait des
+        //    chiffres, n'en trouvait aucun, et sortait AVANT même de demander le mode
+        //    manuel. Le verrou n'a donc jamais tenu, sur aucun panorama — d'où les 2,48 EV
+        //    de dérive et les rectangles de luminosité.
+        // 2. Le préfixe réel est `SHUTTER_SPEED`, pas `SHUTTER_`. Le découpage produisait
+        //    `SPEED1/16000`, une valeur absurde qui aurait été refusée de toute façon.
+        //
+        // → ON NE RÉÉCRIT PLUS NI L'ISO NI LA VITESSE. Le mode MANUEL suffit : il FIGE les
+        //   valeurs courantes et arrête l'adaptation automatique, ce qui est tout ce qu'on
+        //   demande. Les réécrire ajoutait deux occasions d'échouer — deux noms d'énumération
+        //   à reconstruire à la main — pour aucun gain. La caméra sait mieux que nous ce
+        //   qu'elle vient de mesurer.
+        val avant = "mode=${lireModeExpoBrut()} iso=$isoBrut vitesse=$shutBrut"
         reglerModeExpo("MANUAL")
-        handlerPhoto.postDelayed({
-            try { reglerIso(iso); reglerShutter(shut) } catch (_: Throwable) {}
-        }, 300L)   // laisse le mode MANUAL s'appliquer avant de poser les valeurs
         // ⚠ VÉRIFICATION DIFFÉRÉE, SUR LE FIL PRINCIPAL. On relit ce que la caméra a
         // RÉELLEMENT retenu : une demande acceptée par le SDK n'est pas un réglage appliqué,
         // ce projet en a fait l'expérience assez souvent. Le fil principal est imposé —
@@ -570,7 +623,7 @@ class PontDjiReelCockpit(
             if (!tenu) try { JournalVol.anomalie("EXPOSITION_NON_TENUE mode=$mode") } catch (_: Throwable) {}
         }, 1200L)
         expoVerrouillee = true
-        val m = "exposition demandée en MANUEL : ISO $iso, vitesse $shut (vérification dans 1 s)"
+        val m = "exposition : mode MANUEL demandé (avant : $avant) — vérification dans 1 s"
         Log.i("PontDjiReelCockpit", m)
         return m
     }

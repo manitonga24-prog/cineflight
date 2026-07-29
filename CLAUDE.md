@@ -2069,6 +2069,42 @@ Presets rangés par NOMBRE DE PHOTOS croissant, avec la durée affichée.
 `dureeEstimeeS()` CALIBRÉE sur un vol réel : 25 photos en 218 s le 2026-07-27 → 8,7 s par
 cliché dont 3 s de délais configurés, donc 5,7 s d'overhead fixe. La formule redonne 217 s.
 
+### VOL DU 2026-07-29 — les deux verrous ont parlé, et les deux étaient faux
+
+Le journal ajouté la veille n'a rien réparé, mais il a NOMMÉ les causes. C'est exactement
+ce qu'on lui demandait.
+
+**EXPOSITION** — `!! exposition NON verrouillée (lecture impossible : iso=ISO_AUTO
+vitesse=SHUTTER_SPEED1_16000)`. Deux défauts dans la même fonction :
+1. L'ISO ne rend PAS un nombre mais **`ISO_AUTO`**. Le code y cherchait des chiffres, n'en
+   trouvait aucun, et sortait AVANT même de demander le mode manuel. Le verrou n'avait donc
+   jamais tenu sur aucun panorama — d'où les 2,48 EV de dérive mesurés la veille.
+2. Le préfixe réel est **`SHUTTER_SPEED`**, pas `SHUTTER_`. Le découpage produisait
+   `SPEED1/16000`, valeur absurde qui aurait été refusée de toute façon.
+→ CORRECTIF : on ne réécrit PLUS ni l'ISO ni la vitesse. Le mode MANUEL suffit — il fige les
+valeurs courantes et arrête l'adaptation, ce qui est tout ce qu'on demande. Les réécrire
+ajoutait deux noms d'énumération à reconstruire à la main, donc deux occasions d'échouer,
+pour aucun gain. La caméra sait mieux que nous ce qu'elle vient de mesurer.
+
+**BALANCE DES BLANCS** — `balance des blancs NON figée : mode manuel introuvable dans ce
+SDK`. Vérifié dans la documentation DJI : **`KeyWhiteBalance` n'attend pas une énumération
+mais une STRUCTURE**, `CameraWhiteBalanceInfo`, portant
+`setWhiteBalanceMode(CameraWhiteBalanceMode)` et `setColorTemperature(Integer)`. L'ancien
+code cherchait une constante dans `WhiteBalancePreset` / `CameraWhiteBalancePreset` — deux
+classes qui n'existent pas. Aucune liste blanche n'aurait trouvé ce qui n'existe pas.
+Réf. api-reference-v5 · `Value_Camera_Struct_CameraWhiteBalance`.
+DEUX PIÈGES respectés dans le correctif : la température n'est settable QUE si le mode est
+déjà MANUAL (l'ordre compte), et l'unité est la **centaine de kelvins** dans [20, 100] —
+50 signifie 5000 K.
+⚠ ON NE DEVINE PAS DE TEMPÉRATURE : si la caméra n'en rapporte aucune en automatique, on
+renonce et on le dit. Imposer 5500 K trahirait une lumière de fin de journée.
+
+**AUTRES RELEVÉS DU MÊME VOL** : le correctif `onStop` FONCTIONNE — deux
+`MISSION_INTERROMPUE cause=ecran_arriere_plan` au journal, là où la mission aurait continué
+à croire qu'elle volait. Une seule photo refusée (`-484 COMMAND_NOT_SUPPORT_NOW`), à
+surveiller sans conclure. Trois panoramas de 41 photos (préréglage ciel complet) en attente
+d'assemblage à l'atelier.
+
 ### ⚠⚠ LE VERROU D'EXPOSITION N'A JAMAIS TENU (2026-07-28) — mesuré, pas supposé
 
 SYMPTÔME : le panorama `eca54f3db18e`, géométriquement juste, montre des RECTANGLES de
