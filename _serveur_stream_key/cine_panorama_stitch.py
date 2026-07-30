@@ -228,12 +228,15 @@ def _ancrer_et_optimiser(pto, log):
         return False
 
     # Une ligne par image, sauf la premiere. Hugin ecrit lui-meme sous cette forme.
-    # ⚠ LACET SEUL (2026-07-29). Libérer aussi l'inclinaison et le roulis avait fait passer
-    # le ciel comblé de 9,0 % à 27,8 %, avec le tiers supérieur en aplat gris : l'optimiseur
-    # dispersait les images verticalement. Or un seul axe est bruité — le CAP vient de la
-    # boussole et dérive d'environ 1° ; l'inclinaison et le roulis viennent de la NACELLE,
-    # mécaniquement précise au dixième de degré. On ne corrige que ce qui est réellement faux.
-    variables = ["v y%d" % n for n in range(1, len(indices))]
+    # ⚠⚠ NE PAS RÉESSAYER « LACET SEUL » SANS PLUS DE CONNAISSANCE (essayé le 2026-07-29).
+    # Variante éprouvée : `["v y%d" % n]` — n'optimiser que le cap, en laissant
+    # l'inclinaison et le roulis de la nacelle intacts. Le raisonnement était bon (seul le
+    # cap est bruité, la nacelle est précise au dixième de degré) et le RÉSULTAT était
+    # désastreux : dominante magenta sur toute l'image et sphère repartie en « petite
+    # planète ». `autooptimiser -n` fait donc quelque chose aux paramètres photométriques
+    # que la simple liste de variables géométriques ne suffit pas à contrôler — cause NON
+    # établie. Revenu en arrière le même jour.
+    variables = ["v y%d p%d r%d" % (n, n, n) for n in range(1, len(indices))]
     apres = indices[-1] + 1
     nouvelles = gardees[:apres] + variables + gardees[apres:]
     try:
@@ -344,16 +347,17 @@ def assembler(dossier, out_jpg, largeur_max=12000, qualite=92, remplir_ciel=True
                 # angles_affines -> 27,8 %, avec le tiers superieur en aplat gris.
                 # L'ancrage empeche bien la sphere de pivoter, mais laisse l'optimiseur
                 # disperser les images. Le placement brut passe donc en premier.
-                # ⚠ ESSAI DU 2026-07-29 : la voie ancree « lacet seul » passe
-                # TEMPORAIREMENT en tete pour etre eprouvee. Le 27,8 % cite ci-dessus
-                # avait ete obtenu en liberant TROIS axes ; on n'en libere plus qu'un.
-                # CRITERE : ciel comble autour de 9,7 % ET sentiers rejoints.
-                # Si le remplissage remonte, remettre `angles_seuls` en premier.
+                tentatives.append(("angles_seuls", sans_opt))
+                # La voie ancree reste en SECOND : si le placement brut echoue un jour,
+                # elle vaut mieux que `angles_optimises`, qui fait pivoter la sphere.
+                # ⚠ DEUX ESSAIS POUR LA METTRE EN TETE ONT ECHOUE (2026-07-28 et 07-29) :
+                # trois axes libres -> 27,8 % de ciel comble ; lacet seul -> dominante
+                # magenta. Elle NE DOIT PAS repasser en premier sans une mesure qui
+                # l'appuie. Le dedoublement des sentiers reste ouvert.
                 affines = os.path.join(work, "angles_affines.pto")
                 shutil.copyfile(sans_opt, affines)
                 if _ancrer_et_optimiser(affines, log):
                     tentatives.append(("angles_affines", affines))
-                tentatives.append(("angles_seuls", sans_opt))
                 # L'optimisation reste disponible, mais en SECOURS seulement.
                 try:
                     _run(["autooptimiser", "-n", "-o", avec_opt, avec_opt], log)
