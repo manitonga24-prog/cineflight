@@ -51,6 +51,28 @@ class Reglages(context: Context) {
     fun setFps(f: Int) = prefs.edit().putInt("cam_fps", f).apply()
     fun resolutionNom(): String = when (getResolution()) { 1 -> "2.7K"; 2 -> "4K"; else -> "FHD" }
 
+    /**
+     * Qualité photo pour les panoramas et captures 3D.
+     * 0 = JPEG seul · 1 = DNG seul · 2 = DNG + JPEG (défaut).
+     *
+     * POURQUOI « DNG + JPEG » PAR DÉFAUT. Le flux efficace est en deux temps : le JPEG sert
+     * à l'assemblage rapide — celui de notre serveur — pour vérifier l'horizon, les raccords
+     * et la composition ; le DNG reste sur la carte et ne sert QUE pour reprendre les
+     * meilleurs panoramas sur ordinateur, avec une bien plus grande latitude sur le ciel et
+     * les ombres.
+     *
+     * ⚠ NOTRE CHAÎNE N'UTILISE PAS LE DNG. Le serveur assemble à partir des JPEG réduits.
+     * Choisir « DNG seul » revient donc à se priver de l'assemblage automatique : les
+     * fichiers seront là, mais rien ne les assemblera avant un traitement sur PC.
+     * ⚠ Et le DNG pèse trois à quatre fois plus lourd : 61 photos en DNG+JPEG approchent
+     * les 2,5 Go de carte.
+     */
+    fun getFormatPhoto(): Int = prefs.getInt("cam_format_photo", 2)
+    fun setFormatPhoto(i: Int) = prefs.edit().putInt("cam_format_photo", i.coerceIn(0, 2)).apply()
+    fun formatPhotoNom(): String = when (getFormatPhoto()) {
+        0 -> "JPEG"; 1 -> "DNG"; else -> "DNG+JPEG"
+    }
+
     // --- Cable-Cam : distance du rail "vers le sujet" (appui long sur Rail A), en metres ---
     fun getRailSujetDist(): Int = prefs.getInt("rail_sujet_dist", 8)
     fun setRailSujetDist(d: Int) = prefs.edit().putInt("rail_sujet_dist", d.coerceIn(3, 30)).apply()

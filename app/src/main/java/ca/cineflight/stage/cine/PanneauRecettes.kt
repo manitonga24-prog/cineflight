@@ -68,6 +68,21 @@ class PanneauRecettes(
     private val lancerPanoramaPaysage: ((PanoramaPreset, (Int, Int) -> Unit, (Int) -> Unit) -> Unit)? = null,
     /** Annule un panorama en cours. */
     private val annulerPanorama: (() -> Unit)? = null,
+    /** Met l'assemblage du panorama qui vient d'être capturé DANS LA FILE, pour le faire
+     *  à la maison. Les photos restent sur la carte du drone. null = bouton masqué. */
+    private val differerPanorama: (() -> Unit)? = null,
+    /** VISITE VIRTUELLE en ALTITUDE : plusieurs panoramas à la verticale du décollage.
+     *  (paliers en m, preset). null = carte "Visite virtuelle" masquée. */
+    private val lancerVisiteAltitude: ((List<Double>, PanoramaPreset) -> Unit)? = null,
+    /** VISITE VIRTUELLE en POINTS MARQUÉS : l'opérateur marche et marque chaque
+     *  emplacement au GPS du téléphone. (preset, altitude des panoramas en m). */
+    private val lancerVisitePoints: ((PanoramaPreset, Double) -> Unit)? = null,
+    /** RELIEF STÉRÉOSCOPIQUE : deux panoramas décalés, un par œil. (preset, altitude en m). */
+    private val lancerRelief3D: ((PanoramaPreset, Double) -> Unit)? = null,
+    /** MODÈLE 3D photogrammétrique. (rayon en m, clichés par tour, nombre d'anneaux). */
+    private val lancerModele3D: ((Double, Int, Int) -> Unit)? = null,
+    /** QUADRILLAGE d'un TERRAIN entier : l'écran suivant demande altitude et coins. */
+    private val lancerQuadrillage: (() -> Unit)? = null,
     /** Assemble un panorama 360 cote serveur (telecharge les photos du drone,
      *  reduit, envoie, suit le job, renvoie l'image). null = bouton masque.
      *  (onProgres(message, pct 0..100), onFini(fichier image ou null)). */
@@ -291,6 +306,10 @@ class PanneauRecettes(
         if (lancerPanoramaPaysage != null) {
             col.addView(espace(8)); col.addView(cartePanorama())
         }
+        if (lancerVisiteAltitude != null || lancerVisitePoints != null ||
+            lancerRelief3D != null || lancerModele3D != null || lancerQuadrillage != null) {
+            col.addView(espace(8)); col.addView(carteVisiteVr())
+        }
         col.addView(espace(8)); col.addView(carteLumieres())
 
         // ======================= 🟡 PILOTE INTERMEDIAIRE (repliable) =======================
@@ -364,6 +383,15 @@ class PanneauRecettes(
                 activity.getString(ca.cineflight.stage.R.string.pr_pers_rtk_desc)) {
                 activity.startActivity(android.content.Intent(activity,
                     ca.cineflight.stage.Phase3Activity::class.java).putExtra("PROFIL_SUJET", "MARCHE"))
+                fermer()
+            })
+            // ATHLETE — écran d'AFFICHAGE SEUL (étape 3 de l'intégration CineFlight Athlete).
+            // Vérifie la télémétrie du serveur ; n'engage AUCUN vol.
+            col.addView(espace(8))
+            col.addView(carteAction("🏃", activity.getString(ca.cineflight.stage.R.string.pr_athlete_test_titre),
+                activity.getString(ca.cineflight.stage.R.string.pr_athlete_test_desc)) {
+                activity.startActivity(android.content.Intent(activity,
+                    ca.cineflight.stage.AthleteActivity::class.java))
                 fermer()
             })
             if (analyseurVision != null && lancerCoroutine != null) {
@@ -2029,6 +2057,7 @@ class PanneauRecettes(
                 txtEtat.text = activity.getString(ca.cineflight.stage.R.string.pr_pos_trouvee_lieu)
                 val (lat, lon) = position
                 dernierLieuSurPlace = true   // GPS reel = decollage possible d'ici
+                ajouterAnimationAnalyse(col)
                 lancer {
                     val rapport = try { analyseur.analyser(lat, lon, 1500, profilChoisi) } catch (_: Exception) { null }
                     activity.runOnUiThread {
@@ -2069,6 +2098,23 @@ class PanneauRecettes(
         } catch (_: Exception) { }
     }
 
+    /** Indicateur d'activité (spinner animé + texte) pendant une analyse réseau qui prend du
+     *  temps. Retiré automatiquement à l'affichage du résultat (overlay.removeAllViews). */
+    private fun ajouterAnimationAnalyse(col: LinearLayout) {
+        col.addView(espace(16))
+        col.addView(android.widget.ProgressBar(activity).apply {
+            isIndeterminate = true
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { gravity = android.view.Gravity.CENTER_HORIZONTAL }
+        })
+        col.addView(espace(8))
+        col.addView(TextView(activity).apply {
+            text = activity.getString(ca.cineflight.stage.R.string.pr_analyse_en_cours)
+            textSize = 13f; setTextColor(TEXTE_DOUX); gravity = android.view.Gravity.CENTER
+        })
+    }
+
     private fun analyserPosition(lat: Double, lon: Double, label: String) {
         dernierLieuSurPlace = false   // lieu cherche par adresse = planification
         val analyseur = analyseurLieu ?: return
@@ -2083,6 +2129,7 @@ class PanneauRecettes(
                 textSize = 15f; setTextColor(TEXTE_DOUX)
             }
         })
+        ajouterAnimationAnalyse(col)
         overlay.addView(scroll)
         if (!analyseur.disponible()) {
             afficherLieuIndisponible(activity.getString(ca.cineflight.stage.R.string.pr_analyse_internet))
@@ -2641,6 +2688,182 @@ class PanneauRecettes(
         overlay.addView(scroll)
     }
 
+    // ===================== VISITE VIRTUELLE (plusieurs panoramas reliés) =====================
+    private fun carteVisiteVr(): View {
+        return cadre(pleineLargeur = true) {
+            val l = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
+            l.addView(TextView(activity).apply {
+                text = activity.getString(ca.cineflight.stage.R.string.pr_visite); textSize = 19f
+                setTextColor(TEXTE); setTypeface(typeface, Typeface.BOLD)
+            })
+            l.addView(TextView(activity).apply {
+                text = activity.getString(ca.cineflight.stage.R.string.pr_visite_desc)
+                textSize = 13f; setTextColor(TEXTE_DOUX); setPadding(0, dp(2), 0, 0)
+            })
+            l.setOnClickListener { afficherChoixVisite() }
+            l
+        }
+    }
+
+    /** Choix de la VARIANTE : en hauteur (sûr, sans déplacement) ou en points marqués. */
+    private fun afficherChoixVisite() {
+        val overlay = racine ?: return
+        overlay.removeAllViews()
+        val (scroll, col) = conteneurScroll()
+        col.addView(enTete(activity.getString(ca.cineflight.stage.R.string.pr_visite),
+            activity.getString(ca.cineflight.stage.R.string.pr_visite_choix)) { afficherEtape1() })
+        col.addView(espace(10))
+        if (lancerVisiteAltitude != null) {
+            col.addView(carteAction(
+                activity.getString(ca.cineflight.stage.R.string.pr_visite_alt),
+                activity.getString(ca.cineflight.stage.R.string.pr_visite_alt_desc)
+            ) { afficherPresetVisite(pointsMarques = false) })
+            col.addView(espace(8))
+        }
+        if (lancerVisitePoints != null) {
+            col.addView(carteAction(
+                activity.getString(ca.cineflight.stage.R.string.pr_visite_pts),
+                activity.getString(ca.cineflight.stage.R.string.pr_visite_pts_desc)
+            ) { afficherPresetVisite(pointsMarques = true) })
+            col.addView(espace(8))
+        }
+        if (lancerRelief3D != null) {
+            col.addView(carteAction(
+                activity.getString(ca.cineflight.stage.R.string.pr_relief),
+                activity.getString(ca.cineflight.stage.R.string.pr_relief_desc)
+            ) { afficherPresetVisite(pointsMarques = false, relief = true) })
+            col.addView(espace(8))
+        }
+        if (lancerModele3D != null) {
+            col.addView(carteAction(
+                activity.getString(ca.cineflight.stage.R.string.pr_modele3d),
+                activity.getString(ca.cineflight.stage.R.string.pr_modele3d_desc)
+            ) { afficherRayonModele3D() })
+        }
+        if (lancerQuadrillage != null) {
+            col.addView(espace(8))
+            col.addView(carteAction(
+                activity.getString(ca.cineflight.stage.R.string.pr_quadrillage),
+                activity.getString(ca.cineflight.stage.R.string.pr_quadrillage_desc)
+            ) {
+                fermer()                       // fermer AVANT d'agir : voir la note plus haut
+                lancerQuadrillage.invoke()
+            })
+        }
+        overlay.addView(scroll)
+    }
+
+    /** Rayon de l'orbite : c'est le réglage qui décide de la TAILLE du sujet reconstruit. */
+    private fun afficherRayonModele3D() {
+        val overlay = racine ?: return
+        overlay.removeAllViews()
+        val (scroll, col) = conteneurScroll()
+        col.addView(enTete(activity.getString(ca.cineflight.stage.R.string.pr_modele3d),
+            activity.getString(ca.cineflight.stage.R.string.pr_modele3d_rayon)) { afficherChoixVisite() })
+        // CONSIGNE DE DÉGAGEMENT, affichée AVANT le choix : c'est la hauteur des obstacles
+        // SUR LE CERCLE qui décide, pas celle du sujet au centre. L'anneau le plus bas est
+        // le danger (arbres de 15-25 m), et l'évitement d'obstacles n'est pas éprouvé en
+        // Virtual Stick — on l'écrit noir sur blanc plutôt que de le supposer connu.
+        col.addView(espace(10))
+        col.addView(cadre(pleineLargeur = true) {
+            TextView(activity).apply {
+                text = activity.getString(ca.cineflight.stage.R.string.pr_modele3d_degagement)
+                textSize = 16f; setTextColor(0xFFFFFFFF.toInt()); setLineSpacing(0f, 1.25f)
+            }
+        })
+        col.addView(espace(10))
+        // 18 clichés par tour = 20° de pas = 80 % de recouvrement (calculé dans
+        // CaptureOrbite3D, pas choisi au hasard). 3 anneaux -> 54 photos.
+        val choix = listOf(
+            Triple(20.0, ca.cineflight.stage.R.string.pr_modele3d_r20, 18),
+            Triple(35.0, ca.cineflight.stage.R.string.pr_modele3d_r35, 18),
+            Triple(50.0, ca.cineflight.stage.R.string.pr_modele3d_r50, 18),
+        )
+        for ((rayon, desc, _) in choix) {
+            col.addView(carteAction("${rayon.toInt()} m",
+                activity.getString(desc)) { afficherQualiteModele3D(rayon) })
+            col.addView(espace(8))
+        }
+        overlay.addView(scroll)
+    }
+
+    /**
+     * Qualité de la capture. Le levier qui compte n'est PAS le nombre de photos par tour
+     * (au-delà de 80 % de recouvrement, en ajouter n'apporte quasiment rien) mais le nombre
+     * d'ANNEAUX : chaque angle supplémentaire remplit une partie du modèle que les autres
+     * ne voient pas. D'où « standard » = 3 anneaux, « maximale » = 4.
+     */
+    private fun afficherQualiteModele3D(rayon: Double) {
+        val overlay = racine ?: return
+        overlay.removeAllViews()
+        val (scroll, col) = conteneurScroll()
+        col.addView(enTete(activity.getString(ca.cineflight.stage.R.string.pr_modele3d),
+            activity.getString(ca.cineflight.stage.R.string.pr_modele3d_qualite)) { afficherRayonModele3D() })
+        col.addView(espace(10))
+        // (libellé, clichés par tour, nombre d'anneaux, description)
+        val niveaux = listOf(
+            Triple(18, 3, ca.cineflight.stage.R.string.pr_modele3d_q_std),
+            Triple(24, 4, ca.cineflight.stage.R.string.pr_modele3d_q_max),
+        )
+        for ((n, anneaux, desc) in niveaux) {
+            val total = n * anneaux
+            val minutes = total * ca.cineflight.stage.cine.CaptureOrbite3D.SECONDES_PAR_CLICHE / 60
+            col.addView(carteAction(
+                activity.getString(ca.cineflight.stage.R.string.pr_modele3d_q_titre, total, minutes),
+                activity.getString(desc)
+            ) {
+                fermer()                       // fermer AVANT d'agir : voir la note plus haut
+                lancerModele3D?.invoke(rayon, n, anneaux)
+            })
+            col.addView(espace(8))
+        }
+        overlay.addView(scroll)
+    }
+
+    /** Qualité de chaque panorama. Un preset lourd × plusieurs points = vol long : on
+     *  affiche le TOTAL de photos pour que le choix se fasse en connaissance de cause. */
+    private fun afficherPresetVisite(pointsMarques: Boolean, relief: Boolean = false) {
+        val overlay = racine ?: return
+        overlay.removeAllViews()
+        val (scroll, col) = conteneurScroll()
+        col.addView(enTete(activity.getString(ca.cineflight.stage.R.string.pr_visite),
+            activity.getString(ca.cineflight.stage.R.string.pr_choisissez_qualite)) { afficherChoixVisite() })
+        col.addView(espace(10))
+        for (preset in PanoramaPreset.values()) {
+            col.addView(carteAction(
+                "${preset.nomFr}  ·  ${preset.nbPhotos()} photos / point",
+                preset.accroche
+            ) {
+                // ⚠ FERMER, pas vider. `removeAllViews()` laissait l'overlay plein écran
+                // en place : si l'action refuse (drone pas en vol, GPS absent…), elle
+                // n'affiche qu'un bandeau et l'utilisateur se retrouve devant un ÉCRAN
+                // NOIR sans aucun moyen d'en sortir. Et on ferme AVANT d'agir, pour que
+                // les messages de refus soient visibles.
+                fermer()
+                if (relief) lancerRelief3D?.invoke(preset, 40.0)
+                else if (pointsMarques) lancerVisitePoints?.invoke(preset, 40.0)
+                else lancerVisiteAltitude?.invoke(listOf(20.0, 45.0, 80.0), preset)
+            })
+            col.addView(espace(8))
+        }
+        overlay.addView(scroll)
+    }
+
+    /** Petite carte cliquable titre + sous-titre (évite de recopier le même bloc). */
+    private fun carteAction(titre: String, sousTitre: String, onClic: () -> Unit): View {
+        return cadre(pleineLargeur = true) {
+            val l = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
+            l.addView(TextView(activity).apply {
+                text = titre; textSize = 17f; setTextColor(TEXTE); setTypeface(typeface, Typeface.BOLD)
+            })
+            l.addView(TextView(activity).apply {
+                text = sousTitre; textSize = 12f; setTextColor(TEXTE_DOUX); setPadding(0, dp(2), 0, 0)
+            })
+            l.setOnClickListener { onClic() }
+            l
+        }
+    }
+
     // ===================== PANORAMA PHOTO 360 (mode paysage) =====================
     private fun cartePanorama(): View {
         return cadre(pleineLargeur = true) {
@@ -2679,7 +2902,11 @@ class PanneauRecettes(
                     setTextColor(TEXTE); setTypeface(typeface, Typeface.BOLD)
                 })
                 l.addView(TextView(activity).apply {
-                    text = preset.accroche; textSize = 12f; setTextColor(TEXTE_DOUX); setPadding(0, dp(2), 0, 0)
+                    // La DURÉE décide autant que la qualité : 61 photos, c'est dix minutes
+                    // de vol et une bonne part d'une batterie. Elle doit se lire au moment
+                    // du choix, pas se découvrir en vol.
+                    text = "${preset.accroche}  ·  ≈ ${preset.dureeTexte()} de vol"
+                    textSize = 12f; setTextColor(TEXTE_DOUX); setPadding(0, dp(2), 0, 0)
                 })
                 l.setOnClickListener { afficherExecutionPanorama(preset) }
                 l
@@ -2740,6 +2967,7 @@ class PanneauRecettes(
                 if (!estOuvert) return@runOnUiThread
                 when {
                     nb == -2 -> afficherFinPanorama(activity.getString(ca.cineflight.stage.R.string.pr_pas_en_vol), false)
+                    nb == -3 -> afficherFinPanorama(activity.getString(ca.cineflight.stage.R.string.pr_panorama_photo_echec), false)
                     nb <= 0  -> afficherFinPanorama(activity.getString(ca.cineflight.stage.R.string.pr_panorama_arrete), false)
                     else     -> afficherFinPanorama(activity.getString(ca.cineflight.stage.R.string.pr_photos_prises_fmt, nb), true)
                 }
@@ -2761,8 +2989,13 @@ class PanneauRecettes(
         val cbAssembler = assemblerPano360
         if (succes && cbAssembler != null) {
             col.addView(espace(10))
+            // LISIBILITÉ TERRAIN : l'assemblage dure plusieurs minutes et se lit en plein
+            // soleil, souvent à bout de bras. Le mauve d'accent sur fond sombre en petit
+            // corps était illisible — blanc, plus gros, et gras.
             val txtEtatAsm = TextView(activity).apply {
-                text = ""; textSize = 13f; setTextColor(ACCENT); setPadding(dp(2), dp(4), 0, dp(4))
+                text = ""; textSize = 19f; setTextColor(Color.WHITE)
+                setTypeface(typeface, Typeface.BOLD)
+                setPadding(dp(2), dp(8), 0, dp(8))
             }
             val btnAsm = Button(activity).apply {
                 text = "\uD83C\uDF10  Assembler mon panorama 360"; isAllCaps = false; textSize = 16f
@@ -2775,7 +3008,7 @@ class PanneauRecettes(
                 btnAsm.text = "Assemblage en cours\u2026"
                 txtEtatAsm.text = "Preparation\u2026"
                 cbAssembler(
-                    { msg, pct -> activity.runOnUiThread { if (estOuvert) txtEtatAsm.text = "$msg  ($pct%)" } },
+                    { msg, pct -> activity.runOnUiThread { if (estOuvert) txtEtatAsm.text = "$msg\n$pct %" } },
                     { fichier -> activity.runOnUiThread {
                         if (!estOuvert) return@runOnUiThread
                         if (fichier != null) afficherPanoramaResultat(fichier)
@@ -2788,6 +3021,27 @@ class PanneauRecettes(
                 )
             }
             col.addView(btnAsm)
+            // « PLUS TARD », sous le bouton principal : rapatrier 25 à 61 photos puis
+            // attendre le serveur immobilise le drone une dizaine de minutes, souvent à la
+            // meilleure lumière. Ce bouton rend le drone au pilote ; les photos restent sur
+            // sa carte et l'assemblage se fera depuis Outils → Assemblages en attente.
+            val cbDiff = differerPanorama
+            if (cbDiff != null) {
+                col.addView(espace(8))
+                col.addView(Button(activity).apply {
+                    text = activity.getString(ca.cineflight.stage.R.string.pr_pano_plus_tard)
+                    isAllCaps = false; textSize = 15f
+                    setTextColor(Color.WHITE)
+                    backgroundTintList = android.content.res.ColorStateList.valueOf(0xFF455A64.toInt())
+                    layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(48))
+                    setOnClickListener {
+                        isEnabled = false
+                        btnAsm.isEnabled = false
+                        txtEtatAsm.text = activity.getString(ca.cineflight.stage.R.string.pr_pano_mis_en_file)
+                        cbDiff()
+                    }
+                })
+            }
             col.addView(txtEtatAsm)
             col.addView(TextView(activity).apply {
                 text = activity.getString(ca.cineflight.stage.R.string.pr_pano_attente)
@@ -3096,33 +3350,31 @@ class PanneauRecettes(
 
         when (verdict) {
             is Verdict.Valide, is Verdict.Adapte -> {
+                // MÊME PLAN, DEUX FAÇONS DE PLACER LE DRONE. Ce ne sont pas deux actions
+                // équivalentes : « Lancer le plan » n'apparaît PLUS ici, mais seulement APRÈS
+                // le placement (écran auto-cadrage ou écran manuel). On propose d'abord la
+                // MÉTHODE de placement.
+                col.addView(TextView(activity).apply {
+                    text = activity.getString(ca.cineflight.stage.R.string.pr_placement_titre)
+                    textSize = 16f; setTextColor(TEXTE); setTypeface(typeface, Typeface.BOLD)
+                    setPadding(dp(4), 0, dp(4), dp(8))
+                })
                 if (demarrerAutoCadrageCb != null) {
                     col.addView(Button(activity).apply {
-                        text = "🛫  Placement auto — je me filme"; isAllCaps = false; textSize = 15f
+                        text = activity.getString(ca.cineflight.stage.R.string.pr_placement_auto_btn); isAllCaps = false; textSize = 15f
                         setTextColor(Color.WHITE)
                         backgroundTintList = android.content.res.ColorStateList.valueOf(0xFF00695C.toInt())
-                        layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(48))
+                        layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(52))
                         setOnClickListener { afficherAutoCadrage(r, verdict) }
                     })
                     col.addView(espace(8))
                 }
                 col.addView(Button(activity).apply {
-                    text = activity.getString(ca.cineflight.stage.R.string.pr_lancer_plan); isAllCaps = false; textSize = 16f
+                    text = activity.getString(ca.cineflight.stage.R.string.pr_placement_manuel_btn); isAllCaps = false; textSize = 15f
                     setTextColor(Color.WHITE)
                     backgroundTintList = android.content.res.ColorStateList.valueOf(0xFF2E7D32.toInt())
                     layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(52))
-                    setOnClickListener {
-                        val blocage = etatVolOk?.invoke()
-                        if (blocage != null && decollerAuSol != null && estPoseEtPret?.invoke() == true) {
-                            proposerDecollageAuSol(r, verdict)
-                        } else if (blocage != null) {
-                            com.google.android.material.dialog.MaterialAlertDialogBuilder(activity, ca.cineflight.stage.R.style.DialogCineFlight)
-                                .setTitle(activity.getString(ca.cineflight.stage.R.string.pr_drone_pas_pret))
-                                .setMessage(blocage)
-                                .setPositiveButton("Compris", null)
-                                .show()
-                        } else afficherExecution(r, verdict)
-                    }
+                    setOnClickListener { afficherPlacementManuel(r, verdict, sujetChoisi) }
                 })
             }
             is Verdict.Refuse -> {
@@ -3241,6 +3493,51 @@ class PanneauRecettes(
                 }
             }
             .show()
+    }
+
+    /** Placement MANUEL : le pilote décolle et positionne le drone lui-même avec les manettes,
+     *  puis lance le plan. « Lancer le plan » n'apparaît qu'ICI, une fois le placement fait —
+     *  jamais à côté du choix de méthode. Symétrique de l'auto-cadrage. */
+    private fun afficherPlacementManuel(r: Recette, verdict: Verdict, sujetChoisi: Scene?) {
+        val overlay = racine ?: return
+        overlay.removeAllViews()
+        val (scroll, col) = conteneurScroll()
+        col.addView(enTete(
+            activity.getString(ca.cineflight.stage.R.string.pr_placement_manuel_titre),
+            activity.getString(ca.cineflight.stage.R.string.pr_placement_manuel_msg)
+        ) { preparerEtAfficher(r, sujetChoisi) })
+        col.addView(espace(12))
+        // Décollage assisté si le drone est encore posé (sinon le pilote décolle à la RC).
+        if (decollerAuSol != null && estPoseEtPret?.invoke() == true) {
+            col.addView(Button(activity).apply {
+                text = activity.getString(ca.cineflight.stage.R.string.pr_decoller_btn); isAllCaps = false; textSize = 16f
+                setTextColor(Color.WHITE)
+                backgroundTintList = android.content.res.ColorStateList.valueOf(0xFF1565C0.toInt())
+                layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(50))
+                setOnClickListener { proposerDecollageAuSol(r, verdict) }
+            })
+            col.addView(espace(8))
+        }
+        // « Lancer le plan » : n'apparaît qu'ici, APRÈS que le pilote a placé le drone.
+        col.addView(Button(activity).apply {
+            text = activity.getString(ca.cineflight.stage.R.string.pr_lancer_plan); isAllCaps = false; textSize = 16f
+            setTextColor(Color.WHITE)
+            backgroundTintList = android.content.res.ColorStateList.valueOf(0xFF2E7D32.toInt())
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(52))
+            setOnClickListener {
+                val blocage = etatVolOk?.invoke()
+                if (blocage != null && decollerAuSol != null && estPoseEtPret?.invoke() == true) {
+                    proposerDecollageAuSol(r, verdict)
+                } else if (blocage != null) {
+                    com.google.android.material.dialog.MaterialAlertDialogBuilder(activity, ca.cineflight.stage.R.style.DialogCineFlight)
+                        .setTitle(activity.getString(ca.cineflight.stage.R.string.pr_drone_pas_pret))
+                        .setMessage(blocage)
+                        .setPositiveButton("Compris", null)
+                        .show()
+                } else afficherExecution(r, verdict)
+            }
+        })
+        overlay.addView(scroll)
     }
 
     /** Ecran AUTO-CADRAGE SOLO : le drone se place et cadre le sujet ; le plan se lance a la MAIN. */

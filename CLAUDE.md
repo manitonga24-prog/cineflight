@@ -2171,6 +2171,167 @@ au rang que la mesure lui donne.
 
 ⚠ Quatrième hypothèse démentie de la journée. Le dédoublement des sentiers reste OUVERT.
 
+### ⚠⚠ LACET SEUL — CINQUIÈME HYPOTHÈSE, DÉMENTIE AUSSI (2026-07-29)
+
+Ne libérer que le cap (`v y%d`) au lieu des trois axes devait corriger la seule erreur
+réellement bruitée. Résultat : **dominante magenta sur toute l'image** et sphère repartie en
+« petite planète ». `autooptimiser -n` touche donc aussi les paramètres PHOTOMÉTRIQUES, que
+la liste de variables géométriques ne suffit pas à contrôler — cause NON établie.
+→ Retour arrière serveur (`549f0129…`) et dépôt. Avertissements laissés DANS le code, à
+l'endroit exact où l'erreur se referait. La voie ancrée reste au SECOND rang.
+
+### LE DÉDOUBLEMENT MESURÉ (2026-07-29) — ce n'était pas la parallaxe
+
+Après cinq hypothèses démenties sur l'assemblage, mesure des DEUX causes possibles dans les
+journaux de vol, qui portent `pos=(lat,lon)`, `cap=` et `visé=` à ~1 Hz.
+Instrument : `_atelier/diag_cap_derive.py` (rejouable). Échelle commune : le PIXEL d'un
+équirectangulaire de 8192 (1° = 22,8 px ; 1 m de dérive à 40 m = 33 px).
+
+**4 panoramas, 204 clichés** (vols du 07-28 et 07-29, 40 m d'altitude) :
+
+| grandeur | mesure | en pixels |
+|---|---|---|
+| parallaxe entre clichés voisins | 0,11..0,14 m médian | **4 px** (11 px au pire) |
+| dérive du 1er au dernier cliché | 0,27..0,87 m | 9..28 px, couture de FERMETURE seule |
+| cap : biais moyen | **−1,8 à −2,5°** | 40..56 px mais GLOBAL → invisible |
+| cap : dispersion résiduelle | **0,43..0,57°** | **10..13 px** |
+| cap : écart entre voisins | 0..3° | 0..68 px |
+
+**L'erreur d'angle domine la parallaxe d'un facteur 3 à 6.** L'hypothèse « le drone bouge
+entre les photos » est donc ÉCARTÉE comme cause principale : le drone tient sa position à
+14 cm près d'un cliché à l'autre. Une exception relevée, à ne pas cacher : un panorama porte
+un saut isolé de 3,50 m (113 px) — une rafale ; ce seuil-là est bien de la parallaxe.
+
+⚠ **ET LE DÉFAUT ÉTAIT DANS L'APP, PAS DANS HUGIN** : `dernierePanoramaGrille` était
+construite par `PanoramaGrille.construire(preset, capDepart)` — la grille **PLANIFIÉE**.
+L'assembleur recevait donc « photo 3 prise à 45° » quand le drone était à 43°, et
+`angles_seuls` lui interdit de corriger : l'erreur reste intégralement dans l'image, aux
+jointures. **Sixième occurrence** du motif « une intention prise pour une mesure » dans ce
+projet, après le mode soccer pré-armé, le watchdog mort en arrière-plan, le bouton
+inexistant, la capture 3D sans Virtual Stick et le verrou d'exposition.
+
+CORRECTIF : le cap est RELEVÉ au déclenchement (`grillePanoramaMesuree`), et c'est lui qui
+part à l'assembleur. L'inclinaison reste celle DEMANDÉE — la nacelle est mécaniquement
+précise et le SDK ne publie pas son attitude réelle.
+- **Condition stricte** : autant d'angles relevés que de photos prises, sinon repli sur la
+  grille planifiée avec une ligne `!!`. Un relevé incomplet décalerait tous les angles
+  suivants d'un cran — le piège déjà rencontré avec les DNG, qui rendrait l'assemblage guidé
+  PIRE que l'automatique.
+- Ligne de journal `angles transmis = caps MESURÉS (N clichés) écart au planifié : moyen …°
+  pire …°` — la correction se CONSTATE au lieu de se supposer.
+- **Stéréo** : chaque œil a désormais SA grille mesurée, là où les deux partageaient la
+  grille planifiée. Le repère commun est conservé parce que les deux yeux s'accordent à
+  **0,11° et −0,05°** en moyenne (mesuré sur les 2 vols) : une boussole unique relue à deux
+  minutes d'intervalle ne dérive pas. C'était la seule raison de leur imposer une grille
+  identique. Repli sur la planifiée si un œil n'a pas pu être relevé.
+
+⚠ **LIMITE DE L'INSTRUMENT, à dire avant le résultat** : le journal écrivait le cap au DEGRÉ
+ENTIER. La dispersion de 0,5° est donc au plancher de la résolution — un ordre de grandeur,
+pas une valeur fine. → `JournalVol.etatSimple` écrit maintenant `cap=%.1f`, et la ligne
+`photo N/M prise cap_reel=…` donne le cap à l'instant EXACT du déclenchement, ce que la
+trace périodique ne pouvait pas garantir.
+
+⚠ **CE QUI N'EST PAS PROUVÉ** : que les sentiers se rejoindront. On retire 10 à 13 px
+d'erreur systématique (68 px au pire) là où la parallaxe en laisse 4 ; c'est le bon ordre de
+grandeur, ce n'est pas une démonstration. Le critère est le même que d'habitude : ciel comblé
+autour de 9,7 % ET jointures continues, sur un jeu de 41 photos.
+
+### VOLS DU 2026-07-30 — 2 acquis, 3 défauts dont un dans l'instrument de mesure
+
+Deux vols : un panorama seul (41 photos) puis un relief stéréo (41 + 40).
+
+**ACQUIS 1 — balance des blancs FIGÉE, première fois du projet.**
+`MANUAL à 5400 K demandé (était AUTO)` puis `balance des blancs FIGÉE : MANUAL à 5400 K`.
+La structure `CameraWhiteBalanceInfo` était la bonne piste.
+
+**ACQUIS 2 — les caps MESURÉS partent à l'assembleur.**
+`angles transmis = caps MESURÉS (41 clichés) écart au planifié : moyen 2,49° pire 3,20°`.
+Relevé au dixième de degré : biais **−2,55 à −2,71°** (la machine à états déclenche 2,6°
+avant la cible), dispersion **0,29 à 0,35°**, voisines jusqu'à 1,2°. Soit 58..62 px de
+rotation globale (invisible), **7 à 8 px de dispersion** et 27 px au pire entre voisines —
+tout cela n'est plus transmis de travers.
+
+**DÉFAUT 1 — ⚠⚠ LE VERROU D'EXPOSITION NE VERROUILLE TOUJOURS PAS, et ma vérification le
+masquait.** Ligne relevée telle quelle :
+`exposition VERROUILLÉE et vérifiée : mode=MANUAL iso=ISO_AUTO vitesse=SHUTTER_SPEED_AUTO`.
+Le mode est bien MANUAL ; les deux valeurs qui DÉTERMINENT l'exposition sont restées
+automatiques, et la vitesse est même passée d'une valeur concrète (`SHUTTER_SPEED1_3200`,
+relevée juste avant) à AUTO. **Basculer en manuel ne fige rien sur cette caméra** — mon
+raisonnement du 07-29 (« le mode suffit, la caméra sait mieux que nous ») est DÉMENTI.
+⚠ Et la vérification ne contrôlait que le MODE, écrivant « vérifiée » avec le démenti deux
+mots plus loin sur la même ligne. **Septième occurrence** du motif « une intention prise pour
+une mesure », cette fois DANS l'instrument censé le détecter.
+→ CORRECTIF : `lireExpositionEffective()` lit `CameraKey.KeyExposureSettings` (structure
+`CameraExposureSettings`) AVANT la bascule — `KeyISO` rend le RÉGLAGE (« ISO_AUTO »), jamais
+la valeur appliquée, donc il n'y avait rien à recopier. L'ISO et la vitesse sont écrits
+APRÈS le passage en MANUAL (ordre imposé, comme la température de couleur), et le verdict
+exige désormais **les trois** : mode MANUAL + ISO fixe + vitesse fixe.
+⚠ `KeyExposureSettings` non confirmée en MSDK 5.18 : écrite pour échouer proprement et DIRE
+ce qu'elle a trouvé, avec repli sur la vitesse relevée avant la bascule.
+
+**DÉFAUT 2 — ⚠⚠ 7,82 m D'ÉCART DE HAUTEUR ENTRE LES DEUX YEUX** (repéré par Christian à
+l'œil, confirmé par la mesure : gauche 32,21 m, droit 40,02 m).
+CAUSE : `monterA` abandonnait sur délai dépassé par un `break`, puis `return visiteEnCours`
+— c'est-à-dire **`true`**. L'appelant croyait la cible atteinte. Relevé : montée arrêtée à
+**31,8 m sur 40** après exactement 45,2 s, pour un budget de `40/1,2 + 12 = 45,3 s`. Le
+budget supposait 1,2 m/s dès le premier instant ; la montée réelle fait **0,71 m/s** de
+moyenne (décollage, mise en régime, vent).
+⚠ ET C'EST MON CORRECTIF DU 07-28 QUI A RENDU L'ÉCART VISIBLE : `allerA` contrôle désormais
+l'altitude, donc la translation vers l'est a corrigé l'œil droit à 40 m pendant que le gauche
+restait à 32 m. Avant, les deux yeux étaient également faux — donc fusionnables. Une
+correction juste appliquée à un seul des deux bouts crée un défaut pire que celui qu'elle
+corrige. 7,82 m à 40 m = **11,2° de disparité verticale**, vingt fois la tolérance de fusion.
+→ TROIS correctifs, parce qu'une garantie tenue par un seul bout n'en est pas une :
+1. `monterA` journalise `MONTEE_TIMEOUT` et rend **false** (même famille que
+   `ALTITUDE_CIBLE_NON_ATTEINTE` corrigé dans PremierVolActivity le 07-28 et jamais appliqué
+   ici — troisième écran touché, après Phase 3 et le vol découverte) ;
+2. budget porté à `altCible / 0,55 + 20 s`, calé sur la montée MESURÉE. Un budget serré
+   transforme une montée lente en panne déclarée ;
+3. la translation stéréo se cale sur l'altitude **réellement atteinte** (`altRef`), pas sur
+   la consigne : ce qui compte n'est pas de voler à 40 m, c'est que les deux yeux soient à
+   la MÊME hauteur. Plus `tolAltM = 0,4 m` (au lieu des 1,5 m du transit d'orbite, qui font
+   déjà 2,1° de disparité) et une ligne qui MESURE l'écart final entre les deux yeux.
+
+**DÉFAUT 3 — arrêt batterie MUET.** L'œil droit s'est arrêté à 40 clichés sur 41 — le NADIR,
+dernier du plan — sans une ligne au journal : `if (e.batteriePct in 0 until BATT_CRITIQUE)
+break`. La seule trace était `gauche=41 droite=40` dans le bilan. Conséquence : les deux yeux
+n'ont pas la même sphère par le bas (l'un a un trou comblé par le remplissage, l'autre non).
+→ `PANORAMA INTERROMPU : batterie N % — X clichés sur Y, la sphère sera INCOMPLÈTE`.
+
+**RELEVÉ SECONDAIRE** : base stéréo mesurée **1,29 m** pour 2,00 visés (1,89 m au vol du
+07-27). Consigné, non corrigé — c'est l'écart réel qui détermine l'intensité du relief.
+
+### RETOUR À L'ÉTAT DE PRODUCTION (2026-08-03) — 9 drapeaux relus un par un
+
+| drapeau | avant | après |
+|---|---|---|
+| `TEST_E01_SIGNE_THROTTLE` | **true** | false |
+| `TEST_E03_CESSATION_VS` | **true** | false |
+| `SUIVI_ATHLETE_SIMU` | **true** | false |
+| `SUIVI_ATHLETE_OBSERVER` | **false** | true |
+| `OBSTACLE_GATE_MIROIR_ACTIF`, `SOCCER_2D_VOL_REEL`, `TEST_E03_SIMULATEUR`, `TEST_E03_BANC`, `TEST_E03_STRESS` | false | inchangés |
+
+⚠ **`TEST_E01_SIGNE_THROTTLE` était armé depuis le 22 juillet**, soit douze jours. C'est le
+drapeau qui force un throttle de **+0,2 m/s en permanence** dès l'armement du mode 2D : une
+montée continue. Il n'avait de sens qu'au banc, hélices retirées, pour fournir une commande
+non nulle dont on mesure la persistance.
+
+⚠ **La combinaison athlète était la plus sournoise** : `SIMU=true` avec `OBSERVER=false`
+arme le suivi en VOL RÉEL sans le garde-fou d'observation. Personne n'a choisi cette
+combinaison — chaque drapeau avait été bougé séparément pour un essai précis, et c'est leur
+CONJONCTION, jamais relue, qui armait le vol. CLAUDE.md annonçait d'ailleurs
+« OBSERVER défaut true » alors que le code disait l'inverse : l'écart est corrigé dans le
+sens du document.
+
+CONSÉQUENCE ASSUMÉE : `SOCCER_2D_EMISSION_ACTIVE` vaut désormais false, donc le mode soccer
+2D de Phase 3 est **inerte** — profil personne, boucle 2D, miroir et émission tous coupés.
+C'est l'état de production. Pour un essai en vol 2D, le drapeau à lever est
+`SOCCER_2D_VOL_REEL` (throttle CALCULÉ et borné à 0,5 m/s), **jamais** celui d'E-01.
+Les modes panorama, relief et modèle 3D vivent dans MainActivity : ils ne sont pas touchés.
+
+LEÇON : un drapeau d'essai ne se relit pas à l'unité mais en TABLEAU. Deux valeurs
+individuellement défendables peuvent composer un état que personne n'a voulu.
+
 ### Exposition, balance des blancs, photométrie (2026-07-27) — vérifié sur sources
 - **Balance des blancs FIGÉE** au début de chaque panorama (`verrouillerBalanceBlancs`).
   C'est le seul point où toutes les sources s'accordent : en auto elle dérive d'une image à

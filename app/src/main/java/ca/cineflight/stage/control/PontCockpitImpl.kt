@@ -602,8 +602,53 @@ class PontDjiReelCockpit(
         //   demande. Les réécrire ajoutait deux occasions d'échouer — deux noms d'énumération
         //   à reconstruire à la main — pour aucun gain. La caméra sait mieux que nous ce
         //   qu'elle vient de mesurer.
-        val avant = "mode=${lireModeExpoBrut()} iso=$isoBrut vitesse=$shutBrut"
+        //
+        // ⚠⚠ ET CE RAISONNEMENT ÉTAIT FAUX — DÉMENTI PAR LA MESURE DU VOL DU 2026-07-30.
+        // Le journal de ce vol porte, APRÈS le passage en manuel :
+        //     exposition VERROUILLÉE et vérifiée : mode=MANUAL iso=ISO_AUTO
+        //     vitesse=SHUTTER_SPEED_AUTO
+        // Le mode est bien MANUAL, mais les deux valeurs qui DÉTERMINENT l'exposition sont
+        // restées automatiques — et la vitesse est même passée d'une valeur concrète
+        // (SHUTTER_SPEED1_3200, relevée juste avant) à AUTO. Basculer en manuel ne fige
+        // donc RIEN sur cette caméra : il faut écrire l'ISO et la vitesse.
+        // ⚠ Et ma vérification MENTAIT : elle ne contrôlait que le MODE, et écrivait
+        // « VERROUILLÉE et vérifiée » alors que le relevé disait AUTO deux mots plus loin.
+        // Septième fois dans ce projet qu'on prend une intention pour une mesure — cette
+        // fois dans l'instrument de mesure lui-même.
+        //
+        // L'ISO ne se lit PAS dans `KeyISO` : cette clé rend le RÉGLAGE (« ISO_AUTO »), pas
+        // la valeur appliquée. C'est `KeyExposureSettings` qui expose ce que la caméra fait
+        // réellement. On la lit AVANT de basculer, tant que l'automatique tient encore les
+        // bonnes valeurs pour la scène.
+        val (isoEffectif, shutEffectif) = lireExpositionEffective()
+        val avant = "mode=${lireModeExpoBrut()} iso=$isoBrut vitesse=$shutBrut" +
+            " effectif(iso=$isoEffectif vitesse=$shutEffectif)"
         reglerModeExpo("MANUAL")
+        // ⚠ ORDRE IMPOSÉ : l'ISO et la vitesse ne sont acceptés qu'en mode MANUAL. Les
+        // écrire avant la bascule serait refusé en silence — même piège que la température
+        // de couleur, qui n'est settable qu'une fois la balance en manuel.
+        handlerPhoto.postDelayed({
+            // Repli sur la vitesse relevée AVANT la bascule si la structure d'exposition
+            // n'est pas disponible : elle, au moins, portait une valeur concrète.
+            val shCible = shutEffectif
+                ?: shutBrut?.takeIf { !it.contains("AUTO", ignoreCase = true) }
+            if (isoEffectif != null && !isoEffectif.contains("AUTO", ignoreCase = true)) {
+                reglerCameraEnum("KeyISO", "dji.sdk.keyvalue.value.camera.CameraISO",
+                    choisirNom = isoEffectif, rangeKeyName = "KeyISORange")
+            } else {
+                try { JournalVol.anomalie(
+                    "ISO non figé : aucune valeur effective lisible (lu=$isoEffectif) — " +
+                    "la sensibilité restera automatique") } catch (_: Throwable) {}
+            }
+            if (shCible != null) {
+                reglerCameraEnum("KeyShutterSpeed",
+                    "dji.sdk.keyvalue.value.camera.CameraShutterSpeed",
+                    choisirNom = shCible, rangeKeyName = "KeyShutterSpeedRange")
+            } else {
+                try { JournalVol.anomalie(
+                    "vitesse non figée : aucune valeur concrète lisible") } catch (_: Throwable) {}
+            }
+        }, 400L)
         // ⚠ VÉRIFICATION DIFFÉRÉE, SUR LE FIL PRINCIPAL. On relit ce que la caméra a
         // RÉELLEMENT retenu : une demande acceptée par le SDK n'est pas un réglage appliqué,
         // ce projet en a fait l'expérience assez souvent. Le fil principal est imposé —
@@ -612,20 +657,69 @@ class PontDjiReelCockpit(
             val mode = try { lireModeExpoBrut() } catch (_: Throwable) { null }
             val iso2 = try { lireIsoBrut() } catch (_: Throwable) { null }
             val sh2 = try { lireShutterBrut() } catch (_: Throwable) { null }
-            val tenu = mode?.contains("MANUAL", ignoreCase = true) == true
+            // ⚠ LES TROIS CONDITIONS, PAS SEULEMENT LE MODE. Un mode MANUAL avec ISO et
+            // vitesse sur AUTO laisse la caméra s'adapter exactement comme avant : c'est
+            // ce que le vol du 2026-07-30 a montré, sous une ligne qui annonçait
+            // « VERROUILLÉE et vérifiée ». Un verrou se juge sur ce qu'il retient.
+            val auto = { v: String? -> v == null || v.contains("AUTO", ignoreCase = true) }
+            val modeOk = mode?.contains("MANUAL", ignoreCase = true) == true
+            val tenu = modeOk && !auto(iso2) && !auto(sh2)
             val m = if (tenu)
                 "exposition VERROUILLÉE et vérifiée : mode=$mode iso=$iso2 vitesse=$sh2"
             else
-                "!! EXPOSITION NON TENUE : mode=$mode (attendu MANUAL) iso=$iso2" +
-                " vitesse=$sh2 — l'auto-exposition va dériver et les jointures seront visibles"
+                "!! EXPOSITION NON TENUE : mode=$mode iso=$iso2 vitesse=$sh2" +
+                " (attendu MANUAL + ISO et vitesse fixes) — l'auto-exposition va dériver" +
+                " et les jointures resteront visibles"
             Log.i("PontDjiReelCockpit", m)
             try { JournalVol.evenement(m) } catch (_: Throwable) {}
-            if (!tenu) try { JournalVol.anomalie("EXPOSITION_NON_TENUE mode=$mode") } catch (_: Throwable) {}
-        }, 1200L)
+            if (!tenu) try { JournalVol.anomalie(
+                "EXPOSITION_NON_TENUE mode=$mode iso=$iso2 vitesse=$sh2") } catch (_: Throwable) {}
+        }, 1600L)
         expoVerrouillee = true
         val m = "exposition : mode MANUEL demandé (avant : $avant) — vérification dans 1 s"
         Log.i("PontDjiReelCockpit", m)
         return m
+    }
+
+    /**
+     * Lit l'exposition EFFECTIVEMENT appliquée par la caméra : (ISO, vitesse).
+     *
+     * POURQUOI CETTE CLÉ ET PAS `KeyISO`. `KeyISO` rend le RÉGLAGE — en automatique elle
+     * répond « ISO_AUTO », ce qui ne dit rien de la sensibilité réellement employée. Il n'y
+     * a donc aucune valeur à recopier au moment de figer. `CameraKey.KeyExposureSettings`
+     * rend une structure `CameraExposureSettings` qui porte, elle, ce que la caméra fait :
+     * ISO, vitesse, ouverture, correction. C'est la seule source utilisable ici.
+     *
+     * ⚠ NON CONFIRMÉE EN MSDK 5.18 : la clé est écrite pour ÉCHOUER PROPREMENT et DIRE ce
+     * qu'elle a trouvé, jamais pour inventer une valeur. Rend `null to null` si absente —
+     * l'appelant journalise alors une anomalie plutôt que de croire l'exposition figée.
+     */
+    private fun lireExpositionEffective(): Pair<String?, String?> {
+        return try {
+            val champ = dji.sdk.keyvalue.key.CameraKey::class.java
+                .getField("KeyExposureSettings").get(null)
+            val cle = creerCleCameraCiblee(champ) ?: creerCleReflexion(champ)
+                ?: return null to null
+            val km = KeyManager.getInstance()
+            val mg = km.javaClass.methods.firstOrNull {
+                it.name == "getValue" && it.parameterTypes.size == 1
+            }
+            val v = mg?.invoke(km, cle) ?: return null to null
+            // Les accesseurs varient de casse selon les versions (getIso / getISO) :
+            // on compare sans tenir compte de la casse plutôt que de parier sur un nom.
+            val lire = { noms: List<String> ->
+                v.javaClass.methods.firstOrNull { m ->
+                    noms.any { it.equals(m.name, ignoreCase = true) } && m.parameterTypes.isEmpty()
+                }?.invoke(v)
+            }
+            val iso = (lire(listOf("getIso", "getISO")) as? Enum<*>)?.name
+            val vit = (lire(listOf("getShutterSpeed")) as? Enum<*>)?.name
+            Log.i("PontDjiReelCockpit", "KeyExposureSettings : iso=$iso vitesse=$vit")
+            iso to vit
+        } catch (e: Throwable) {
+            Log.w("PontDjiReelCockpit", "KeyExposureSettings indisponible : ${e.message}")
+            null to null
+        }
     }
 
     /** Restaure l'exposition AUTOMATIQUE (fin ou annulation du panorama). Idempotent. */

@@ -25,4 +25,11 @@ sealed interface LiveStreamState {
 
     /** Arret demande, en attente de confirmation du SDK. */
     data object Stopping : LiveStreamState
+
+    /**
+     * Le direct n'a pas pu demarrer (ou s'est arrete sur erreur). [raison] est un
+     * message deja rendu sur (aucun secret : ni URL RTMP, ni cle). Sert a AFFICHER
+     * la cause reelle a l'operateur au lieu de retomber en silence sur "Arrete".
+     */
+    data class Erreur(val raison: String) : LiveStreamState
 }

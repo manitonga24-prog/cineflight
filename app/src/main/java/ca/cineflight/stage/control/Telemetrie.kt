@@ -37,6 +37,8 @@ data class EtatCockpit(
     val signalVideoPct: Int = -1, // qualité flux vidéo 0..100
     // --- caméra / nacelle ---
     val enregistre: Boolean = false,
+    /** Durée d'enregistrement en cours (s) lue au DRONE ; -1 = inconnue (repli chrono app). */
+    val secondesEnregistrement: Int = -1,
     val gimbalPitchDeg: Float = Float.NaN,
     // --- stockage (carte SD du drone) ---
     val carteSdPresente: Boolean = false,   // true si une carte SD est insérée et utilisable

@@ -1,4 +1,4 @@
-package ca.cineflight.stage.sport.soccer
+﻿package ca.cineflight.stage.sport.soccer
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -113,8 +113,8 @@ class CommandeWatchdogTest {
         CommandeWatchdog(timeoutMs = 0L)
     }
 
-    @Test fun timeout_par_defaut_est_500ms() {
-        assertEquals(500L, CommandeWatchdog.DEFAUT_TIMEOUT_MS)
+    @Test fun timeout_par_defaut_est_350ms() {
+        assertEquals(350L, CommandeWatchdog.DEFAUT_TIMEOUT_MS)
     }
 
     // --- CONCURRENCE : UN batteur, lecteurs en LECTURE PURE ---
@@ -143,12 +143,39 @@ class CommandeWatchdogTest {
                 start.await()
                 while (running.get()) {
                     val now = System.nanoTime()
-                    val age = w.ageMs(now)
+                    val avant = w.ageMs(now)
                     val frais = w.cycleFrais(now)
-                    // age doit toujours etre >= 0 (ou MAX = jamais bat). Jamais negatif expose.
-                    if (age < 0L) { anomalie.set(true); running.set(false) }
-                    // si le composant dit "frais", l'age au meme instant ne peut pas etre infini.
-                    if (frais && age == Long.MAX_VALUE) { anomalie.set(true); running.set(false) }
+                    val apres = w.ageMs(now)
+                    // (1) INVARIANT INCONDITIONNEL : l'age expose n'est JAMAIS negatif.
+                    if (avant < 0L || apres < 0L) { anomalie.set(true); running.set(false) }
+                    // (2) DOMAINE : l'age expose est soit une mesure (0..timeout et au-dela),
+                    // soit l'infini conventionnel. Aucune autre valeur n'a de sens.
+                    if (avant != Long.MAX_VALUE && avant < 0L) { anomalie.set(true); running.set(false) }
+
+                    // ⚠ CE QUI N'EST **PAS** TESTE ICI, ET POURQUOI (2026-07-27).
+                    //
+                    // La version precedente comparait `frais` a l'age, en ne jugeant que si
+                    // l'age relu etait identique (« etat stable »). Ce garde-fou est FAUX :
+                    // c'est un probleme ABA. L'etat peut BOUGER puis revenir a la meme VALEUR
+                    // AFFICHEE. Sequence reelle, observee au build du 2026-07-27 :
+                    //   - le lecteur fige now = T ;
+                    //   - `avant` = infini (aucun battement encore) ;
+                    //   - le batteur pose D1 < T (horloge prise avant T, ecrite apres) ->
+                    //     `frais` = true, legitimement ;
+                    //   - le batteur pose D2 > T -> `apres` = infini a nouveau.
+                    // Les deux lectures d'age sont egales, l'etat a pourtant change DEUX fois,
+                    // et le test criait a l'anomalie sur un entrelacement parfaitement correct.
+                    //
+                    // L'API n'expose pas de lecture ATOMIQUE du couple (age, fraicheur) — et
+                    // elle n'en a pas besoin : en production les deux appels sont sur le MEME
+                    // fil (boucle pilote). La coherence age/fraicheur se teste donc en
+                    // MONO-THREAD, de facon deterministe :
+                    // `invariant_battre_puis_lire_est_frais_mono_thread` s'en charge.
+                    // Ce test-ci ne garde que ce qu'il peut prouver sous concurrence :
+                    // aucune exception, aucune valeur hors domaine. `cycleFrais` est tout de
+                    // meme APPELE en boucle — c'est lui qu'on veut voir survivre aux acces
+                    // concurrents, sa VALEUR n'etant pas jugeable ici.
+                    if (frais && avant < 0L) { anomalie.set(true); running.set(false) }
                 }
             }
         }
@@ -173,3 +200,4 @@ class CommandeWatchdogTest {
         }
     }
 }
+

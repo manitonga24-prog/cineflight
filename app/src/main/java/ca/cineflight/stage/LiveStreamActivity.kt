@@ -61,8 +61,11 @@ class LiveStreamActivity : AppCompatActivity() {
     private lateinit var blocNomDest: com.google.android.material.textfield.TextInputLayout
     private lateinit var champNomDest: TextInputEditText
 
-    /** URL RTMPS par defaut de YouTube. */
-    private val URL_YOUTUBE = "rtmps://a.rtmps.youtube.com/live2"
+    /** URL RTMP par defaut de YouTube.
+     *  IMPORTANT : on utilise rtmp:// (port 1935), PAS rtmps:// (TLS/443). Les drones
+     *  DJI echouent au handshake TLS avec rtmps ("TLS_Connect failed"), la session
+     *  s'ouvre mais aucune image ne part (fps/debit 0). rtmp:// simple fonctionne. */
+    private val URL_YOUTUBE = "rtmp://a.rtmp.youtube.com/live2"
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -88,7 +91,7 @@ class LiveStreamActivity : AppCompatActivity() {
         findViewById<MaterialButton>(R.id.btnEnregistrerCle).setOnClickListener { enregistrerCle() }
         findViewById<MaterialButton>(R.id.btnSupprimerCle).setOnClickListener { supprimerCle() }
         btnDemarrer.setOnClickListener { demarrer() }
-        btnArreter.setOnClickListener { service.arreter() }
+        btnArreter.setOnClickListener { arreter() }
         btnTesterConnexion.setOnClickListener { testerConnexion() }
         // Changement de destination : ajuste l'UI + pre-remplit l'URL.
         groupeDestination.addOnButtonCheckedListener { _, checkedId, isChecked ->
@@ -100,7 +103,10 @@ class LiveStreamActivity : AppCompatActivity() {
         chargerQualite()
         rafraichirEtatCle()
         observerMoteur()
-        synchroniserCleDepuisCompte()   // recupere AUTO la cle du compte web (aucun geste requis)
+        // Recupere AUTO la cle du compte web (aucun geste requis). Le direct se lance
+        // ensuite par le bouton "Demarrer le direct" (pas d'auto-start : il laissait
+        // le bouton grise si le drone tardait a confirmer).
+        synchroniserCleDepuisCompte()
     }
 
     /**
@@ -137,7 +143,8 @@ class LiveStreamActivity : AppCompatActivity() {
                     }
                 } else {
                     // Destination active = YouTube : URL serveur du compte (sinon defaut conserve).
-                    res.serveurUrl?.let { serveur ->
+                    // On corrige un eventuel rtmps:// YouTube (TLS incompatible drone) en rtmp://.
+                    corrigerUrlYoutube(res.serveurUrl)?.let { serveur ->
                         champUrlServeur.setText(serveur)
                         memoriserUrlServeur(serveur)
                     }
@@ -180,13 +187,29 @@ class LiveStreamActivity : AppCompatActivity() {
 
     // --- URL serveur memorisee (non sensible : simples SharedPreferences) ---
 
+    /**
+     * Migre une ancienne URL YouTube en rtmps:// (TLS, incompatible drone DJI) vers
+     * l'URL rtmp:// simple qui fonctionne. Ne touche PAS les URL regie ni les URL
+     * deja correctes. Corrige l'ancienne valeur memorisee OU recue du compte.
+     */
+    private fun corrigerUrlYoutube(url: String?): String? {
+        if (url == null) return null
+        val u = url.trim()
+        // Cible uniquement les URL YouTube en rtmps (le probleme TLS_Connect).
+        return if (u.startsWith("rtmps://") && u.contains("youtube")) {
+            URL_YOUTUBE   // rtmp://a.rtmp.youtube.com/live2
+        } else u
+    }
+
     private fun chargerUrlServeur() {
         // En mode regie, l'URL est deja pre-remplie par appliquerDestination : ne pas ecraser.
         if (destinationRegie()) return
-        val enregistree = getSharedPreferences("cineflight", MODE_PRIVATE)
-            .getString(PREF_URL_SERVEUR, null)
+        val enregistree = corrigerUrlYoutube(
+            getSharedPreferences("cineflight", MODE_PRIVATE).getString(PREF_URL_SERVEUR, null)
+        )
         if (!enregistree.isNullOrBlank()) {
             champUrlServeur.setText(enregistree)
+            memoriserUrlServeur(enregistree)   // persiste la version corrigee
         }
         // Sinon on garde la valeur par defaut prereplie dans le layout.
     }
@@ -213,10 +236,20 @@ class LiveStreamActivity : AppCompatActivity() {
             info("Saisis d'abord une cle de diffusion.")
             return
         }
+        // 1) Stockage local (chiffre) : le direct peut demarrer immediatement.
         service.enregistrerCle(cle)
         champCle.text = null                 // SECURITE : on ne garde pas la cle a l'ecran
         rafraichirEtatCle()
-        info("Cle enregistree sur cet appareil.")
+        // 2) Envoi vers le compte CineFlight (POST /api/stream_key) pour que le web,
+        //    la page de partage et les autres appareils la connaissent aussi. Non
+        //    bloquant : si non connecte ou reseau absent, la cle reste utilisable en local.
+        lifecycleScope.launch {
+            val pousse = ca.cineflight.stage.cine.CineAuth.envoyerCleStream(applicationContext, cle)
+            info(
+                if (pousse) "Cle enregistree sur cet appareil et synchronisee sur ton compte CineFlight."
+                else "Cle enregistree sur cet appareil. (Non synchronisee sur le compte : connecte-toi pour la partager avec le web.)"
+            )
+        }
     }
 
     private fun supprimerCle() {
@@ -333,6 +366,22 @@ class LiveStreamActivity : AppCompatActivity() {
         }
     }
 
+    /**
+     * Arrete le direct : coupe le flux DJI ET, en mode YouTube, termine le broadcast cote
+     * serveur (stop_live). Sans cela, la page publique /live/{user} continuerait d'afficher
+     * l'ancienne video une fois le direct fini (« Video non disponible »). En mode Regie,
+     * il n'y a pas de broadcast YouTube a terminer : on se contente d'arreter le flux.
+     */
+    private fun arreter() {
+        service.arreter()   // coupe le flux DJI (bouton reste reactif via le flux d'etat)
+        if (!destinationRegie()) {
+            // Non bloquant : si non connecte / reseau absent, l'arret DJI a deja eu lieu.
+            lifecycleScope.launch {
+                ca.cineflight.stage.cine.CineAuth.arreterLiveYoutube(applicationContext)
+            }
+        }
+    }
+
     // --- Observation du moteur (etat + metriques) ---
 
     private fun observerMoteur() {
@@ -350,13 +399,33 @@ class LiveStreamActivity : AppCompatActivity() {
             LiveStreamState.Starting -> "Demarrage…"
             LiveStreamState.Streaming -> "EN DIRECT"
             LiveStreamState.Stopping -> "Arret…"
+            is LiveStreamState.Erreur -> "Echec"
         }
         txtEtat.text = "Etat : $libelle"
 
-        val enCours = etat != LiveStreamState.Idle
+        // En cas d'echec, on AFFICHE la raison reelle du SDK (au lieu de rester muet)
+        // et on montre une seule fois un dialogue explicite.
+        if (etat is LiveStreamState.Erreur) {
+            txtResultatTest.text = "⚠ ${etat.raison}"
+            txtResultatTest.setTextColor(0xFFC62828.toInt())
+            if (etat.raison != derniereErreurAffichee) {
+                derniereErreurAffichee = etat.raison
+                info("Le direct n'a pas pu demarrer.\n\nRaison : ${etat.raison}")
+            }
+        } else {
+            derniereErreurAffichee = null
+        }
+
+        // Idle et Erreur autorisent un (re)demarrage ; les autres etats l'interdisent.
+        val enCours = etat is LiveStreamState.Starting ||
+            etat is LiveStreamState.Streaming ||
+            etat is LiveStreamState.Stopping
         btnDemarrer.isEnabled = !enCours
-        btnArreter.isEnabled = enCours
+        btnArreter.isEnabled = etat is LiveStreamState.Streaming || etat is LiveStreamState.Starting
     }
+
+    // Evite de re-afficher le meme dialogue d'erreur a chaque emission du flux.
+    private var derniereErreurAffichee: String? = null
 
     private fun afficherMetriques(m: LiveStreamMetrics) {
         txtResolution.text = "Resolution : ${m.resolution ?: "—"}"

@@ -71,7 +71,7 @@ class LecteurMissionKmz(
                     while (e != null) {
                         if (e.name.endsWith("waylines.wpml")) {
                             val xml = zip.readBytes().toString(Charsets.UTF_8)
-                            val m = Regex("<coordinates>\\s*([-0-9.]+),([-0-9.]+)").find(xml)
+                            val m = Regex("<(?:\\w+:)?coordinates>\\s*([-0-9.]+),([-0-9.]+)").find(xml)
                             if (m != null) {
                                 val lon = m.groupValues[1].toDoubleOrNull()
                                 val lat = m.groupValues[2].toDoubleOrNull()
@@ -95,7 +95,7 @@ class LecteurMissionKmz(
                     while (e != null) {
                         if (e.name.endsWith("waylines.wpml")) {
                             val xml = zip.readBytes().toString(Charsets.UTF_8)
-                            Regex("<coordinates>\\s*([-0-9.]+),([-0-9.]+)").findAll(xml).forEach { m ->
+                            Regex("<(?:\\w+:)?coordinates>\\s*([-0-9.]+),([-0-9.]+)").findAll(xml).forEach { m ->
                                 val lon = m.groupValues[1].toDoubleOrNull()
                                 val lat = m.groupValues[2].toDoubleOrNull()
                                 if (lat != null && lon != null) out.add(lat to lon)
@@ -326,11 +326,11 @@ class LecteurMissionKmz(
     private fun parserWpml(xml: String): List<WpMission> {
         val wps = ArrayList<WpMission>()
         // chaque <Placemark> ... </Placemark>
-        val placemarks = Regex("<Placemark>(.*?)</Placemark>", RegexOption.DOT_MATCHES_ALL)
+        val placemarks = Regex("<(?:\\w+:)?Placemark>(.*?)</(?:\\w+:)?Placemark>", RegexOption.DOT_MATCHES_ALL)
             .findAll(xml).map { it.groupValues[1] }.toList()
         for (pm in placemarks) {
             // coordinates : "lon,lat"
-            val coord = Regex("<coordinates>\\s*([-0-9.]+),([-0-9.]+)")
+            val coord = Regex("<(?:\\w+:)?coordinates>\\s*([-0-9.]+),([-0-9.]+)")
                 .find(pm)?.groupValues ?: continue
             val lon = coord[1].toDoubleOrNull() ?: continue
             val lat = coord[2].toDoubleOrNull() ?: continue

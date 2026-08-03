@@ -1739,6 +1739,23 @@ class MainActivity : AppCompatActivity() {
     private var dernierPanoramaNb: Int = 0
     /** Grille (cap, inclinaison) du dernier panorama capturé, pour un assemblage guidé. */
     private var dernierePanoramaGrille: List<Pair<Float, Float>>? = null
+    /**
+     * Caps RÉELLEMENT relevés au moment de chaque déclenchement, remplis au fil de la
+     * capture. Ce qui est transmis à l'assembleur, c'est ceci — pas la grille planifiée.
+     *
+     * ⚠ MESURÉ SUR DEUX VOLS (2026-07-28 et 07-29, 4 panoramas, 204 clichés) : le cap réel
+     * au déclenchement est en retard de **1,8 à 2,5° sur le cap visé**, avec une dispersion
+     * résiduelle de 0,4 à 0,6°. Le biais seul ne fait que tourner la sphère (invisible),
+     * mais le résidu place chaque image de **10 à 13 px de travers sur 8192**, et l'écart
+     * entre deux clichés voisins atteint 1 à 3° (23 à 68 px). Or la voie `angles_seuls`
+     * interdit à l'optimiseur de corriger quoi que ce soit : l'erreur reste intégralement
+     * dans l'image, aux jointures.
+     *
+     * À COMPARER, mesuré sur les mêmes journaux : la parallaxe due à la dérive du drone
+     * entre deux clichés voisins vaut 0,14 m à 40 m d'altitude, soit **4 px** (11 px au
+     * pire). L'erreur d'angle domine donc la parallaxe d'un facteur 3 à 6.
+     */
+    private var grillePanoramaMesuree: MutableList<Pair<Float, Float>>? = null
     private val SERVEUR_PANO = "https://cineflight.ca"
 
     // ══════════════════════════════════════════════════════════════════════════════
@@ -1876,15 +1893,41 @@ class MainActivity : AppCompatActivity() {
                    System.currentTimeMillis() - tVs < 15000) delay(200)
         }
         val tDebut = System.currentTimeMillis()
-        val timeout = (altCibleM / 1.2 * 1000.0).toLong() + 12000L
+        // ⚠⚠ BUDGET RECALCULÉ SUR UNE MESURE (2026-07-30). L'ancien valait
+        // `altCible / 1,2 m/s + 12 s`, en supposant que le drone monte à la vitesse
+        // COMMANDÉE dès le premier instant. Mesuré au vol : 32 m en 45 s, soit **0,71 m/s
+        // de moyenne** — le décollage, la mise en régime et le vent mangent la différence.
+        // Le budget de 45,3 s expirait donc AVANT l'arrivée, systématiquement.
+        // 0,55 m/s + 20 s : large, parce que ce délai n'est pas une cadence à tenir mais
+        // le seuil au-delà duquel « le drone ne monte plus » devient l'explication la plus
+        // probable. Un budget serré transforme une montée lente en panne déclarée.
+        val timeout = (altCibleM / 0.55 * 1000.0).toLong() + 20000L
         var cycle = 0
+        var atteinte = false
         while (visiteEnCours) {
             val e = pont.lireEtat(pilote.enVol)
             if (e.batteriePct in 0 until BATT_CRITIQUE) return false
             if (!autoriteDeVolIntacte("montée")) return false
             val alt = try { pont.altitudeDrone() } catch (_: Throwable) { Double.NaN }
-            if (!alt.isNaN() && alt >= altCibleM - 0.5) break
-            if (System.currentTimeMillis() - tDebut > timeout) break
+            if (!alt.isNaN() && alt >= altCibleM - 0.5) { atteinte = true; break }
+            // ⚠⚠ CE DÉLAI DÉPASSÉ RENDAIT `true` — DÉFAUT MESURÉ AU VOL DU 2026-07-30.
+            // `break` puis `return visiteEnCours` : l'appelant croyait la cible atteinte.
+            // Relevé : montée abandonnée à **31,8 m sur 40**, panorama gauche tourné à
+            // 32,2 m, et comme `allerA` corrige désormais l'altitude, l'œil droit s'est
+            // fait à 40,0 m. **7,82 m d'écart entre les deux yeux** — soit 11,2° de
+            // disparité VERTICALE, vingt fois la tolérance de fusion. La paire était
+            // inutilisable, et rien ne le disait.
+            // C'est le MÊME défaut que `ALTITUDE_CIBLE_NON_ATTEINTE` corrigé dans
+            // PremierVolActivity le 2026-07-28, jamais appliqué ici : troisième écran
+            // touché par la même famille, après Phase 3 et le vol découverte.
+            if (System.currentTimeMillis() - tDebut > timeout) {
+                try { ca.cineflight.stage.control.JournalVol.anomalie(
+                    "MONTEE_TIMEOUT : %.1f m atteints sur %.0f en %.0f s — mission ABANDONNÉE"
+                        .format(if (alt.isNaN()) -1.0 else alt, altCibleM,
+                                (System.currentTimeMillis() - tDebut) / 1000.0))
+                } catch (_: Throwable) {}
+                break
+            }
             pilote.soumettre(RecepteurBridge.CommandeBridge(
                 System.currentTimeMillis() / 1000.0, 0f, 1.2f, 0f, 0f, "actif", System.currentTimeMillis()))
             // TRACE de la commande RÉELLEMENT émise, ~1,5 s. La ligne ETAT générique
@@ -1900,7 +1943,9 @@ class MainActivity : AppCompatActivity() {
         pilote.soumettre(RecepteurBridge.CommandeBridge(
             System.currentTimeMillis() / 1000.0, 0f, 0f, 0f, 0f, "actif", System.currentTimeMillis()))
         delay(1500)      // stabilisation avant les photos
-        return visiteEnCours
+        // Une montée qui n'a pas abouti n'est pas une montée réussie. Le dire ici évite
+        // que la mission photographie depuis une hauteur qu'elle croit être la bonne.
+        return visiteEnCours && atteinte
     }
 
     /** Lance un panorama et ATTEND sa fin. Rend le nombre de photos réellement prises. */
@@ -1996,6 +2041,21 @@ class MainActivity : AppCompatActivity() {
             val capFige = try { pont.capDroneDeg() } catch (_: Throwable) { 0f }
             val capStereo = if (capFige.isNaN()) 0f else capFige
             val latA = pont.latitudeDrone(); val lonA = pont.longitudeDrone()
+            // ⚠ ALTITUDE DE RÉFÉRENCE = CELLE RÉELLEMENT ATTEINTE, pas celle demandée.
+            // Ce qui compte pour une paire stéréo n'est pas de voler à 40 m, c'est que les
+            // DEUX yeux soient à la MÊME hauteur : le cerveau ne fusionne aucune disparité
+            // verticale. Se caler sur la consigne laissait la porte ouverte au défaut du
+            // 2026-07-30 — montée abandonnée à 32 m, translation corrigée à 40 m par
+            // `allerA`, 7,82 m d'écart entre les yeux. Une garantie tenue par un seul bout
+            // n'en est pas une : la montée est maintenant honnête ET la référence est
+            // mesurée.
+            val altA = try { pont.altitudeDrone() } catch (_: Throwable) { altitudeM }
+            val altRef = if (altA.isNaN() || altA < 1.0) altitudeM else altA
+            if (kotlin.math.abs(altRef - altitudeM) > 1.0) try {
+                ca.cineflight.stage.control.JournalVol.evenement(
+                    "altitude de référence = %.1f m (consigne %.0f m) — les deux yeux se feront à cette hauteur"
+                        .format(altRef, altitudeM))
+            } catch (_: Throwable) {}
 
             // — ŒIL GAUCHE (position A) —
             dlg.setMessage(getString(R.string.ma_stereo_oeil_g))
@@ -2005,14 +2065,36 @@ class MainActivity : AppCompatActivity() {
                 runOnUiThread { dlg.setMessage(getString(R.string.ma_stereo_oeil_g_progres, fait, total)) }
             }
             photosParEtape.add(nbG)
+            // Grille de CET œil, relevée au déclenchement. Chaque œil a la sienne : les
+            // caps réels diffèrent d'un cliché à l'autre, et c'est justement ce qu'on veut
+            // transmettre. Mesuré sur les deux vols stéréo : les deux yeux s'accordent à
+            // 0,11° en moyenne — le repère commun est donc CONSERVÉ, ce qui était la seule
+            // raison de leur imposer une grille identique.
+            val grilleG = dernierePanoramaGrille
             if (nbG < 2 || !visiteEnCours) { finirStereo(dlg, null); return@launch }
 
             // — TRANSLATION VERS L'EST, sans rotation —
             dlg.setMessage(getString(R.string.ma_stereo_decalage, STEREO_BASE_M.toInt()))
             val mLon = 111_320.0 * kotlin.math.cos(Math.toRadians(latA))
             val cibleLon = lonA + STEREO_BASE_M / mLon
-            if (!allerA(latA, cibleLon, altitudeM, tolM = 0.6, vMaxMps = 0.8)) {
+            if (!allerA(latA, cibleLon, altRef, tolM = 0.6, vMaxMps = 0.8, tolAltM = 0.4)) {
                 finirStereo(dlg, null); return@launch
+            }
+            // CONTRÔLE APRÈS COUP : `allerA` tolère 1,5 m d'écart d'altitude, ce qui suffit
+            // pour un transit mais fait déjà 2,1° de disparité verticale à 40 m — quatre
+            // fois la tolérance de fusion. On MESURE l'écart entre les deux yeux et on le
+            // consigne, plutôt que de supposer que la tolérance de transit convient ici.
+            val altB = try { pont.altitudeDrone() } catch (_: Throwable) { Double.NaN }
+            if (!altB.isNaN()) {
+                val dz = altB - altRef
+                val msg = "hauteur des deux yeux : gauche %.2f m, droit %.2f m (écart %+.2f m)"
+                    .format(altRef, altB, dz)
+                try {
+                    if (kotlin.math.abs(dz) > 0.5)
+                        ca.cineflight.stage.control.JournalVol.anomalie(
+                            "$msg — DISPARITÉ VERTICALE, la paire fusionnera mal")
+                    else ca.cineflight.stage.control.JournalVol.evenement(msg)
+                } catch (_: Throwable) {}
             }
             val ecart = ca.cineflight.stage.cine.VisiteMultiPoints.distanceM(
                 latA, lonA, pont.latitudeDrone(), pont.longitudeDrone())
@@ -2028,6 +2110,7 @@ class MainActivity : AppCompatActivity() {
                 runOnUiThread { dlg.setMessage(getString(R.string.ma_stereo_oeil_d_progres, fait, total)) }
             }
             photosParEtape.add(nbD)
+            val grilleD = dernierePanoramaGrille
 
             dlg.setMessage(getString(R.string.ma_visite_atterrissage))
             if (modeAuto) try { pilote.atterrir { } } catch (_: Exception) {}
@@ -2039,12 +2122,17 @@ class MainActivity : AppCompatActivity() {
                 "capture terminée : gauche=$nbG droite=$nbD photos, base mesurée %.2f m".format(ecart)) } catch (_: Throwable) {}
             delay(6000)
             if (nbG >= 2 && nbD >= 2) {
-                val grille = ca.cineflight.stage.cine.PanoramaGrille.construire(preset, capStereo)
+                // Repli sur la grille PLANIFIÉE si un œil n'a pas pu être relevé — mieux
+                // vaut des angles approchés que pas d'angles du tout (sans eux, le zénith
+                // sans texture n'est plus plaçable et le remplissage remonte).
+                val planifiee = ca.cineflight.stage.cine.PanoramaGrille.construire(preset, capStereo)
                     .map { it.yawDeg to it.pitchDeg }
+                val gG = if (grilleG != null && grilleG.size == nbG) grilleG else planifiee
+                val gD = if (grilleD != null && grilleD.size == nbD) grilleD else planifiee
                 proposerAssemblage("RELIEF", getString(R.string.ma_stereo_nom),
-                    listOf(nbG, nbD), listOf(grille, grille), ecart, emptyList(),
+                    listOf(nbG, nbD), listOf(gG, gD), ecart, emptyList(),
                     maintenant = {
-                        assemblerStereo(nbG, nbD, ecart, preset, capStereo,
+                        assemblerStereo(nbG, nbD, ecart, gG, gD,
                             onProgres = { m -> runOnUiThread { dlg.setMessage(m) } }
                         ) { lien -> runOnUiThread { finirStereo(dlg, lien) } }
                     },
@@ -2753,21 +2841,24 @@ class MainActivity : AppCompatActivity() {
     /**
      * Assemble les deux panoramas puis crée la paire stéréo côté serveur.
      *
-     * ⚠ LES DEUX YEUX PARTAGENT LA MÊME GRILLE, construite sur le cap FIGÉ de la capture.
-     * C'est ce qui garantit qu'ils atterrissent dans le MÊME repère à l'assemblage — sans
-     * quoi Hugin oriente chaque panorama à sa guise et les deux images ne se superposent
-     * plus (2,6° d'écart vertical mesurés au vol du 2026-07-27, cinq fois la tolérance).
+     * ⚠ LES DEUX YEUX DOIVENT ATTERRIR DANS LE MÊME REPÈRE, sans quoi Hugin oriente chaque
+     * panorama à sa guise et les deux images ne se superposent plus (2,6° d'écart vertical
+     * mesurés au vol du 2026-07-27, cinq fois la tolérance de fusion).
+     *
+     * Jusqu'au 2026-07-29 on l'obtenait en imposant aux deux yeux une grille IDENTIQUE,
+     * construite sur le cap figé. Les grilles sont maintenant celles RELEVÉES à chaque
+     * déclenchement, donc distinctes — et le repère commun est conservé parce que les deux
+     * yeux s'accordent à **0,11° en moyenne** (mesuré sur les 2 vols stéréo, 204 clichés).
+     * C'est une boussole unique lue à deux minutes d'intervalle : elle ne dérive pas.
      */
     private fun assemblerStereo(
         nbG: Int, nbD: Int, baseM: Double,
-        preset: ca.cineflight.stage.cine.PanoramaPreset,
-        capStereo: Float,
+        grilleG: List<Pair<Float, Float>>,
+        grilleD: List<Pair<Float, Float>>,
         onProgres: (String) -> Unit = { bandeauEphemere(it) },
         onFini: (String?) -> Unit,
     ) {
-        val grille = ca.cineflight.stage.cine.PanoramaGrille.construire(preset, capStereo)
-            .map { it.yawDeg to it.pitchDeg }
-        assemblerLots(listOf(nbG, nbD), listOf(grille, grille), onProgres = onProgres) { jobs ->
+        assemblerLots(listOf(nbG, nbD), listOf(grilleG, grilleD), onProgres = onProgres) { jobs ->
             if (jobs.size < 2) { onFini(null); return@assemblerLots }
             Thread {
                 onFini(ca.cineflight.stage.cine.ClientVisiteVr.creerStereo(
@@ -3312,6 +3403,14 @@ class MainActivity : AppCompatActivity() {
     private suspend fun allerA(
         cibleLat: Double, cibleLon: Double, altM: Double,
         tolM: Double = 2.5, vMaxMps: Double = 4.0,
+        /**
+         * Tolérance d'ALTITUDE à l'arrivée. 1,5 m convient à un transit d'orbite, où seul
+         * l'angle de vue compte. Il faut BEAUCOUP plus serré pour la translation stéréo :
+         * à 40 m, 1,5 m d'écart entre les deux yeux fait 2,1° de disparité verticale, soit
+         * quatre fois ce que la vision binoculaire sait fusionner. Une tolérance juste pour
+         * un usage ne l'est pas pour tous.
+         */
+        tolAltM: Double = 1.5,
     ): Boolean {
         val tDebut = System.currentTimeMillis()
         var cycle = 0
@@ -3332,7 +3431,7 @@ class MainActivity : AppCompatActivity() {
             // encore des dizaines de mètres plus bas, et la photo partait quand même. Sur
             // une capture en orbite, l'altitude EST la géométrie de l'anneau — une prise
             // faite trop bas fausse l'angle de vue et se paie à la reconstruction.
-            if (dist < tolM && kotlin.math.abs(altCourante - altM) < 1.5) break
+            if (dist < tolM && kotlin.math.abs(altCourante - altM) < tolAltM) break
             if (System.currentTimeMillis() - tDebut > 120_000L) {
                 // ⚠ NE PLUS CONTINUER EN SILENCE. L'ancienne version sortait de la boucle
                 // et rendait `true` : l'appelant croyait le point atteint, orientait la
@@ -3516,6 +3615,12 @@ class MainActivity : AppCompatActivity() {
         // aucune texture. C'est de là que venaient les taches sombres au zénith.
         dernierePanoramaGrille = ca.cineflight.stage.cine.PanoramaGrille
             .construire(preset, capDepart).map { it.yawDeg to it.pitchDeg }
+        // ⚠ LA GRILLE PLANIFIÉE N'EST QU'UN REPLI. Elle dit où on a DEMANDÉ que chaque
+        // cliché soit pris ; l'assembleur a besoin de savoir où il l'a ÉTÉ. Mesuré sur
+        // 204 clichés : 2° d'écart entre les deux, dont 0,5° de dispersion. On relève
+        // donc le cap au déclenchement, et c'est celui-là qui partira.
+        // (Sixième fois dans ce projet qu'une intention était prise pour une mesure.)
+        grillePanoramaMesuree = mutableListOf()
         try {
             // `demarrerOuEtape` : si un mode COMPOSITE (relief, visite, modèle 3D) a déjà
             // ouvert un journal, on s'y greffe au lieu de lui en voler un nouveau — sinon
@@ -3548,7 +3653,20 @@ class MainActivity : AppCompatActivity() {
                 val cap = if (e.capDeg.isNaN()) capDepart else e.capDeg
                 // SECURITE : batterie critique -> on arrete le panorama (les garde-fous
                 // globaux prennent le relais). Les photos deja prises sont conservees.
-                if (e.batteriePct in 0 until BATT_CRITIQUE) break
+                // ⚠ CET ARRÊT ÉTAIT MUET (défaut relevé au vol du 2026-07-30). L'œil droit
+                // d'une paire stéréo s'est arrêté à 40 clichés sur 41 — le NADIR, dernier du
+                // plan — sans une seule ligne au journal. La seule trace était
+                // « gauche=41 droite=40 » dans le bilan, et rien n'en donnait la cause.
+                // Conséquence concrète : les deux yeux n'ont PAS la même sphère (l'un a un
+                // trou au nadir que le remplissage comble, l'autre non), donc la paire ne
+                // fusionne plus par le bas. Un panorama incomplet doit le DIRE.
+                if (e.batteriePct in 0 until BATT_CRITIQUE) {
+                    try { ca.cineflight.stage.control.JournalVol.anomalie(
+                        "PANORAMA INTERROMPU : batterie ${e.batteriePct} % " +
+                        "(plancher $BATT_CRITIQUE %) — $photosPrises clichés sur " +
+                        "${machine.total}, la sphère sera INCOMPLÈTE") } catch (_: Throwable) {}
+                    break
+                }
                 // GIMBAL : appliquer l'inclinaison du PAS COURANT des qu'elle change, AVANT
                 // toute photo. Corrige le 1er cliche (cap depart deja aligne -> AllerVers
                 // jamais emis -> ancien gimbal utilise).
@@ -3620,8 +3738,17 @@ class MainActivity : AppCompatActivity() {
                                 panoramaEnCours = false
                             } else {
                                 photosPrises++
+                                // CAP RELEVÉ AU DÉCLENCHEMENT, pas le cap visé. C'est cette
+                                // valeur qui partira à l'assembleur. L'inclinaison, elle,
+                                // reste celle DEMANDÉE : la nacelle est mécaniquement
+                                // précise et le SDK ne publie pas son attitude réelle.
+                                val pitchDuPas = machine.pasCourant?.pitchDeg ?: pitchApplique
+                                grillePanoramaMesuree?.add(cap to pitchDuPas)
                                 try { ca.cineflight.stage.control.JournalVol.evenement(
-                                    "photo ${photosPrises}/${machine.total} prise") } catch (_: Throwable) {}
+                                    "photo ${photosPrises}/${machine.total} prise" +
+                                    " cap_reel=%.1f visé=%.1f gimbal=%.0f".format(
+                                        cap, machine.pasCourant?.yawDeg ?: Float.NaN, pitchDuPas))
+                                } catch (_: Throwable) {}
                                 machine.pasCourant?.let { onProgres(it.index + 1, it.total) }
                             }
                         } else {
@@ -3629,6 +3756,8 @@ class MainActivity : AppCompatActivity() {
                             pont.declencherPhoto()
                             delay(1200)
                             photosPrises++
+                            grillePanoramaMesuree?.add(
+                                cap to (machine.pasCourant?.pitchDeg ?: pitchApplique))
                             machine.pasCourant?.let { onProgres(it.index + 1, it.total) }
                         }
                     }
@@ -3646,6 +3775,36 @@ class MainActivity : AppCompatActivity() {
                 System.currentTimeMillis() / 1000.0, 0f, 0f, 0f, 0f,
                 "actif", System.currentTimeMillis()))
             panoramaEnCours = false
+            // ── LA GRILLE MESURÉE REMPLACE LA GRILLE PLANIFIÉE ──
+            // Condition STRICTE : autant d'angles relevés que de photos prises. Un relevé
+            // incomplet décalerait tous les angles suivants d'un cran, ce qui rendrait
+            // l'assemblage guidé PIRE que l'automatique — c'est le piège déjà rencontré
+            // avec les DNG. Dans le doute on garde la grille planifiée et on le DIT.
+            val mesuree = grillePanoramaMesuree
+            if (mesuree != null && photosPrises > 0 && mesuree.size == photosPrises) {
+                val planifiee = dernierePanoramaGrille
+                dernierePanoramaGrille = mesuree.toList()
+                try {
+                    val ecarts: List<Float> =
+                        if (planifiee != null && planifiee.size >= mesuree.size)
+                            mesuree.indices.map {
+                                val d = (mesuree[it].first - planifiee[it].first + 540f) % 360f - 180f
+                                kotlin.math.abs(d)
+                            } else emptyList()
+                    val moy = if (ecarts.isEmpty()) Float.NaN else ecarts.average().toFloat()
+                    val pire = ecarts.maxOrNull() ?: Float.NaN
+                    ca.cineflight.stage.control.JournalVol.evenement(
+                        "angles transmis = caps MESURÉS (${mesuree.size} clichés)" +
+                        " écart au planifié : moyen %.2f° pire %.2f° (1° = 23 px sur 8192)"
+                            .format(moy, pire))
+                } catch (_: Throwable) {}
+            } else {
+                try { ca.cineflight.stage.control.JournalVol.anomalie(
+                    "caps mesurés INCOMPLETS (${mesuree?.size ?: -1} relevés pour " +
+                    "$photosPrises photos) — repli sur la grille PLANIFIÉE, " +
+                    "l'erreur d'angle restera dans les jointures") } catch (_: Throwable) {}
+            }
+            grillePanoramaMesuree = null
             // EXPOSITION : rendue à l'automatique à la fin (comme à l'annulation).
             try { pontReel?.deverrouillerExposition() } catch (_: Exception) {}
             try {

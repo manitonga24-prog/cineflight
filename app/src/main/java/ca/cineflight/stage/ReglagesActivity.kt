@@ -421,9 +421,32 @@ class ReglagesActivity : AppCompatActivity() {
         majRes(); box.addView(ligneRes)
         // FPS
         box.addView(TextView(this).apply { text = getString(R.string.rg_cam_fps); textSize = 13f; setTextColor(TEXTE); setTypeface(typeface, Typeface.BOLD); setPadding(0, dp(10), 0, dp(4)) })
-        val fpsVals = listOf(24, 30, 60)
+        // 100 et 200 = RALENTI. Sur Mini 4 Pro, 100 i/s existe en 4K ET en 1080p — c'est la
+        // combinaison 4K/100 qui impose le codec H.265, pas le 100 i/s en soi. Le 200 i/s,
+        // lui, est bien limité au 1080p. Le pont choisit ensuite la valeur SUPPORTÉE la
+        // plus proche : une demande impossible retombe sans refus ni surprise.
+        // ⚠ La cadence ne double pas le poids des fichiers : c'est le DÉBIT et le codec qui
+        // décident. Ne pas réintroduire ce raccourci dans les libellés.
+        // ⚠ Le ralenti ne sert PAS qu'aux sujets rapides : c'est aussi ce qui donne aux
+        // paysages le mouvement lent et spectaculaire des économiseurs Aerial d'Apple TV.
+        // Mais l'effet tient surtout à un déplacement de drone TRÈS lent et bien stabilisé —
+        // Apple ne publie pas la cadence de tournage de ces séquences, et une cadence
+        // élevée seule ne suffirait pas.
+        val fpsVals = listOf(24, 30, 60, 100, 200)
         val fpsBtns = ArrayList<Button>()
-        fun majFps() { for ((i,b) in fpsBtns.withIndex()) { if (fpsVals[i]==reglages.getFps()){b.setBackgroundColor(ACCENT);b.setTextColor(0xFFFFFFFF.toInt())} else {b.setBackgroundColor(0xFFE5E5EA.toInt());b.setTextColor(TEXTE)} } }
+        // Une explication PAR VALEUR, affichée sous les boutons et remplacée au clic.
+        // Un réglage numérique sans conséquence énoncée ne se choisit pas, il se subit :
+        // « 60 » ne dit rien, « très fluide, deux fois plus de fichiers » se décide.
+        val fpsExplic = mapOf(
+            24 to R.string.rg_fps_24, 30 to R.string.rg_fps_30, 60 to R.string.rg_fps_60,
+            100 to R.string.rg_fps_100, 200 to R.string.rg_fps_200)
+        val txtExplicFps = TextView(this).apply {
+            textSize = 12f; setTextColor(TEXTE); setPadding(0, dp(8), 0, 0); setLineSpacing(0f, 1.2f)
+        }
+        fun majFps() {
+            for ((i,b) in fpsBtns.withIndex()) { if (fpsVals[i]==reglages.getFps()){b.setBackgroundColor(ACCENT);b.setTextColor(0xFFFFFFFF.toInt())} else {b.setBackgroundColor(0xFFE5E5EA.toInt());b.setTextColor(TEXTE)} }
+            txtExplicFps.text = getString(fpsExplic[reglages.getFps()] ?: R.string.rg_fps_30)
+        }
         val ligneFps = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         for ((i,v) in fpsVals.withIndex()) {
             val b = Button(this).apply { text = "$v"; textSize = 12f; isAllCaps = false
@@ -431,8 +454,36 @@ class ReglagesActivity : AppCompatActivity() {
                 setOnClickListener { reglages.setFps(v); majFps() } }
             fpsBtns.add(b); ligneFps.addView(b)
         }
-        majFps(); box.addView(ligneFps)
+        majFps(); box.addView(ligneFps); box.addView(txtExplicFps)
         box.addView(TextView(this).apply { text = getString(R.string.rg_cam_fps_note); textSize = 11f; setTextColor(TEXTE_DOUX); setPadding(0, dp(8), 0, 0) })
+
+        // --- QUALITÉ PANORAMA : JPEG / DNG / les deux ---
+        box.addView(TextView(this).apply { text = getString(R.string.rg_qual_pano); textSize = 13f
+            setTextColor(TEXTE); setTypeface(typeface, Typeface.BOLD); setPadding(0, dp(16), 0, dp(4)) })
+        val fmtVals = listOf(0, 1, 2)
+        val fmtLibelles = listOf(getString(R.string.rg_qual_rapide), getString(R.string.rg_qual_haute),
+            getString(R.string.rg_qual_reco))
+        val fmtExplic = listOf(R.string.rg_qual_rapide_d, R.string.rg_qual_haute_d, R.string.rg_qual_reco_d)
+        val fmtBtns = ArrayList<Button>()
+        val txtExplicFmt = TextView(this).apply {
+            textSize = 12f; setTextColor(TEXTE); setPadding(0, dp(8), 0, 0); setLineSpacing(0f, 1.2f)
+        }
+        fun majFmt() {
+            val cur = reglages.getFormatPhoto()
+            for ((i,b) in fmtBtns.withIndex()) {
+                if (fmtVals[i] == cur) { b.setBackgroundColor(ACCENT); b.setTextColor(0xFFFFFFFF.toInt()) }
+                else { b.setBackgroundColor(0xFFE5E5EA.toInt()); b.setTextColor(TEXTE) }
+            }
+            txtExplicFmt.text = getString(fmtExplic[cur.coerceIn(0, 2)])
+        }
+        val ligneFmt = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        for ((i,v) in fmtVals.withIndex()) {
+            val b = Button(this).apply { text = fmtLibelles[i]; textSize = 11f; isAllCaps = false
+                layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply { setMargins(dp(2),0,dp(2),0) }
+                setOnClickListener { reglages.setFormatPhoto(v); majFmt() } }
+            fmtBtns.add(b); ligneFmt.addView(b)
+        }
+        majFmt(); box.addView(ligneFmt); box.addView(txtExplicFmt)
         // --- Distance du rail "vers le sujet" (appui long sur Rail A) ---
         val lblDist = TextView(this).apply {
             text = getString(R.string.rg_rail_dist_fmt, reglages.getRailSujetDist())

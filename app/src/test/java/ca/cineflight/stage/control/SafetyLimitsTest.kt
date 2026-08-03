@@ -21,8 +21,74 @@ class SafetyLimitsTest {
         assertEquals(2.0, SafetyLimits.RTK_AGE_MAX_S, 0.0)
     }
 
-    @Test fun watchdog_500ms() {
-        assertEquals(500L, SafetyLimits.WATCHDOG_TIMEOUT_MS)
+    /**
+     * Budget de détection ramené de 500 à 350 ms le 2026-07-22, sur preuve de l'essai E-03 :
+     * avec 500 ms de timeout et 100 ms de période, la détection tombait entre 500 et 600 ms,
+     * donc AU-DELÀ du budget de persistance de 500 ms du §378 — critère inatteignable.
+     */
+    @Test fun watchdog_350ms() {
+        assertEquals(350L, SafetyLimits.WATCHDOG_TIMEOUT_MS)
+    }
+
+    @Test fun periode_watchdog_independant_50ms() {
+        assertEquals(50L, SafetyLimits.WATCHDOG_INDEP_PERIODE_MS)
+    }
+
+    /**
+     * INVARIANT DE DIMENSIONNEMENT — le cœur de la correction E03-03.
+     *
+     * La détection au pire vaut `timeout + periode` : le thread B ne peut constater le
+     * dépassement qu'à sa vérification suivante. Ce total doit laisser de la place à la
+     * RÉACTION (désarmement, commande neutre, sortie Virtual Stick — mesurée 10..40 ms)
+     * à l'intérieur du budget de persistance de 500 ms du §378.
+     *
+     * Ce test échouera si quelqu'un remonte le timeout sans revoir le budget : c'est
+     * exactement l'erreur que l'essai a révélée, et elle ne doit pas pouvoir revenir
+     * silencieusement.
+     */
+    @Test fun detection_au_pire_laisse_une_marge_de_reaction_sous_le_seuil() {
+        val detectionPireCas =
+            SafetyLimits.WATCHDOG_TIMEOUT_MS + SafetyLimits.WATCHDOG_INDEP_PERIODE_MS
+        val total = detectionPireCas + SafetyLimits.REACTION_BUDGET_MAX_MS
+        assertTrue(
+            "timeout(${SafetyLimits.WATCHDOG_TIMEOUT_MS}) + periode(${SafetyLimits.WATCHDOG_INDEP_PERIODE_MS}) " +
+                "+ reaction(${SafetyLimits.REACTION_BUDGET_MAX_MS}) = $total ms " +
+                "doit rester sous le budget de ${SafetyLimits.PERSISTANCE_MAX_MS} ms",
+            total < SafetyLimits.PERSISTANCE_MAX_MS
+        )
+        assertTrue(
+            "la periode doit rester strictement inferieure au timeout",
+            SafetyLimits.WATCHDOG_INDEP_PERIODE_MS < SafetyLimits.WATCHDOG_TIMEOUT_MS
+        )
+    }
+
+    /**
+     * Le budget de réaction doit rester un CONTRAT tenable, pas un relevé du jour :
+     * confortablement au-dessus de la pire réaction mesurée (40 ms au 2026-07-22), pour
+     * qu'un téléphone plus lent ne fasse pas basculer l'argument de sécurité.
+     */
+    @Test fun le_budget_de_reaction_double_au_moins_la_pire_reaction_mesuree() {
+        val pireReactionMesureeMs = 40L
+        assertTrue(
+            "budget ${SafetyLimits.REACTION_BUDGET_MAX_MS} ms trop proche du releve $pireReactionMesureeMs ms",
+            SafetyLimits.REACTION_BUDGET_MAX_MS >= 2 * pireReactionMesureeMs
+        )
+    }
+
+    /**
+     * Le timeout doit tolérer plusieurs cycles manqués de la boucle pilote, sinon une
+     * simple gigue d'ordonnancement Android déclencherait une mise en sécurité sans cause.
+     * La relation est CALCULÉE depuis la fréquence nominale de la boucle : si celle-ci
+     * change, l'exigence suit d'elle-même au lieu de rester figée sur une durée écrite en dur.
+     */
+    @Test fun le_timeout_tolere_le_nombre_minimal_de_cycles_de_boucle_pilote() {
+        val periodeBoucleMs = 1000L / SafetyLimits.BOUCLE_PILOTE_HZ
+        val minimumMs = SafetyLimits.WATCHDOG_CYCLES_BOUCLE_MIN * periodeBoucleMs
+        assertTrue(
+            "timeout ${SafetyLimits.WATCHDOG_TIMEOUT_MS} ms doit couvrir >= " +
+                "${SafetyLimits.WATCHDOG_CYCLES_BOUCLE_MIN} cycles de $periodeBoucleMs ms ($minimumMs ms)",
+            SafetyLimits.WATCHDOG_TIMEOUT_MS >= minimumMs
+        )
     }
 
     @Test fun confiance_yolo_min_035() {
@@ -57,8 +123,8 @@ class SafetyLimitsTest {
     }
 
     @Test fun coherence_ages_watchdog_vs_yolo() {
-        // Le watchdog (500 ms) et la fraîcheur YOLO (600 ms) sont du même ordre de grandeur,
-        // cohérents avec une boucle ~10 Hz.
+        // Le watchdog (350 ms) et la fraîcheur YOLO (600 ms) restent du même ordre de
+        // grandeur, cohérents avec une boucle ~10 Hz.
         assertTrue(SafetyLimits.WATCHDOG_TIMEOUT_MS in 100L..1000L)
         assertTrue(SafetyLimits.YOLO_FRAIS_MS in 100L..1000L)
     }

@@ -27,12 +27,21 @@ class DjiLiveStreamEngineTest {
         var nbDemarrages = 0
         var nbArrets = 0
 
+        /**
+         * Simule la sonde « un flux DJI tourne deja ? » (manager unique partage RTSP+RTMP).
+         * FALSE par defaut = cas nominal : aucun flux prealable, le moteur configure et
+         * demarre directement. Un test peut le passer a true pour exercer le chemin
+         * « arret prealable puis demarrage ».
+         */
+        var diffuseDejaValeur = false
+
         private var completionDemarrage: LiveStreamManagerAdapter.Completion? = null
         private var completionArret: LiveStreamManagerAdapter.Completion? = null
 
         override fun configurer(destination: LiveStreamDestination) {
             destinationConfiguree = destination
         }
+        override fun diffuseDeja(): Boolean = diffuseDejaValeur
         override fun demarrer(completion: LiveStreamManagerAdapter.Completion) {
             nbDemarrages++; completionDemarrage = completion
         }
@@ -214,19 +223,50 @@ class DjiLiveStreamEngineTest {
         assertEquals(LiveStreamState.Streaming, f.engine.state.value)  // toujours en direct
     }
 
-    // echec de la commande de demarrage -> retour propre a Idle
+    /**
+     * Echec de la commande de demarrage -> etat Erreur PORTANT LA RAISON, et redemarrage
+     * possible.
+     *
+     * CONTRAT (choix delibere du moteur) : on n'efface PAS la cause en retombant en
+     * silence sur Idle — la raison remontee par DJI doit rester affichable a l'operateur.
+     * Erreur fait partie des etats « prets a redemarrer » (au meme titre qu'Idle), donc
+     * l'operateur peut relancer sans quitter l'ecran.
+     */
     @Test
-    fun echec_demarrage_revient_a_idle() {
+    fun echec_demarrage_expose_la_raison_et_reste_redemarrable() {
         val f = Fixture()
         f.engine.demarrer(rtmp)
         assertEquals(LiveStreamState.Starting, f.engine.state.value)
 
         f.manager.echouerDemarrage("drone non supporte")
-        assertEquals(LiveStreamState.Idle, f.engine.state.value)
-        assertEquals(LiveStreamMetrics.Empty, f.engine.metrics.value)
 
-        f.engine.demarrer(rtmp)                 // redemarrage possible
+        val etat = f.engine.state.value
+        assertTrue("l'etat doit etre Erreur, pas Idle", etat is LiveStreamState.Erreur)
+        assertEquals("la raison DJI doit etre conservee",
+            "drone non supporte", (etat as LiveStreamState.Erreur).raison)
+        assertEquals("les metriques sont videes", LiveStreamMetrics.Empty, f.engine.metrics.value)
+
+        f.engine.demarrer(rtmp)                 // redemarrage possible depuis Erreur
         assertTrue(f.engine.state.value is LiveStreamState.Starting)
         assertEquals(2, f.manager.nbDemarrages)
+    }
+
+    /**
+     * La sonde « un flux DJI tourne deja ? » commande un ARRET PREALABLE avant de
+     * configurer et demarrer — le liveStreamManager est unique et partage (RTSP + RTMP),
+     * sans quoi startStream renverrait « live stream already started ».
+     */
+    @Test
+    fun flux_deja_actif_declenche_un_arret_prealable_avant_le_demarrage() {
+        val f = Fixture()
+        f.manager.diffuseDejaValeur = true
+
+        f.engine.demarrer(rtmp)
+        assertEquals("un arret prealable doit etre demande", 1, f.manager.nbArrets)
+        assertEquals("le demarrage n'a pas encore ete commande", 0, f.manager.nbDemarrages)
+
+        f.manager.accepterArret()               // le SDK confirme l'arret prealable
+        assertEquals("le demarrage suit l'arret", 1, f.manager.nbDemarrages)
+        assertEquals(LiveStreamState.Starting, f.engine.state.value)
     }
 }

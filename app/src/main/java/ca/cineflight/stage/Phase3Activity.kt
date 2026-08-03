@@ -151,6 +151,7 @@ class Phase3Activity : AppCompatActivity() {
     private lateinit var txtSuivi: TextView
     private lateinit var txtParcours: TextView
     private lateinit var btnManuel: Button
+    private lateinit var btnCadrage: Button   // distance de cadrage réglable en direct
     private lateinit var btnVision: Button
     private lateinit var btnSimPhase3: Button
     private val SIM_LAT_P3 = 45.5
@@ -174,7 +175,8 @@ class Phase3Activity : AppCompatActivity() {
     // fiable), on reutilise le DERNIER cap valide connu ; si aucun cap n'a jamais
     // ete vu, on retombe sur un recul plein SUD (comportement V1, defini et sur).
     private val OFFSET_HAUTEUR_M get() = if (profilSujet == ProfilSujetMobile.MARCHE) 3.0 else 20.0     // au-dessus de l'auto (AGL cible)
-    private val OFFSET_RECUL_M   get() = if (profilSujet == ProfilSujetMobile.MARCHE) 4.0 else 15.0     // recul DERRIERE l'auto, le long de son cap (m)
+    // Recul DERRIÈRE le sujet, le long de son cap : suit le réglage de distance de cadrage.
+    private val OFFSET_RECUL_M   get() = distanceCadrageM
     private val OFFSET_LATERAL_M = 0.0      // decalage sur le cote (m). 0 = pile derriere.
     private val OFFSET_COTE      = "droite" // "droite" | "gauche" (cote du decalage lateral)
 
@@ -200,7 +202,55 @@ class Phase3Activity : AppCompatActivity() {
     // Effets quand true : (1) profil PERSONNE force, (2) auto-arme, (3) emission 2D
     // autorisee, (4) vMax=0.2, (5) gate obstacle ouvert, (6) throttle force a +0.2,
     // (7) chaque ligne de log ecrite dans un fichier sur le telephone.
-    private val TEST_E01_SIGNE_THROTTLE = false   // ← SEUL commutateur. false = production.
+    // ⚠ ARMÉ POUR LA CAMPAGNE E-03 (2026-07-22). Fournit le contexte d'émission au sol :
+    // sans throttle NON NUL, la persistance ne peut pas être mesurée (E03-10 / FS3).
+    // → REMIS À false LE 2026-08-03, campagne au banc terminée (11 scénarios sur 16
+    //   qualifiés ; les 5 restants exigent le vol et n'ont pas besoin de ce drapeau).
+    //   Il était resté armé depuis le 22 juillet : c'est LE drapeau qui force un throttle
+    //   de +0,2 m/s en permanence — une montée continue dès l'armement du mode 2D.
+    private val TEST_E01_SIGNE_THROTTLE = false   // ← test de SIGNE au SOL (+0.2 forcé). false = production.
+
+    // ══ VOL RÉEL 2D — throttle CALCULÉ et BORNÉ (asservissement d'altitude) ══════════════
+    // DÉCOUPLE l'émission 2D du test de signe au sol. Le test de signe force +0.2 (montée
+    // continue) : DANGEREUX en vol. Le vol réel utilise le throttle calculé par
+    // l'asservissement d'altitude, borné à une petite vitesse verticale (voir vMax).
+    // ⚠ true UNIQUEMENT pour un essai en vol, hélices en place, APRÈS montée progressive
+    // (stationnaire -> micro-mouvements bornés -> scénarios). Défaut false = production sûre.
+    // Si les deux drapeaux sont true, le VOL RÉEL l'emporte (jamais de +0.2 en vol).
+    private val SOCCER_2D_VOL_REEL = false
+
+    /** Contexte d'émission 2D actif : test de signe AU SOL (+0.2) OU vol réel (throttle calculé).
+     *  Active le profil personne, la boucle 2D, le miroir d'observation et l'émission réelle. */
+    private val SOCCER_2D_EMISSION_ACTIVE get() = TEST_E01_SIGNE_THROTTLE || SOCCER_2D_VOL_REEL
+
+    // ══ SUIVI ATHLÈTE (source ATHLETE_PHONE) — étape 5 de la spec d'intégration ══════════
+    // Quand true : le poller réseau lit la position du SUJET depuis CineFlight Athlete
+    // (GET /api/v1/subjects/{id}/latest) AU LIEU du RTK voiture, la passe par
+    // AdaptateurSuiviAthlete (précision/âge/saut GPS), remplit les MÊMES variables
+    // autoLat/autoLon/autoCap/autoAgeS et nourrit le prédicteur existant. tickSuivi est
+    // INCHANGÉ (§18 : « seule la source change »). Profil forcé PERSONNE (MARCHE).
+    // ⚠ SIMULATEUR DJI, hélices retirées — jamais en vol direct tant que non qualifié.
+    // Défaut false = production. Le subject_id vient des prefs (écran Athlète le mémorise).
+    // ⚠ MIS À true POUR L'ESSAI OBSERVATION (2026-07-24) — À REMETTRE À false APRÈS.
+    // → REMIS À false LE 2026-08-03. Il était resté true avec OBSERVER à false, c'est-à-dire
+    //   le suivi athlète armé en VOL RÉEL sans le garde-fou d'observation. Une combinaison
+    //   que personne n'avait choisie : chaque drapeau avait été bougé pour un essai précis,
+    //   et c'est leur CONJONCTION, jamais relue, qui armait le vol.
+    private val SUIVI_ATHLETE_SIMU = false
+
+    // MODE OBSERVATION (défaut true) : quand SUIVI_ATHLETE_SIMU est actif, le suivi CALCULE
+    // et AFFICHE la commande qu'il enverrait, mais N'ACTIVE JAMAIS le Virtual Stick et
+    // N'ENVOIE RIEN à l'aéronef. Les moteurs ne tournent pas → HÉLICES PEUVENT RESTER EN PLACE,
+    // rien ne bouge. C'est le seul mode sûr tant que les hélices sont montées. Passer à false
+    // UNIQUEMENT hélices retirées + simulateur DJI, pour l'essai Virtual Stick réel.
+    // ⚠ MIS À false POUR L'ESSAI EN VOL RÉEL (2026-07-24) — le drone SUIT pour de vrai (VS actif).
+    // → REMIS À true LE 2026-08-03 : l'observation est la valeur SÛRE, celle qui calcule et
+    //   affiche sans jamais commander. C'est aussi ce que CLAUDE.md annonçait depuis le
+    //   début (« défaut true ») alors que le code disait le contraire — l'écart est corrigé
+    //   dans le sens du document, pas l'inverse.
+    private val SUIVI_ATHLETE_OBSERVER = true
+    /** Observation athlète active (calcule/affiche, n'envoie rien, VS jamais activé). */
+    private val athleteObs get() = SUIVI_ATHLETE_SIMU && SUIVI_ATHLETE_OBSERVER
 
     // ══════════════════════════════════════════════════════════════════════════════
     // ⚠️ ESSAI E-03 AU BANC — HÉLICES RETIRÉES ⚠️ (caractérisation cessation Virtual Stick)
@@ -209,7 +259,232 @@ class Phase3Activity : AppCompatActivity() {
     // (3) chaque événement (T0..T6) est journalisé via EssaiE03Log dans un fichier.
     // NE JAMAIS voler avec ce drapeau actif. Émission réelle : réutilise le double verrou
     // E-01 (throttle borné), UNIQUEMENT au banc, hélices retirées.
+    // ⚠ ARMÉ POUR LA CAMPAGNE E-03 (2026-07-22). À REMETTRE À false À LA FIN.
+    // → REMIS À false LE 2026-08-03. Les essais AU BANC sont clos : 11 scénarios sur 16
+    //   qualifiés, les 5 restants (10, 12, FS1-3) exigent le vol et passent par d'autres
+    //   chemins. Le panneau de déclencheurs disparaît de l'écran, ce qui est voulu : un
+    //   bouton d'essai visible en vol est un bouton qu'on finit par presser.
     private val TEST_E03_CESSATION_VS = false   // ← false = production.
+    // SIMULATEUR DJI — INTERRUPTEUR SÉPARÉ (colonne « Env. » du tableau 36 du dossier).
+    // Le simulateur valide l'OUTIL d'essai ; la chaîne RÉELLE valide la SÉCURITÉ.
+    // Seuls E03-01/02/03/04 sont marqués « Simu+réel » : les 12 autres scénarios EXIGENT
+    // le simulateur INACTIF, sinon le résultat est irrecevable. Ce drapeau doit donc
+    // pouvoir être coupé SANS désactiver l'essai lui-même — d'où sa séparation.
+    // La non-conformité est en outre détectée et journalisée (EssaiE03Config.nonConformiteEnv).
+    // ⚠ SESSION 1 : true pour E03-01/02/03/04 (« Simu+réel »).
+    // AVANT les 12 autres scénarios (« RÉEL »), REPASSER À false ET RECOMPILER,
+    // sinon l'application refuse la répétition (ENV_NON_CONFORME) — c'est voulu.
+    // SESSION 2 (2026-07-22) : passé à false pour les 12 scénarios « RÉEL ».
+    private val TEST_E03_SIMULATEUR = false  // ← false = chaîne réelle (par défaut).
+    // Version MSDK ÉPINGLÉE dans app/build.gradle (com.dji:dji-sdk-v5-aircraft).
+    // Sert de repli traçable si la lecture à l'exécution échoue. À METTRE À JOUR si la
+    // dépendance change — tout changement de configuration invalide les résultats E-03 (§381).
+    private val MSDK_VERSION_BUILD = "5.18.0 (build.gradle)"
+    // FENÊTRE D'OBSERVATION après un stimulus E-03, avant d'écrire la ligne de synthèse.
+    // Doit couvrir le pire cas attendu : timeout du watchdog indépendant (500 ms) + marge
+    // pour l'aller-retour SDK et le retour à zéro de la télémétrie. Trop court = tous les
+    // scénarios rendraient FAIL par chronologie, pas par défaut de sécurité.
+    private val E03_FENETRE_OBSERVATION_MS = 3000L
+    /**
+     * FENÊTRE D'OBSERVATION POUR UN STIMULUS PHYSIQUE (débrancher, éteindre, tuer).
+     *
+     * 3 secondes suffisent quand le stimulus est un appui logiciel. Elles sont hors de
+     * portée quand l'opérateur doit saisir un câble et l'arracher : le 2026-07-22, trois
+     * tentatives E03-07 d'affilée ont vu l'événement tomber APRÈS la fermeture de la
+     * fenêtre (900 ms, 3,2 s et 3,9 s de retard). L'essai n'était pas sévère, il était
+     * inexécutable.
+     *
+     * Allonger la fenêtre n'affaiblit aucun critère : la persistance se mesure de T0 à la
+     * dernière commande non nulle observée, jamais sur la durée de la fenêtre.
+     */
+    private val E03_FENETRE_PHYSIQUE_MS = 15_000L
+
+    // ── SURVEILLANCE THERMIQUE DU TÉLÉPHONE (E-03 scénario 13) ──────────────────
+    //
+    // POURQUOI. Un téléphone qui surchauffe est bridé par Android : la boucle pilote
+    // ralentit, et à l'extrême le système tue l'application. Jusqu'ici l'application
+    // n'observait AUCUNE température d'appareil — les seules températures connues venaient
+    // de la météo, pour juger si le DRONE peut voler. La surchauffe du téléphone, qui est
+    // pourtant ce qui met la boucle de commande en danger, n'était pas surveillée.
+    //
+    // SEUIL RETENU : `THERMAL_STATUS_SEVERE`. En dessous (LIGHT, MODERATE), le bridage ne
+    // gêne pas une boucle à 10 Hz — déclencher là poserait des mises en sécurité inutiles.
+    // À partir de SEVERE, Android annonce un bridage lourd du processeur.
+    //
+    // ⚠ CE SEUIL N'EST PAS CRITIQUE, et c'est important pour le dossier : le watchdog
+    // indépendant détecte DÉJÀ un fil d'émission ralenti ou gelé, quelle qu'en soit la
+    // cause. Cette surveillance thermique est une détection PRÉCOCE et spécifique à la
+    // cause — une défense en profondeur, pas la protection principale. Si le seuil est trop
+    // haut, le watchdog rattrape la conséquence ; on ne fait donc pas reposer une décision
+    // de sécurité sur une valeur arbitraire.
+    //
+    // API 29 minimum (`PowerManager.addThermalStatusListener`). En dessous, la surveillance
+    // n'existe pas et le journal le dit — on ne laisse pas croire qu'elle veille.
+    private val E03_SEUIL_THERMIQUE = 3   // android.os.PowerManager.THERMAL_STATUS_SEVERE
+
+    /** Dernier niveau thermique connu. -1 = aucun relevé encore reçu. */
+    @Volatile private var niveauThermiqueDernier: Int = -1
+
+    private var ecouteurThermique: android.os.PowerManager.OnThermalStatusChangedListener? = null
+
+    private fun libelleThermique(n: Int): String = when (n) {
+        0 -> "AUCUN"; 1 -> "LEGER"; 2 -> "MODERE"; 3 -> "SEVERE"
+        4 -> "CRITIQUE"; 5 -> "URGENCE"; 6 -> "ARRET_IMMINENT"; else -> "INCONNU_$n"
+    }
+
+    /**
+     * Branche la surveillance thermique. Idempotent. Sans effet sous API 29 — et la ligne
+     * de journal le CONSIGNE, pour qu'un lecteur ne suppose pas une surveillance absente.
+     */
+    private fun brancherSurveillanceThermique() {
+        if (ecouteurThermique != null) return
+        if (android.os.Build.VERSION.SDK_INT < 29) {
+            if (TEST_E03_CESSATION_VS) {
+                logE03("E03 THERMIQUE surveillance=INDISPONIBLE api=${android.os.Build.VERSION.SDK_INT} " +
+                       "requis=29 consequence=scenario_13_non_mesurable_sur_cet_appareil")
+            }
+            return
+        }
+        val pm = try {
+            getSystemService(android.content.Context.POWER_SERVICE) as? android.os.PowerManager
+        } catch (_: Throwable) { null } ?: return
+        val l = android.os.PowerManager.OnThermalStatusChangedListener { niveau ->
+            // TRANSITION, PAS ÉTAT — même règle que la perte d'aéronef. On ne réagit qu'à
+            // l'ENTRÉE dans la zone sévère. Sans cela, un appareil déjà chaud à l'ouverture
+            // de l'écran déclencherait un arrêt d'urgence avant toute action de l'opérateur,
+            // et chaque rappel répété du système en déclencherait un nouveau.
+            val avant = niveauThermiqueDernier
+            val entreeEnZoneSevere = avant < E03_SEUIL_THERMIQUE && niveau >= E03_SEUIL_THERMIQUE
+            niveauThermiqueDernier = niveau
+            if (TEST_E03_CESSATION_VS) {
+                logE03("E03 THERMIQUE niveau=$niveau libelle=${libelleThermique(niveau)} " +
+                       "precedent=${if (avant < 0) "inconnu" else libelleThermique(avant)} " +
+                       "seuil=${libelleThermique(E03_SEUIL_THERMIQUE)} " +
+                       "transition=${if (entreeEnZoneSevere) "ENTREE_ZONE_SEVERE" else "aucune"} " +
+                       "soccerArme_avant=$soccerArme " +
+                       "effet=${if (entreeEnZoneSevere && soccerArme) "arret_urgence_desarme_le_soccer" else "aucun"} " +
+                       "ts=${System.currentTimeMillis()}")
+            }
+            // On n'agit que si l'automatisme est armé : sans mode armé, il n'y a aucune
+            // commande à faire cesser, et couper serait une mise en sécurité sans objet.
+            if (entreeEnZoneSevere && soccerArme) {
+                if (TEST_E03_CESSATION_VS) e03Capteur.marquerT1()
+                runOnUiThread { try { arretUrgence() } catch (_: Throwable) {} }
+            }
+        }
+        try {
+            pm.addThermalStatusListener(mainExecutor, l)
+            ecouteurThermique = l
+            if (TEST_E03_CESSATION_VS) {
+                logE03("E03 THERMIQUE surveillance=BRANCHEE niveau_initial=" +
+                       "${try { libelleThermique(pm.currentThermalStatus) } catch (_: Throwable) { "inconnu" }} " +
+                       "seuil=${libelleThermique(E03_SEUIL_THERMIQUE)}")
+            }
+        } catch (_: Throwable) { ecouteurThermique = null }
+    }
+
+    /** Retire la surveillance thermique (fin de premier plan). Idempotent. */
+    private fun debrancherSurveillanceThermique() {
+        val l = ecouteurThermique ?: return
+        ecouteurThermique = null
+        if (android.os.Build.VERSION.SDK_INT < 29) return
+        try {
+            (getSystemService(android.content.Context.POWER_SERVICE) as? android.os.PowerManager)
+                ?.removeThermalStatusListener(l)
+        } catch (_: Throwable) {}
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════════
+    // ESSAI E03-05 — CRASH DU PROCESSUS (mesure par handler de dernier recours)
+    // ══════════════════════════════════════════════════════════════════════════════
+    // PROBLÈME STRUCTUREL : un process tué ne peut plus écrire son journal. L'instrumentation
+    // T0..T5 + fenêtre d'observation ne peut donc PAS se mesurer elle-même pour ce scénario
+    // (la coroutine de synthèse meurt avec le process). On mesure autrement.
+    //
+    // CE QUE E03-05 PROUVE, ET RIEN DE PLUS :
+    //  - l'émetteur de commandes (boucle pilote + SDK DJI) vit DANS ce process → quand le
+    //    process meurt, l'émission cesse INSTANTANÉMENT : aucune commande ne peut survivre à
+    //    la mort du process. La persistance après crash est NULLE PAR CONSTRUCTION, pas par
+    //    une mesure de délai — il n'y a plus personne pour émettre.
+    //  - le marqueur final consigne DEPUIS COMBIEN DE TEMPS l'aéronef était commandé au moment
+    //    du crash (dernière commande non nulle), ce qui atteste que la commande coulait bien
+    //    juste avant, et que c'est BIEN le crash qui l'a interrompue.
+    // CE QUE E03-05 NE COUVRE PAS : la protection de l'aéronef APRÈS la mort de l'app, qui est
+    // le timeout Virtual Stick du DRONE (firmware DJI). Cela relève d'un essai EN VOL, pas du
+    // banc — à écrire ainsi au dossier.
+
+    /** Nanos monotone de la DERNIÈRE commande NON NULLE réellement émise (-1 = aucune). */
+    private val e03DerniereEmissionNonNulleNanos = java.util.concurrent.atomic.AtomicLong(-1L)
+
+    /** Handler de crash présent AVANT le nôtre, pour le CHAÎNER (laisser le process mourir). */
+    @Volatile private var e03HandlerCrashPrecedent: Thread.UncaughtExceptionHandler? = null
+
+    /**
+     * Installe un `UncaughtExceptionHandler` qui, sur un crash NON intercepté, écrit une
+     * dernière ligne `E03 CRASH_PROCESS` PUIS chaîne au handler précédent — le process meurt
+     * donc normalement, on n'avale RIEN. Idempotent. Actif seulement en build d'essai.
+     */
+    private fun installerHandlerCrashE03() {
+        if (e03HandlerCrashPrecedent != null) return
+        e03HandlerCrashPrecedent = Thread.getDefaultUncaughtExceptionHandler()
+        Thread.setDefaultUncaughtExceptionHandler { thread, ex ->
+            try {
+                val derN = e03DerniereEmissionNonNulleNanos.get()
+                val depuisMs = if (derN > 0L) (System.nanoTime() - derN) / 1_000_000 else -1L
+                val ligne = "E03 CRASH_PROCESS thread=${thread.name} " +
+                    "exception=${ex.javaClass.simpleName} " +
+                    "derniere_emission_non_nulle_il_y_a_ms=$depuisMs " +
+                    "persistance_apres_crash=NULLE_PAR_CONSTRUCTION_emetteur_in_process " +
+                    "note=le_process_et_le_SDK_DJI_meurent_ensemble_aucune_commande_ne_survit " +
+                    "ts=${System.currentTimeMillis()}\n"
+                java.io.FileOutputStream(java.io.File(getExternalFilesDir(null), "essai_e03.log"), true)
+                    .use { it.write(ligne.toByteArray(Charsets.UTF_8)); it.flush() }
+            } catch (_: Throwable) { /* on meurt de toute façon : best-effort */ }
+            // CHAÎNE OBLIGATOIRE : laisser ART tuer le process. Ne JAMAIS avaler le crash.
+            e03HandlerCrashPrecedent?.uncaughtException(thread, ex)
+        }
+    }
+    // ══════════════════════════════════════════════════════════════════════════════
+    // ⚠️⚠️ MODE BANC E-03 — DÉROGATION DE SÉCURITÉ DÉLIBÉRÉE, HÉLICES RETIRÉES ⚠️⚠️
+    // ══════════════════════════════════════════════════════════════════════════════
+    // POURQUOI CE MODE EXISTE
+    // L'arbitre exige `inFlightCompatible=true` pour autoriser la moindre émission. C'est
+    // correct en exploitation : on n'envoie pas de commande à un aéronef au sol. Mais le
+    // §378 impose que E-03 soit un essai AU BANC, hélices retirées — donc JAMAIS en vol.
+    // Sans dérogation, l'arbitre bloque tout, aucune commande n'est émise, et l'essai ne
+    // peut produire AUCUNE mesure (constat de terrain 2026-07-22 : `emis=true` absent de
+    // tout le journal, raison="soccer bloque : virtual_stick_indisponible").
+    //
+    // CE QUE LA DÉROGATION FAIT, EXACTEMENT
+    //   1. autorise `activerVirtualStick(true)` sans décollage ;
+    //   2. force le bit IF (inFlightCompatible) du SafetySnapshot ;
+    //   3. empêche les points qui coupent le VS quand `enVol==false` de le redésactiver.
+    // Elle NE touche à AUCUN autre bit : PO, EM, OG, RV, PF, AC, BO, CC, ON restent juges.
+    //
+    // CE QU'ELLE NE PEUT PAS FAIRE — À NE PAS MASQUER DANS LE DOSSIER
+    // Hélices retirées, les moteurs ne tournent pas : la persistance PHYSIQUE (T6) n'est
+    // PAS mesurable au banc. Seuls T0..T5 et la persistance DE COMMANDE le sont. Le
+    // journal porte `banc=OUI` sur CHAQUE ligne pour qu'aucune mesure de banc ne puisse
+    // être présentée comme une mesure en vol.
+    //
+    // VERROUS
+    //   - inopérant si TEST_E03_CESSATION_VS == false ;
+    //   - armement REFUSÉ si l'aéronef est réellement en vol (`enVol==true`) ;
+    //   - désarmement automatique si l'aéronef décolle pendant l'essai ;
+    //   - armement MANUEL par bouton : jamais actif au simple lancement de l'écran.
+    // ⚠ REMETTRE À false APRÈS LA CAMPAGNE. Ne JAMAIS committer à true.
+    private val TEST_E03_BANC = false   // ← false = production / VOL RÉEL (dérogation banc retirée, 2026-07-23).
+    // ══════════════════════════════════════════════════════════════════════════════
+    // DIAGNOSTIC — génération de charge pour la campagne anti-faux-positif.
+    // Le resserrement du budget watchdog (500→350 ms) rapproche le seuil de la gigue
+    // d'ordonnancement Android. Il faut démontrer que NI le watchdog de cycle NI le
+    // watchdog indépendant ne déclenchent sous charge. Ces boutons produisent une charge
+    // REPRODUCTIBLE ; ils ne remplacent pas les manipulations réelles (rotation, arrière-
+    // plan, verrouillage, app lourde, changement de réseau, session longue), qui seules
+    // sont représentatives.
+    // ⚠ Drapeau de DIAGNOSTIC : jamais à true en production. 5e drapeau à remettre à false.
+    private val TEST_E03_STRESS = false   // ← false = production (campagne de charge terminée, 2026-07-23).
+    private val E03_STRESS_DUREE_MS = 30_000L
     // ══════════════════════════════════════════════════════════════════════════════
     // ⚠️ TEST E-06/E-07/E-08/E-09 AU SOL — HÉLICES RETIRÉES ⚠️
     // Flag pour valider AU SOL que les SÉCURITÉS coupent l'émission :
@@ -231,11 +506,43 @@ class Phase3Activity : AppCompatActivity() {
         // TEST E-01 : force le profil PERSONNE (MARCHE -> classeVision=PERSON) pour que
         // YOLO detecte des personnes en mode soccer, condition necessaire a l'emission 2D
         // (sinon detection = voiture -> soccerNbJoueurs reste 0 -> aucun log). Flag=false -> comportement normal.
-        if (TEST_E01_SIGNE_THROTTLE) ProfilSujetMobile.MARCHE
+        if (SOCCER_2D_EMISSION_ACTIVE) ProfilSujetMobile.MARCHE
+        else if (SUIVI_ATHLETE_SIMU) ProfilSujetMobile.MARCHE   // athlète = personne
         else if (intent?.getStringExtra("PROFIL_SUJET") == "MARCHE") ProfilSujetMobile.MARCHE
         else ProfilSujetMobile.AUTO
     }
-    private val predicteur by lazy { DiagnosticPredictionRtk(profilSujet.configurationPrediction()) }
+
+    // ── SUIVI ATHLÈTE (étape 5) : source ATHLETE_PHONE au lieu du RTK voiture ────────────
+    private val adaptateurAthlete = ca.cineflight.stage.athlete.AdaptateurSuiviAthlete()
+    private val evaluateurAthlete = ca.cineflight.stage.athlete.EvaluateurSourceAthlete()
+    // UN SEUL détecteur d'immobilité inertielle (CoreMotion) : le même verdict alimente
+    // l'évaluateur ET l'adaptateur — deux instances divergeraient (hystérésis séparées).
+    private val immobiliteAthlete = ca.cineflight.stage.athlete.ImmobiliteInertielle()
+    @Volatile private var athleteEtat = ca.cineflight.stage.athlete.EvaluateurSourceAthlete.Etat.PERDU
+    /** Dernière raison de l'adaptateur athlète (ok / precision_… / saut_… / donnee_perimee_…). */
+    @Volatile private var athleteRaison = "en attente"
+    /** Vitesse mini (m/s) pour juger le cap athlète FIABLE. En dessous : cap gelé (anti-360). */
+    private val CAP_ATHLETE_VITESSE_MIN = 0.5
+    // Horodatage du dernier log CF_SuiviAthlete (instrumentation ~1 Hz du suivi athlète).
+    private var dernierLogAthleteMs = 0L
+    // CAP DÉRIVÉ DE LA TRAJECTOIRE : comble l'absence de cap des DEUX sources (boîtier RTK
+    // et iPhone athlète). Sans lui, les angles derrière/devant/gauche/droite sont inopérants.
+    private val capDeplacement = ca.cineflight.stage.control.CapParDeplacement()
+    // Journal PERSISTANT du vol (singleton : un aéronef, un vol à la fois).
+    private val journalVol get() = ca.cineflight.stage.control.JournalVol
+    private val URL_ATHLETE_BASE = "https://cineflight.ca"
+    /** subject_id mémorisé par l'écran Athlète (prefs). Lu À CHAQUE FOIS (pas de cache lazy :
+     *  sinon ouvrir Phase 3 avant de choisir l'athlète le figerait à vide). Vide -> suivi refusé. */
+    private val athleteSubjectId: String
+        get() = getSharedPreferences("cineflight", MODE_PRIVATE).getString("athlete_subject_id", "") ?: ""
+    // Mode ATHLÈTE : fenêtres temporelles adaptées à la cadence iPhone (~2 s/POST). Avec la
+    // config RTK voiture (ageMax=0,5 s...), la prédiction était inopérante (predPret jamais
+    // vrai) et le drone suivait la position brute par bonds de 2 s. Voir ProfilSujetMobile.
+    private val predicteur by lazy {
+        DiagnosticPredictionRtk(
+            if (SUIVI_ATHLETE_SIMU) profilSujet.configurationPredictionAthlete()
+            else profilSujet.configurationPrediction())
+    }
     @Volatile private var predPret = false          // prediction fiable cette frame ?
     @Volatile private var predLat = Double.NaN      // position ANTICIPEE du sujet
     @Volatile private var predLon = Double.NaN
@@ -279,7 +586,7 @@ class Phase3Activity : AppCompatActivity() {
     // Active par le mode SOCCER (extra MODE_SOCCER) : observation a l'ecran, aucun mouvement.
     // TEST E-01 : ouvre le miroir de mouvement (sinon observerMiroirMouvementSoccer, qui
     // contient le bloc d'emission 2D, n'est JAMAIS appele). Flag=false -> false comme avant.
-    @Volatile private var SOCCER_RAIL_MIRROR_ENABLED = TEST_E01_SIGNE_THROTTLE
+    @Volatile private var SOCCER_RAIL_MIRROR_ENABLED = SOCCER_2D_EMISSION_ACTIVE
     private var txtSoccer: TextView? = null
     private var overlayYoloP3: OverlayYolo? = null
     @Volatile private var overlayYoloVisible = false
@@ -297,8 +604,14 @@ class Phase3Activity : AppCompatActivity() {
     // Essai 1 : ALTITUDE SEULE (throttle). roll/pitch/yaw = 0. Ne PAS augmenter vMax avant
     // d'avoir verifie le SENS du throttle par un test statique au sol.
     // Flags derives du flag maitre TEST_E01_SIGNE_THROTTLE (declare plus haut, avant profilSujet).
-    private val SOCCER_2D_REAL_ENABLED = TEST_E01_SIGNE_THROTTLE
-    private val SOCCER_2D_MAX_VSPEED_MPS = if (TEST_E01_SIGNE_THROTTLE) 0.2f else 0f
+    private val SOCCER_2D_REAL_ENABLED = SOCCER_2D_EMISSION_ACTIVE
+    // BORNE de vitesse verticale : vol réel = petite vitesse PRUDENTE (0.5 m/s) pour les
+    // premiers essais ; test de signe au sol = 0.2 ; sinon inerte (0).
+    private val SOCCER_2D_MAX_VSPEED_MPS = when {
+        SOCCER_2D_VOL_REEL -> 0.5f
+        TEST_E01_SIGNE_THROTTLE -> 0.2f
+        else -> 0f
+    }
     private val SOCCER_BATT_MIN_PCT = ca.cineflight.stage.control.SafetyLimits.BATTERIE_MIN_PCT  // source unique (v54)
     private val SOCCER_DIST_MAX_M = ca.cineflight.stage.control.SafetyLimits.DIST_OPERATEUR_MAX_M // source unique (v54)
     // ARMEMENT runtime : le mode soccer n'est "arme" que si l'operateur l'a active ET
@@ -306,8 +619,40 @@ class Phase3Activity : AppCompatActivity() {
     // TEST E-01 : auto-arme le mode soccer quand le flag de test est actif (le bouton
     // d'armement n'est visible que si SOCCER_RAIL_REAL_ENABLED, hors scope du test 2D).
     // En production (flag=false) -> false comme avant. REMETTRE le flag a false apres le test.
-    @Volatile private var soccerArme = TEST_E01_SIGNE_THROTTLE
+    /**
+     * MODE SOCCER ARMÉ — TOUJOURS false au démarrage.
+     *
+     * DÉFAUT CORRIGÉ (2026-07-22). Ce champ valait `TEST_E01_SIGNE_THROTTLE`, donc `true`
+     * dès l'ouverture de l'écran. Trois conséquences, toutes constatées au banc :
+     *
+     *  1. Le bouton est CRÉÉ avec le libellé « Mode SOCCER : désarmé » et `majBoutonSoccer()`
+     *     n'était pas appelé à la construction : l'écran affichait « désarmé » alors que
+     *     l'état interne disait « armé ». Les deux se contredisaient dès la première seconde.
+     *  2. `basculerArmementSoccer()` teste `if (soccerArme)` en tête et se contente
+     *     d'afficher « maintenir 3 s pour désarmer ». Un appui sur un bouton annoncé
+     *     « désarmé » ne pouvait donc PAS armer — sans dialogue, sans trace au journal.
+     *     Relevé du 2026-07-22 : aucune ligne `SOCCER_ARME` sur une session de 20 minutes,
+     *     et `etait_arme=NON` sur tous les désarmements de cycle de vie.
+     *  3. `soccerArme=true` sans que le thread du watchdog indépendant ait jamais démarré,
+     *     et sans épinglage ni maintien d'écran (tous deux posés à l'armement) : exactement
+     *     l'état menteur « armé sans détecteur » corrigé par ailleurs, réintroduit ici par
+     *     une valeur initiale.
+     *
+     * RÈGLE : le mode automatique s'arme par une décision HUMAINE, jamais par un drapeau de
+     * compilation. La série d'essai le réarme explicitement (`e03RearmerSoccerAuto`), donc
+     * rien ne dépend de cette pré-initialisation.
+     */
+    @Volatile private var soccerArme = false
     @Volatile private var soccerArretUrgence = false
+
+    /**
+     * Raison du dernier désarmement provoqué par le CYCLE DE VIE (sortie du premier plan),
+     * en attente d'être annoncée au pilote à son retour. null = rien à annoncer.
+     *
+     * Le message survit à l'aller-retour arrière-plan : sans lui, le pilote retrouverait un
+     * bouton « désarmé » sans savoir pourquoi et pourrait croire à une fausse manœuvre.
+     */
+    @Volatile private var soccerDesarmeParCycleVie: String? = null
     private var btnSoccer: Button? = null
     // NB : en Phase3 la cible YOLO est unique (yoloCx), on construit l'estimation
     // directement -> pas besoin de SoccerActionEstimator (mediane multi-joueurs) ici.
@@ -414,10 +759,41 @@ class Phase3Activity : AppCompatActivity() {
     @Volatile private var azimutCourantDeg = Double.NaN
     @Volatile private var phaseMouv = 0.0        // avancement du mouvement (0->1)
     private val DUREE_MOUV_S = 20.0              // duree d'un mouvement (orbite/reveal/rapproche)
-    private val DIST_MOUV_M  get() = if (profilSujet == ProfilSujetMobile.MARCHE) 4.0 else 20.0             // distance drone-voiture pendant un mouvement
+    // ── DISTANCE DE CADRAGE réglable (2026-07-25) ───────────────────────────────────
+    // Constat terrain : « le 360 autour de moi est très éloigné ». La distance venait du
+    // PROFIL mémorisé (VELO = 20 m) sans que le pilote puisse la changer sur place.
+    // Elle est désormais un RÉGLAGE explicite, mémorisé, borné par le plancher de sécurité
+    // du noyau (jamais sous distanceMinM : 3,5 m personne / 8 m véhicule).
+    private val PALIERS_PERSONNE = doubleArrayOf(4.0, 6.0, 9.0, 14.0)
+    private val PALIERS_VEHICULE = doubleArrayOf(12.0, 20.0, 30.0, 45.0)
+    private val paliersCadrage get() =
+        if (profilSujet == ProfilSujetMobile.MARCHE) PALIERS_PERSONNE else PALIERS_VEHICULE
+    private val CLE_CADRAGE = "cadrage_distance_idx"
+    // ⚠ NE PAS lire les préférences à l'INITIALISATION DU CHAMP : le contexte de
+    // l'Activity n'est pas encore prêt -> crash à l'ouverture de l'écran (constaté
+    // 2026-07-25). Lecture PARESSEUSE, au premier accès (donc après onCreate).
+    private var idxCadrageCache: Int = -1
+    private var idxCadrage: Int
+        get() {
+            if (idxCadrageCache < 0) {
+                idxCadrageCache = try {
+                    getSharedPreferences("cineflight", MODE_PRIVATE).getInt(CLE_CADRAGE, 0)
+                } catch (_: Throwable) { 0 }.coerceIn(0, 3)
+            }
+            return idxCadrageCache
+        }
+        set(v) { idxCadrageCache = v.coerceIn(0, 3) }
+    /** Distance drone-sujet demandée (m), bornée au plancher de sécurité du profil. */
+    private val distanceCadrageM: Double get() {
+        val plancher = if (profilSujet == ProfilSujetMobile.MARCHE) 3.5 else 8.0
+        return paliersCadrage[idxCadrage.coerceIn(0, paliersCadrage.size - 1)]
+            .coerceAtLeast(plancher)
+    }
+
+    private val DIST_MOUV_M  get() = distanceCadrageM             // rayon d'orbite / mouvements
 
     // ── LIMITES DE SECURITE ─────────────────────────────────────────────────────
-    private val V_MAX_HORIZ = 4.0f          // m/s horizontal max (doux et sur)
+    private val V_MAX_HORIZ = 2.0f          // m/s horizontal max — réduit pour les 1ers essais de suivi (était 4.0)
     private val V_MAX_VERT   = 2.0f         // m/s vertical max
     private val GAIN_P       = 0.6f         // gain proportionnel (vitesse = P * ecart)
     private val ZONE_MORTE_M = 1.0          // en-deca, on ne bouge pas (anti-oscillation)
@@ -431,6 +807,10 @@ class Phase3Activity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
+        // ESSAI E03-05 : handler de crash de dernier recours (écrit le marqueur avant la mort
+        // du process, puis chaîne). Uniquement en build d'essai. Aucun effet en production.
+        if (TEST_E03_CESSATION_VS) try { installerHandlerCrashE03() } catch (_: Throwable) {}
+
         val racine = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(0xFF0D1117.toInt())
@@ -438,8 +818,14 @@ class Phase3Activity : AppCompatActivity() {
         }
 
         racine.addView(TextView(this).apply {
-            text = if (intent?.getBooleanExtra("MODE_SOCCER", false) == true)
-                getString(R.string.p3_titre_soccer) else getString(R.string.p3_titre)
+            // TITRE selon le MODE réel : soccer, suivi de PERSONNE (profil MARCHE) ou de
+            // VÉHICULE. Avant, l'écran de suivi personne affichait « Suivre le véhicule » car
+            // le titre ne distinguait que soccer / non-soccer.
+            text = when {
+                intent?.getBooleanExtra("MODE_SOCCER", false) == true -> getString(R.string.p3_titre_soccer)
+                profilSujet == ProfilSujetMobile.MARCHE -> getString(R.string.p3_titre_personne)
+                else -> getString(R.string.p3_titre)
+            }
             setTextColor(Color.WHITE); textSize = 18f
             setPadding(0, 0, 0, dp(12))
         })
@@ -540,11 +926,31 @@ class Phase3Activity : AppCompatActivity() {
                 ViewGroup.LayoutParams.MATCH_PARENT, dp(50)).apply { topMargin = dp(8) }
             if (estModeSoccer) visibility = GONE
         })
+        // SIMULATEUR — RÉSERVÉ AU MODE DÉVELOPPEUR (build debug ou préférence explicite).
+        // Cet écran sert au VRAI suivi : un bouton de simulation au milieu des commandes
+        // normales laissait croire que la simulation est une étape obligatoire ou un mode de
+        // vol ordinaire. Il reste dans le code pour les tests, mais invisible pour
+        // l'utilisateur final (et toujours caché en mode soccer).
+        val simulateurAutorise = ca.cineflight.stage.BuildConfig.DEBUG ||
+            getSharedPreferences("cineflight", MODE_PRIVATE).getBoolean("mode_developpeur", false)
         btnSimPhase3 = bouton(getString(R.string.p3_btn_sim_off), 0xFF455A64.toInt()) { basculerSimulateur() }
         racine.addView(btnSimPhase3.apply {
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, dp(50)).apply { topMargin = dp(8) }
-            if (estModeSoccer) visibility = GONE
+            visibility = if (simulateurAutorise && !estModeSoccer)
+                android.view.View.VISIBLE else android.view.View.GONE
+        })
+        // TEST AXES HORIZONTAUX EN SIMULATEUR (2026-07-25). Vol réel du jour : au lieu de
+        // suivre, le drone ORBITAIT autour du sujet (r≈25 m = 2 m/s ÷ 4,5°/s) — signature
+        // exacte d'une commande « avant » exécutée EN LATÉRAL, le piège pitch/roll connu du
+        // Virtual Stick DJI (INVERSER_ROLL_PITCH existe pour ça, jamais vérifié : E-01 n'a
+        // testé que le throttle, les axes horizontaux sont invérifiables au sol). Ce test
+        // mesure la sémantique RÉELLE dans le simulateur : hélices retirées, zéro risque.
+        racine.addView(bouton("🧭 TEST AXES (SIMULATEUR)", 0xFF6A1B9A.toInt()) { testAxesSimulateur() }.apply {
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(50)).apply { topMargin = dp(8) }
+            visibility = if (simulateurAutorise && !estModeSoccer)
+                android.view.View.VISIBLE else android.view.View.GONE
         })
         // Ouvert en "camera seule" ? on demarre directement en mode vision (sans boitier).
         // Suivi de VEHICULE (profil AUTO) : le boitier de suivi est OBLIGATOIRE ->
@@ -594,6 +1000,8 @@ class Phase3Activity : AppCompatActivity() {
         // le bouton LIVE de l'ecran principal. Present dans TOUS les modes de suivi
         // (personne avec/sans boitier, vehicule, soccer). Diffusion independante du suivi.
         racine.addView(bouton("🔴 Diffuser en direct", 0xFFC62828.toInt()) {
+            // Ouvre l'ecran Live (cle synchronisee auto). Le direct se lance ensuite
+            // avec le bouton "Demarrer le direct".
             startActivity(android.content.Intent(this, LiveStreamActivity::class.java))
         }.apply {
             layoutParams = LinearLayout.LayoutParams(
@@ -601,15 +1009,8 @@ class Phase3Activity : AppCompatActivity() {
         })
 
         // 🎬 ANGLE / MOUVEMENT : change en direct pendant le suivi. (Vehicule seulement.)
-        racine.addView(TextView(this).apply {
-            text = getString(R.string.p3_section_angle)
-            setTextColor(0xFFB0BEC5.toInt()); textSize = 12f
-            setPadding(dp(2), dp(14), 0, dp(4))
-            if (estModeSoccer) visibility = GONE
-        })
-        // 4 boutons par rangee. Boutons un peu plus HAUTS + moins de marge interne
-        // pour que le texte (icone + mot, jusqu'a 2 lignes) reste bien lisible dans
-        // le panneau etroit. S'applique aux 8 boutons (angles + mouvements).
+        // Boutons plus HAUTS + peu de marge interne pour que le texte (icône + mot, jusqu'à
+        // 2 lignes) reste lisible dans le panneau étroit. Poids égal -> largeur uniforme.
         fun poidsBtn() = LinearLayout.LayoutParams(0, dp(60), 1f).apply { setMargins(dp(2), 0, dp(2), 0) }
         fun boutonPos(txt: String, pos: String, couleur: Int) =
             bouton(txt, couleur) { choisirPosition(pos) }.apply {
@@ -619,24 +1020,48 @@ class Phase3Activity : AppCompatActivity() {
             bouton(txt, couleur) { choisirMouvement(mv) }.apply {
                 textSize = 13f; maxLines = 2; setPadding(dp(2), dp(4), dp(2), dp(4)); layoutParams = poidsBtn()
             }
-        // Rangee 1 : ANGLES fixes autour de la voiture.
-        val rangeeM1 = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        rangeeM1.addView(boutonPos(getString(R.string.p3_angle_derriere), "derriere", 0xFF37474F.toInt()))
-        rangeeM1.addView(boutonPos(getString(R.string.p3_angle_devant), "devant", 0xFF4E342E.toInt()))
-        rangeeM1.addView(boutonPos(getString(R.string.p3_angle_gauche), "gauche", 0xFF37474F.toInt()))
-        rangeeM1.addView(boutonPos(getString(R.string.p3_angle_droite), "droite", 0xFF37474F.toInt()))
-        if (estModeSoccer) rangeeM1.visibility = GONE
-        racine.addView(rangeeM1, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(4) })
-        // Rangee 2 : VUE PLONGEE + mouvements cinematographiques.
-        val rangeeM2 = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        rangeeM2.addView(boutonPos(getString(R.string.p3_angle_plongee), "plongee", 0xFF4527A0.toInt()))
-        rangeeM2.addView(boutonMouv(getString(R.string.p3_mouv_orbite), GenerateurMouvement.TypeMouvement.ORBITE, 0xFF00695C.toInt()))
-        rangeeM2.addView(boutonMouv(getString(R.string.p3_mouv_reveal), GenerateurMouvement.TypeMouvement.REVEAL, 0xFF00695C.toInt()))
-        rangeeM2.addView(boutonMouv(getString(R.string.p3_mouv_rapproche), GenerateurMouvement.TypeMouvement.RAPPROCHE, 0xFF00695C.toInt()))
-        if (estModeSoccer) rangeeM2.visibility = GONE
-        racine.addView(rangeeM2, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(4) })
+        fun sousTitreSection(cle: Int, hautDp: Int) {
+            racine.addView(TextView(this).apply {
+                text = getString(cle); setTextColor(0xFFB0BEC5.toInt()); textSize = 12f
+                setPadding(dp(2), dp(hautDp), 0, dp(4))
+                if (estModeSoccer) visibility = GONE
+            })
+        }
+        fun rangeeBoutons(vararg vues: android.view.View) {
+            val r = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+            vues.forEach { r.addView(it) }
+            if (estModeSoccer) r.visibility = GONE
+            racine.addView(r, LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(4) })
+        }
+        // ══ SECTION 1 — ANGLE DE DÉPART : OÙ le drone se place par rapport au sujet. ══
+        sousTitreSection(R.string.p3_section_angle, 14)
+        rangeeBoutons(
+            boutonPos(getString(R.string.p3_angle_derriere), "derriere", 0xFF37474F.toInt()),
+            boutonPos(getString(R.string.p3_angle_devant), "devant", 0xFF4E342E.toInt()),
+            boutonPos(getString(R.string.p3_angle_gauche), "gauche", 0xFF37474F.toInt()))
+        rangeeBoutons(
+            boutonPos(getString(R.string.p3_angle_droite), "droite", 0xFF37474F.toInt()),
+            boutonPos(getString(R.string.p3_angle_plongee), "plongee", 0xFF4527A0.toInt()))
+        // ══ DISTANCE DE CADRAGE : réglable EN DIRECT (le 360 était trop éloigné, 2026-07-25).
+        // Un seul bouton qui cycle les paliers : lisible d'un coup d'œil, utilisable en vol.
+        btnCadrage = bouton("", 0xFF00838F.toInt()) { cyclerDistanceCadrage() }.apply {
+            textSize = 14f
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(48)).apply { topMargin = dp(10) }
+            if (estModeSoccer) visibility = GONE
+        }
+        racine.addView(btnCadrage)
+        majBoutonCadrage()
+
+        // ══ SECTION 2 — MOUVEMENT DU PLAN : CE QUE le drone fait pendant l'enregistrement. ══
+        sousTitreSection(R.string.p3_section_mouvement, 12)
+        rangeeBoutons(
+            boutonMouv(getString(R.string.p3_mouv_orbite), GenerateurMouvement.TypeMouvement.ORBITE, 0xFF00695C.toInt()),
+            boutonMouv(getString(R.string.p3_mouv_reveal), GenerateurMouvement.TypeMouvement.REVEAL, 0xFF00695C.toInt()))
+        rangeeBoutons(
+            boutonMouv(getString(R.string.p3_mouv_rapproche), GenerateurMouvement.TypeMouvement.RAPPROCHE, 0xFF00695C.toInt()),
+            boutonMouv(getString(R.string.p3_mouv_travelling), GenerateurMouvement.TypeMouvement.TRAVELLING, 0xFF00695C.toInt()))
 
         racine.addView(bouton(getString(R.string.p3_btn_arreter), 0xFF6D4C41.toInt()) { arreterSuivi() }.apply {
             layoutParams = LinearLayout.LayoutParams(
@@ -656,6 +1081,15 @@ class Phase3Activity : AppCompatActivity() {
             textSize = 11f; setTextColor(0xFF90A4AE.toInt()); setPadding(dp(2), dp(4), dp(2), 0)
         })
 
+        // RTH (2026-07-25) : demandé pour les 3 modes de suivi (boîtier, voiture, vision).
+        // Séquence sûre : suivi coupé -> commande neutre -> VS rendu -> KeyStartGoHome.
+        racine.addView(bouton(getString(R.string.p3_btn_rth), 0xFFEF6C00.toInt()) {
+            confirmerVol(getString(R.string.p3_rth_titre), getString(R.string.p3_rth_msg),
+                getString(R.string.p3_rth_oui), false) { lancerRthSuivi() }
+        }.apply {
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(50)).apply { topMargin = dp(8) }
+        })
         racine.addView(bouton(getString(R.string.p3_btn_atterrir), 0xFF455A64.toInt()) { confirmerVol(getString(R.string.ma_atter_titre), getString(R.string.ma_atter_msg), getString(R.string.ma_atter_oui), false) { atterrir() } }.apply {
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, dp(50)).apply { topMargin = dp(8) }
@@ -667,14 +1101,59 @@ class Phase3Activity : AppCompatActivity() {
                 ViewGroup.LayoutParams.MATCH_PARENT, dp(64)).apply { topMargin = dp(18) }
         })
 
-        // BOUTON MODE SOCCER (armer/desarmer). Visible uniquement si l'emission reelle est
-        // compilee active ; sinon inutile (le mode ne peut de toute facon pas s'appliquer).
-        if (SOCCER_RAIL_REAL_ENABLED) {
+        // BOUTON MODE SOCCER (armer/desarmer). Visible si l'un OU l'autre des modes
+        // automatiques est compilé actif.
+        //
+        // DÉFAUT CORRIGÉ (2026-07-22) : la condition ne testait que SOCCER_RAIL_REAL_ENABLED
+        // (mode RAIL, resté à `false`). Or l'essai E-03 se déroule en mode 2D, gouverné par
+        // SOCCER_2D_REAL_ENABLED. Le bouton n'était donc JAMAIS créé : `btnSoccer` restait
+        // null, `majBoutonSoccer()` sortait immédiatement, et il n'existait AUCUN moyen
+        // d'armer le mode à la main. Le défaut est passé inaperçu parce que `soccerArme`
+        // était pré-armé par un drapeau de test et que la série d'essai réarme toute seule —
+        // deux béquilles qui masquaient l'absence de commande manuelle.
+        //
+        // Conséquence au dossier : le chemin d'armement MANUEL n'a jamais pu être exercé.
+        // C'est précisément la réserve « démontré par le chemin automatique seulement ».
+        // ⚠ AUSSI gaté sur estModeSoccer : ce bouton d'armement « Mode SOCCER » n'a de sens
+        // qu'en mode soccer. Sans ce garde, il fuitait dans le suivi personne/véhicule
+        // (gaté seulement sur les drapeaux de test, restés true pour la campagne E-03).
+        if ((SOCCER_RAIL_REAL_ENABLED || SOCCER_2D_REAL_ENABLED) && estModeSoccer) {
             btnSoccer = bouton("Mode SOCCER : désarmé", 0xFF455A64.toInt()) { basculerArmementSoccer() }.apply {
                 layoutParams = LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, dp(50)).apply { topMargin = dp(8) }
+                // ── DÉSARMEMENT PAR APPUI MAINTENU 3 s ────────────────────────────────
+                // L'écran étant épinglé pendant l'armement, le pilote ne doit pas avoir à
+                // chercher une combinaison Android sous stress : la sortie volontaire est
+                // ICI, sur le bouton qu'il regarde déjà. Trois secondes, parce qu'un appui
+                // bref pendant un vol automatisé ne doit pas pouvoir désarmer par accident.
+                setOnTouchListener { v, ev ->
+                    when (ev.action) {
+                        android.view.MotionEvent.ACTION_DOWN -> {
+                            if (soccerArme) {
+                                appuiDesarmementDebutMs = System.currentTimeMillis()
+                                v.postDelayed(runnableDesarmementLong, 3000L)
+                                try { txtEtat.text = "Maintenir… désarmement dans 3 s" } catch (_: Throwable) {}
+                            }
+                        }
+                        android.view.MotionEvent.ACTION_UP,
+                        android.view.MotionEvent.ACTION_CANCEL -> {
+                            v.removeCallbacks(runnableDesarmementLong)
+                            val tenu = System.currentTimeMillis() - appuiDesarmementDebutMs
+                            if (soccerArme && appuiDesarmementDebutMs > 0L && tenu < 3000L) {
+                                try { txtEtat.text = "Appui trop court (${tenu} ms) — maintenir 3 s pour désarmer" } catch (_: Throwable) {}
+                            }
+                            appuiDesarmementDebutMs = 0L
+                        }
+                    }
+                    false   // on ne consomme pas : l'appui simple reste géré par le clic
+                }
             }
             racine.addView(btnSoccer)
+            // LE BOUTON REFLÈTE L'ÉTAT RÉEL, DÈS LA CRÉATION. Sans cet appel, le libellé
+            // posé à la construction (« désarmé ») pouvait contredire `soccerArme` et le
+            // pilote se fiait à un affichage faux. Un indicateur de sécurité se dérive de
+            // l'état, il ne se recopie pas à la main.
+            majBoutonSoccer()
         }
         racine.addView(TextView(this).apply {
             text = getString(R.string.p3_urgence_aide)
@@ -698,12 +1177,84 @@ class Phase3Activity : AppCompatActivity() {
         // ── PANNEAU E-03 (banc, hélices retirées) : un bouton par scénario ───────────
         // Affiché UNIQUEMENT quand TEST_E03_CESSATION_VS = true. Chaque bouton déclenche
         // un stimulus et journalise T0..T6 + persistance dans essai_e03.log.
-        if (TEST_E03_CESSATION_VS) {
+        if (TEST_E03_CESSATION_VS && estModeSoccer) {
             racine.addView(TextView(this).apply {
                 text = "🧪 ESSAI E-03 — BANC, HÉLICES RETIRÉES"
                 setTextColor(0xFFFFCC00.toInt()); textSize = 15f
                 setPadding(0, dp(16), 0, dp(4))
             })
+            // ARMEMENT DU BANC — préalable OBLIGATOIRE aux scénarios.
+            // Sans lui l'arbitre bloque (bit IF=0, aéronef au sol) et aucune commande
+            // n'est émise : tous les scénarios rendraient une persistance de 0 sans
+            // signification. Bouton SÉPARÉ et explicite : la dérogation ne doit jamais
+            // s'appliquer par le seul fait d'ouvrir l'écran.
+            if (TEST_E03_BANC) {
+                racine.addView(TextView(this).apply {
+                    text = "Étape 1 — armer le banc. VÉRIFIER D'ABORD que les hélices " +
+                           "sont retirées. Le banc mesure T0→T5 ; T6 (effet physique) " +
+                           "n'est pas mesurable moteurs à l'arrêt."
+                    setTextColor(0xFFFF7043.toInt()); textSize = 12f
+                    setPadding(0, dp(2), 0, dp(6))
+                })
+                val btnBanc = bouton("🔒 ARMER LE BANC", 0xFFB71C1C.toInt()) {
+                    e03BasculerBanc()
+                }.apply {
+                    textSize = 17f
+                    setTypeface(null, android.graphics.Typeface.BOLD)
+                    layoutParams = LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT, dp(60)).apply { bottomMargin = dp(6) }
+                }
+                e03BtnBanc = btnBanc
+                racine.addView(btnBanc)
+
+                // SÉRIE AUTOMATIQUE : évite 5 réarmements manuels par scénario (§378 exige
+                // N≥5). N'affecte QUE les scénarios à stimulus logiciel ; ceux qui exigent
+                // un geste physique restent unitaires, sans quoi on journaliserait un
+                // stimulus qui n'a pas eu lieu.
+                // Libellé COURT et bouton HAUT : le panneau vit dans une colonne étroite,
+                // un texte long y est tronqué et devient illisible (retour terrain).
+                val btnSerie = bouton("RÉPÉTITIONS : ×1", 0xFF455A64.toInt()) {
+                    e03Repetitions = if (e03Repetitions == 1) 5 else 1
+                    e03BtnSerie?.text = if (e03Repetitions == 5) "RÉPÉTITIONS : ×5 AUTO"
+                                        else "RÉPÉTITIONS : ×1"
+                    e03BtnSerie?.backgroundTintList =
+                        android.content.res.ColorStateList.valueOf(
+                            if (e03Repetitions == 5) 0xFF00897B.toInt() else 0xFF455A64.toInt())
+                    logE03("E03 SERIE_MODE repetitions=$e03Repetitions")
+                }.apply {
+                    textSize = 17f
+                    setTypeface(null, android.graphics.Typeface.BOLD)
+                    layoutParams = LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT, dp(60)).apply { bottomMargin = dp(10) }
+                }
+                e03BtnSerie = btnSerie
+                racine.addView(btnSerie)
+
+                // ── CHARGE DE DIAGNOSTIC (campagne anti-faux-positif) ──────────────
+                if (TEST_E03_STRESS) {
+                    racine.addView(TextView(this).apply {
+                        text = "Charge de diagnostic — 30 s. Surveiller l'apparition de " +
+                               "WDG_INDEP avec contexte=HORS_FENETRE. Aucun déclenchement " +
+                               "attendu : la charge ralentit la boucle, elle ne la gèle pas."
+                        setTextColor(0xFF90A4AE.toInt()); textSize = 12f
+                        setPadding(0, dp(6), 0, dp(4))
+                    })
+                    val charges = listOf(
+                        "⚡ CPU 30 s" to ca.cineflight.stage.diag.StressBanc.Mode.CPU,
+                        "🧠 Mémoire/GC 30 s" to ca.cineflight.stage.diag.StressBanc.Mode.MEMOIRE,
+                        "⚡🧠 CPU + GC 30 s" to ca.cineflight.stage.diag.StressBanc.Mode.CPU_ET_MEMOIRE,
+                    )
+                    for ((libelle, mode) in charges) {
+                        racine.addView(bouton(libelle, 0xFF5D4037.toInt()) {
+                            e03LancerStress(mode)
+                        }.apply {
+                            textSize = 13f
+                            layoutParams = LinearLayout.LayoutParams(
+                                ViewGroup.LayoutParams.MATCH_PARENT, dp(44)).apply { topMargin = dp(4) }
+                        })
+                    }
+                }
+            }
             val scenarios: List<Pair<String, ca.cineflight.stage.sport.soccer.EssaiE03Log.Scenario>> = listOf(
                 "01 Arrêt normal" to ca.cineflight.stage.sport.soccer.EssaiE03Log.Scenario.E03_01_ARRET_NORMAL,
                 "02 Zéro maintenu" to ca.cineflight.stage.sport.soccer.EssaiE03Log.Scenario.E03_02_ZERO_MAINTENU,
@@ -723,7 +1274,24 @@ class Phase3Activity : AppCompatActivity() {
                 "FS3 Cmd persistante (failsafe)" to ca.cineflight.stage.sport.soccer.EssaiE03Log.Scenario.E03_FS3_CMD_PERSISTANTE,
             )
             for ((libelle, sc) in scenarios) {
-                racine.addView(bouton(libelle, 0xFF6A1B9A.toInt()) { e03Declencher(sc) }.apply {
+                racine.addView(bouton(libelle, 0xFF6A1B9A.toInt()) {
+                    // Les scénarios à stimulus LOGICIEL passent TOUJOURS par la séquence
+                    // automatique, y compris pour une seule répétition. Raison : chaque
+                    // scénario désarme le mode soccer (c'est son objet), et en tir manuel
+                    // l'opérateur devait le réarmer entre deux appuis. Une seule fois oublié
+                    // et la répétition part à vide — 4 mesures perdues le 2026-07-22.
+                    // La séquence remet les préconditions avant chaque stimulus.
+                    if (sc in E03_SCENARIOS_AUTOMATISABLES) {
+                        e03LancerSerie(sc, e03Repetitions)
+                    } else {
+                        if (e03Repetitions > 1) {
+                            txtEtat.text = "Stimulus physique requis — répétition unitaire"
+                            logE03("E03 SERIE non_applicable scenario=${sc.name} " +
+                                   "cause=stimulus_physique_requis mode=unitaire")
+                        }
+                        e03Declencher(sc)
+                    }
+                }.apply {
                     textSize = 13f
                     layoutParams = LinearLayout.LayoutParams(
                         ViewGroup.LayoutParams.MATCH_PARENT, dp(44)).apply { topMargin = dp(4) }
@@ -744,6 +1312,10 @@ class Phase3Activity : AppCompatActivity() {
             runOnUiThread {
                 if (ok) {
                     try { pont.initialiserListeners() } catch (_: Exception) {}
+                    // ÉTAT DE VOL RÉEL : `enVol` suit désormais le SDK (KeyIsFlying). Un
+                    // décollage AUX MANCHES DE LA RC met donc enVol=true — sinon « Démarrer le
+                    // suivi » restait bloqué sur « décolle d'abord » après un décollage manuel.
+                    try { pont.obsEnVol = { vol -> enVol = vol } } catch (_: Throwable) {}
                     // SECURITE E-09 (correction, ACTIVE EN PRODUCTION) : détecte la perte de
                     // liaison radiocommande et déclenche l'arrêt d'urgence (coupe l'émission
                     // soccer + désarme). En complément du failsafe DJI natif. Le log fichier
@@ -751,62 +1323,157 @@ class Phase3Activity : AppCompatActivity() {
                     try {
                         pont.obsConnexionRc = { connecte ->
                             logSecuTest("E09 ts=${System.currentTimeMillis()} rc_connecte=$connecte estConnecte=${try { pont.estConnecte() } catch (_: Throwable) { false }} soccerArme=$soccerArme")
-                            if (!connecte) runOnUiThread { try { arretUrgence() } catch (_: Throwable) {} }
+                            // TRAÇABILITÉ E-03 : c'est CET observateur qui désarme le soccer
+                            // (arretUrgence pose soccerArme=false), et l'essai s'arrête net sur
+                            // raison="non arme" sans que le journal E-03 en dise la cause. On la
+                            // consigne donc là où on la cherche. La ligne dit aussi combien de
+                            // fois l'événement se répète : des rafales identiques en quelques
+                            // millisecondes trahiraient un abonnement multiple aux clés DJI,
+                            // pas une vraie perte de liaison.
+                            if (TEST_E03_CESSATION_VS) {
+                                e03CptConnexionRc += 1
+                                logE03("E03 RC_CONNEXION connecte=$connecte occurrence=$e03CptConnexionRc " +
+                                       "estConnecte=${try { pont.estConnecte() } catch (_: Throwable) { false }} " +
+                                       "soccerArme_avant=$soccerArme " +
+                                       "effet=${if (!connecte) "arret_urgence_desarme_le_soccer" else "aucun"} " +
+                                       "ts=${System.currentTimeMillis()}")
+                            }
+                            rcConnecteDernier = connecte
+                            // ACTION IMMÉDIATE — décision revue le 2026-07-22.
+                            //
+                            // Un premier relevé (`connecte=false` avec `estConnecte=true`) m'avait
+                            // fait conclure à un faux négatif de la clé DJI, et j'avais introduit
+                            // une corroboration différée de 400 ms. Le relevé suivant a montré que
+                            // la liaison du contrôleur de vol tombait bel et bien, 400 ms APRÈS :
+                            // la clé RC ne mentait pas, elle DEVANÇAIT — c'est le premier maillon
+                            // à lâcher. La corroboration ne supprimait donc pas un faux positif,
+                            // elle retardait une vraie détection de 400 ms, sur un budget de
+                            // persistance de 500 ms (§378). Mauvais échange pour une sécurité.
+                            //
+                            // On agit donc SANS DÉLAI, comme avant. La vérification différée est
+                            // conservée en OBSERVATION PASSIVE : elle alimente le journal sans
+                            // peser sur la décision, et accumulera au fil de la campagne la preuve
+                            // que la clé RC devance (ou non) la perte du contrôleur de vol.
+                            if (!connecte) {
+                                runOnUiThread { try { arretUrgence() } catch (_: Throwable) {} }
+                                if (TEST_E03_CESSATION_VS) lifecycleScope.launch {
+                                    kotlinx.coroutines.delay(RC_PERTE_CONFIRMATION_MS)
+                                    logE03("E03 RC_PERTE_OBSERVATION apres_ms=$RC_PERTE_CONFIRMATION_MS " +
+                                           "rc_toujours_absente=${!rcConnecteDernier} " +
+                                           "fc_aussi_perdu=${!(try { pont.estConnecte() } catch (_: Throwable) { false })} " +
+                                           "note=observation_seule_l_arret_a_deja_eu_lieu ts=${System.currentTimeMillis()}")
+                                }
+                            }
                         }
+
+                        // ── PERTE DU CONTRÔLEUR DE VOL (E-03 scénario 08) ──────────────
+                        //
+                        // DÉFAUT CORRIGÉ (2026-07-22). `PontDjiReel` écoutait déjà
+                        // `FlightControllerKey.KeyConnection` et exposait `obsConnexionDrone`,
+                        // mais AUCUN abonné n'était branché dans cet écran : la perte de
+                        // l'aéronef mettait le voyant au rouge et rien d'autre.
+                        //
+                        // Constaté au banc : drone éteint, radiocommande toujours allumée →
+                        // `detection_survenue=false`, aucun jalon marqué, le mode soccer
+                        // restait ARMÉ et la boucle continuait d'émettre vers un aéronef
+                        // absent. Ce n'est pas dangereux en soi — il n'y a plus personne pour
+                        // exécuter la commande — mais l'application affirmait un état
+                        // (« automatisme armé ») que la réalité ne portait plus. C'est la même
+                        // famille de défaut que « armé sans détecteur » : un état qui ment.
+                        //
+                        // La liaison radiocommande n'est PAS un substitut : elle peut rester
+                        // établie alors que l'aéronef a disparu (RC branchée au téléphone,
+                        // drone hors tension ou hors de portée). Les deux maillons doivent
+                        // donc être surveillés séparément.
+                        //
+                        // SYMÉTRIE VOULUE avec la perte RC : action immédiate, arrêt d'urgence
+                        // idempotent (les doublons du SDK sont absorbés), et compteur
+                        // d'occurrences au journal — une rafale identique en quelques
+                        // millisecondes trahirait un abonnement multiple, pas une vraie perte.
+                        try {
+                            pont.obsConnexionDrone = { connecte ->
+                                // TRANSITION, PAS ÉTAT. On ne réagit qu'à un passage
+                                // PRÉSENT → ABSENT. À l'ouverture de l'écran, la clé DJI
+                                // délivre l'état courant : si le drone n'est pas encore sous
+                                // tension, elle rapporte `false` — ce qui n'est pas une perte,
+                                // c'est une absence initiale. Déclencher là-dessus poserait un
+                                // arrêt d'urgence à chaque ouverture de Phase 3 sans aéronef,
+                                // polluerait le journal et verrouillerait le latch avant même
+                                // que l'opérateur ait touché à quoi que ce soit.
+                                // `null` = état encore inconnu.
+                                val perteReelle = (droneConnecteDernier == true) && !connecte
+                                droneConnecteDernier = connecte
+                                if (TEST_E03_CESSATION_VS) {
+                                    e03CptConnexionDrone += 1
+                                    logE03("E03 DRONE_CONNEXION connecte=$connecte " +
+                                           "occurrence=$e03CptConnexionDrone " +
+                                           "transition=${if (perteReelle) "PRESENT_VERS_ABSENT" else "aucune"} " +
+                                           "rc_connectee=$rcConnecteDernier " +
+                                           "soccerArme_avant=$soccerArme " +
+                                           "effet=${if (perteReelle) "arret_urgence_desarme_le_soccer" else "aucun"} " +
+                                           "ts=${System.currentTimeMillis()}")
+                                }
+                                if (perteReelle) {
+                                    // T1 = détection de la perte de l'aéronef. Marqué AVANT
+                                    // l'arrêt d'urgence pour que l'ordre des jalons reflète la
+                                    // chaîne réelle (détection → désarmement → neutre → VS).
+                                    if (TEST_E03_CESSATION_VS) e03Capteur.marquerT1()
+                                    runOnUiThread { try { arretUrgence() } catch (_: Throwable) {} }
+                                }
+                            }
+                        } catch (_: Throwable) {}
                     } catch (_: Throwable) {}
                     try { flux?.demarrer() } catch (_: Exception) {}   // relie la video live
                     try { demarrerYolo() } catch (_: Exception) {}     // confirmation + cadrage fin
                     try { lecteurPerception.demarrer() } catch (_: Exception) {}  // etat capteurs (mode camera)
-                    // ESSAI E-03 AU BANC : active le simulateur DJI (drone posé, hélices
-                    // retirées) pour que le contrôleur de vol se comporte comme en vol.
+                    // ESSAI E-03 AU BANC : le simulateur DJI n'est activé QUE si son
+                    // interrupteur dédié est armé (colonne « Env. » du tableau 36). Les
+                    // scénarios « RÉEL » exigent TEST_E03_SIMULATEUR=false.
                     if (TEST_E03_CESSATION_VS) {
-                        try { e03ActiverSimulateur() } catch (_: Throwable) {}
+                        try { e03BrancherObservateurs() } catch (_: Throwable) {}
+                        // En-tête de configuration : écrit en TÂCHE DE FOND car il calcule
+                        // le SHA-256 de l'APK (lecture disque de plusieurs dizaines de Mo).
+                        // Sur le fil UI, cela risquerait un ANR au démarrage de l'écran.
+                        lifecycleScope.launch(Dispatchers.IO) {
+                            try {
+                                e03HashApk()   // remplit le cache (lecture disque)
+                                // ATTENTE ACTIVE COURTE : getValue() lit le CACHE du SDK.
+                                // Juste après l'enregistrement, les SN/firmware ne sont pas
+                                // encore poussés et seraient consignés VIDES.
+                                // On teste la disponibilité de l'IDENTITÉ SDK uniquement —
+                                // PAS EssaiE03Config.complete(), qui inclut les champs
+                                // manuels (câble, port, SN téléphone) toujours vides et
+                                // ferait donc attendre le délai maximal à chaque démarrage.
+                                var id = ca.cineflight.stage.control.SondeIdentiteDji.lire()
+                                var essais = 0
+                                while (!id.complete() && essais < 8) {
+                                    kotlinx.coroutines.delay(1000)
+                                    essais++
+                                    id = ca.cineflight.stage.control.SondeIdentiteDji.lire()
+                                }
+                                val cfg = e03Config()
+                                logE03(cfg.ligneEntete(System.currentTimeMillis()))
+                                e03IdentiteSdkConsignee = id.complete()
+                                logE03("E03 CONFIG_LECTURE essais=$essais " +
+                                       "identite_sdk=${if (id.complete()) "COMPLETE" else "PARTIELLE"} " +
+                                       "note=cable_port_sn_telephone_a_consigner_au_cahier")
+                            } catch (_: Throwable) {}
+                        }
+                        if (TEST_E03_SIMULATEUR) {
+                            try { e03ActiverSimulateur() } catch (_: Throwable) {}
+                        } else {
+                            logE03("E03 simulateur=NON_DEMANDE env=CHAINE_REELLE ts=${System.currentTimeMillis()}")
+                        }
                     }
                 }
             }
         }
 
-        // ── POLLER RESEAU : recupere la position RTK de l'auto (~5 Hz) ──────────
-        jobReseau = lifecycleScope.launch(Dispatchers.IO) {
-            while (isActive) {
-                lirePositionAuto()
-                delay(200)   // 5 Hz
-            }
-        }
-
-        // ── BOUCLE PILOTE : envoie la commande de suivi (ou hover) a ~10 Hz ─────
-        jobPilote = lifecycleScope.launch(Dispatchers.Default) {
-            while (isActive) {
-                // ══ TEST E-01 AU SOL — HÉLICES RETIRÉES ══════════════════════════════════
-                // Appelle DIRECTEMENT le pipeline soccer 2D (observerMiroirMouvementSoccer),
-                // en sautant tickSuivi() qui exige un contexte voiture RTK absent en mode soccer.
-                // But : observer le SIGNE du throttle au sol. NE JAMAIS voler avec ce build
-                // (throttle force a +0.2 = montee continue). Flag=false -> code normal.
-                if (TEST_E01_SIGNE_THROTTLE && soccerMode2D) {
-                    try { observerMiroirMouvementSoccer(commandSent = "TEST_E01_SOL") } catch (_: Throwable) {}
-                    soccerWatchdog.battement(System.nanoTime())
-                    soccerWatchdogIndep.battement()   // REQ-WDG-001 : battement vers le thread B
-                    delay(100)
-                    continue
-                }
-                // ═════════════════════════════════════════════════════════════════════════
-                if (vsActif) {
-                    if (suiviActif && enVol) {
-                        if (suiviVision) tickSuiviVision() else tickSuivi()
-                    } else if (enVol) {
-                        try { pont.envoyerVitesses(0f, 0f, 0f, 0f, ca.cineflight.stage.control.CommandOrigin.AUTOMATIC) } catch (_: Exception) {}  // hover
-                    }
-                }
-                // WATCHDOG (Phase 1.2) : battement de fin d'iteration SAINE. Si la boucle se
-                // fige, ce battement cesse ; l'emission 2D forcera alors le throttle a 0.
-                soccerWatchdog.battement(System.nanoTime())
-                // WATCHDOG INDEPENDANT (REQ-WDG-001) : meme battement publie vers le
-                // thread B — si CETTE boucle gele totalement, B le detecte et met en
-                // securite depuis son propre fil (desarme + neutre + sortie VS).
-                soccerWatchdogIndep.battement()
-                delay(100)   // 10 Hz
-            }
-        }
+        // Les deux boucles vivent dans une fonction dediee : elles doivent pouvoir etre
+        // ARRETEES a onStop() puis RELANCEES a onStart(). Les laisser inline dans onCreate
+        // rendait leur redemarrage impossible — l'ecran revenait au premier plan sans plus
+        // jamais emettre.
+        demarrerBoucles()
 
         lifecycleScope.launch(Dispatchers.Main) {
             while (isActive) { rafraichir(); delay(400) }
@@ -851,6 +1518,20 @@ class Phase3Activity : AppCompatActivity() {
                     if (headingValid && !j.isNull("heading_deg")) {
                         val hd = j.optDouble("heading_deg", Double.NaN)
                         if (hd.isFinite()) dernierCapValideDeg = hd
+                    }
+                    // CAP DÉRIVÉ DU DÉPLACEMENT (2026-07-25) : le boîtier n'envoie PAS de
+                    // cap (heading_deg=-- sur tout le vol du 25/07) -> capEffectif restait
+                    // NaN -> les 4 angles de prise de vue donnaient la MÊME position.
+                    // On reconstruit le cap depuis la trajectoire GPS ; il ne SUPPLANTE
+                    // jamais un cap fourni par la source, il ne fait que combler son absence.
+                    if (!autoCap.isFinite()) {
+                        val capDer = capDeplacement.mettreAJour(autoLat, autoLon, System.currentTimeMillis())
+                        if (capDer.isFinite()) {
+                            autoCap = capDer
+                            dernierCapValideDeg = capDer
+                        }
+                    } else {
+                        capDeplacement.mettreAJour(autoLat, autoLon, System.currentTimeMillis())
                     }
                     // vitesse sol en m/s -> km/h pour l'affichage.
                     val gs = if (j.isNull("ground_speed_mps")) Double.NaN
@@ -903,6 +1584,82 @@ class Phase3Activity : AppCompatActivity() {
         predIncertitudeM = Double.NaN
     }
 
+    // ── RESEAU (mode ATHLÈTE) : GET /api/v1/subjects/{id}/latest ────────────────
+    // Remplit les MÊMES champs que lirePositionAuto (autoLat/autoLon/autoCap/autoAgeS +
+    // prédicteur) pour que tickSuivi fonctionne SANS changement (§18). Fail-closed : toute
+    // donnée non exploitable (perte, périmée, imprécise, saut GPS) -> reseauOk=false ->
+    // tickSuivi passe en HOVER. L'adaptateur porte les garde-fous (§10/§16).
+    private fun lirePositionAthlete() {
+        val sid = athleteSubjectId
+        if (sid.isBlank()) {
+            reseauOk = false; autoAgeS = 999.0; autoRtk = "LOST"
+            athleteEtat = ca.cineflight.stage.athlete.EvaluateurSourceAthlete.Etat.PERDU
+            athleteRaison = "aucun athlète sélectionné (écran Athlète)"
+            majPredictionIndispo("ATHLETE_SANS_ID"); return
+        }
+        val t = ca.cineflight.stage.athlete.ClientAthlete.lireDerniere(URL_ATHLETE_BASE, sid)
+        // IMMOBILITÉ INERTIELLE (CoreMotion) : à l'arrêt le GPS iPhone dérive au-dessus du
+        // seuil de 8 m ; l'inertiel confirme l'immobilité et l'adaptateur sert alors
+        // l'ANCRE (dernière position acceptée) au lieu du point qui dérive.
+        val immobileInertiel = immobiliteAthlete.evaluer(t)
+        athleteEtat = evaluateurAthlete.evaluer(t, immobileInertiel)   // état affiché au pilote (PRÊT/…)
+        val d = adaptateurAthlete.adapter(t, System.currentTimeMillis(), immobileInertiel)
+        athleteRaison = d.raison
+        // INSTRUMENTATION LOGCAT (~1 Hz) : le vol d'essai du 2026-07-25 n'était PAS
+        // analysable — la ligne OBS ne va qu'à l'écran. Une ligne par seconde suffit
+        // pour reconstituer predPret/raison/âge/vitesse après coup.
+        val nowLog = System.currentTimeMillis()
+        if (nowLog - dernierLogAthleteMs >= 1000L) {
+            dernierLogAthleteMs = nowLog
+            android.util.Log.i("CF_SuiviAthlete",
+                "autorise=${d.autoriser} raison=${d.raison} etat=$athleteEtat" +
+                " age=${"%.2f".format(t.ageS())}s prec=${"%.1f".format(t.precisionHM)}m" +
+                " vit=${"%.2f".format(t.vitesseMps)}m/s immobile=$immobileInertiel" +
+                " predPret=$predPret predV=${"%.2f".format(predVitesseMps)}")
+        }
+        if (!d.autoriser) {
+            reseauOk = false
+            autoAgeS = if (t.ageS().isFinite()) t.ageS() else 999.0
+            autoRtk = "LOST"                                 // -> tickSuivi HOVER (fail-closed)
+            majPredictionIndispo("ATHLETE_${d.raison}")
+            return
+        }
+        autoLat = d.lat; autoLon = d.lon
+        // CAP athlète : fiable UNIQUEMENT si le sujet BOUGE. Un iPhone immobile renvoie un
+        // course_deg quasi aléatoire → le point « derrière » tournerait autour du sujet et le
+        // drone ferait un 360. En dessous du seuil de marche, on GÈLE le cap : autoCap=NaN →
+        // tickSuivi retombe sur dernierCapValideDeg (figé) → offset FIXE, pas d'orbite.
+        val bouge = t.vitesseMps.isFinite() && t.vitesseMps >= CAP_ATHLETE_VITESSE_MIN
+        if (bouge && d.capDeg.isFinite()) {
+            autoCap = d.capDeg
+            dernierCapValideDeg = d.capDeg
+        } else if (bouge) {
+            // L'iPhone n'envoie AUCUN cap (relevé 2026-07-25) : on le dérive de la
+            // trajectoire GPS, sinon les angles de prise de vue sont tous identiques.
+            val capDer = capDeplacement.mettreAJour(d.lat, d.lon, System.currentTimeMillis())
+            autoCap = capDer
+            if (capDer.isFinite()) dernierCapValideDeg = capDer
+        } else {
+            autoCap = Double.NaN            // immobile : cap gelé (anti-orbite), repli sur le dernier valide
+        }
+        autoAgeS = d.ageS
+        // FIX = suivi COMPLET (translation). L'adaptateur a DÉJÀ fait le tri qualité (précision
+        // ≤8 m, âge ≤3 s, saut). La doctrine FLOAT verrouillerait toute translation -> le drone
+        // ne suivrait pas. La prudence vient du profil personne + du plafond athlète (2 m/s).
+        autoRtk = "FIX"
+        autoVitesseKmh = if (t.vitesseMps.isFinite()) t.vitesseMps * 3.6 else Double.NaN
+        reseauOk = true
+        // nourrir le prédicteur EXISTANT (§14) : timestamp dérivé de l'âge de réception.
+        val tsMs = System.currentTimeMillis() - (autoAgeS.coerceAtLeast(0.0) * 1000.0).toLong()
+        // fiable = true SEULEMENT si le sujet bouge : immobile, on ne veut pas que le
+        // prédicteur produise un cap/anticipation à partir du bruit GPS (source du 360).
+        val etat = predicteur.mettreAJour(
+            lat = autoLat, lon = autoLon, ageS = autoAgeS,
+            fiable = bouge, qualiteRtk = if (bouge) "FLOAT" else "GPS", timestampMs = tsMs
+        )
+        majPrediction(etat)
+    }
+
     // ── UN TICK DE SUIVI : calcule et envoie la commande VirtualStick ───────────
     /** Plafond horizontal (m/s) adapte au drone connecte : moins il a de capteurs, plus il est lent. */
     private fun vMaxHorizSelonDrone(): Double {
@@ -916,8 +1673,15 @@ class Phase3Activity : AppCompatActivity() {
 
     private fun tickSuivi() {
         // 1) FAILSAFE reseau/age : position auto perimee -> HOVER.
-        if (!reseauOk || autoLat.isNaN() || autoLon.isNaN() || autoAgeS > RTK_AGE_MAX_S) {
-            hover(); majSuivi(getString(R.string.p3_suivi_hover_age, autoAgeS))
+        // Seuil ATHLÈTE = 3 s (§16 ; l'iPhone pousse ~toutes les 2 s, donc 2 s était trop
+        // serré et forçait un HOVER permanent). Voiture RTK = RTK_AGE_MAX_S (2 s) inchangé.
+        val ageMaxSuivi = if (SUIVI_ATHLETE_SIMU) 3.0 else RTK_AGE_MAX_S
+        if (!reseauOk || autoLat.isNaN() || autoLon.isNaN() || autoAgeS > ageMaxSuivi) {
+            hover()
+            // En mode athlète : afficher la VRAIE raison du blocage (précision/saut/perte),
+            // pas le message « position voiture » qui n'a aucun sens ici.
+            if (SUIVI_ATHLETE_SIMU) majSuivi("OBS athlète — pas de suivi : $athleteRaison (âge %.1f s)".format(autoAgeS))
+            else majSuivi(getString(R.string.p3_suivi_hover_age, autoAgeS))
             return
         }
         // 2) position du drone
@@ -1065,7 +1829,9 @@ class Phase3Activity : AppCompatActivity() {
         }
         // bornage du VECTEUR (preserve la direction) a un plafond ADAPTE AU DRONE
         // (securite : moins de capteurs anti-obstacle -> suivi plus lent).
-        val vMaxH = vMaxHorizSelonDrone()
+        // Plafond horizontal : athlète = conservateur (GPS ~3-5 m, personne) -> V_MAX_HORIZ (2 m/s) ;
+        // sinon adapté au drone (voiture RTK). §10 : limiter la vitesse.
+        val vMaxH = if (SUIVI_ATHLETE_SIMU) V_MAX_HORIZ.toDouble() else vMaxHorizSelonDrone()
         val vh = hypot(vEst, vNord)
         if (vh > vMaxH) { val k = vMaxH / vh; vEst *= k; vNord *= k }
         // vertical : rejoint l'altitude cible, borne + plafond.
@@ -1134,12 +1900,44 @@ class Phase3Activity : AppCompatActivity() {
         // la commande soccer n'est SELECTIONNEE que si le double verrou l'autorise.
         val aEnvoyer = deciderEmissionSoccer(existante)
 
+        // JOURNAL DE VOL PERSISTANT (2026-07-26) : tout ce qu'il faut pour rejouer le
+        // raisonnement du suivi APRÈS COUP — positions drone ET cible, distance, cap du
+        // sujet, angle et cadrage demandés, les 4 axes commandés (roll compris), état de
+        // la source et de la prédiction. Le logcat s'écrase en quelques heures ; ce fichier
+        // survit (adb pull .../files/vols/). ~1 Hz, écriture sur fil de fond.
         try {
-            pont.envoyerVitesses(
-                aEnvoyer.pitch, aEnvoyer.roll, aEnvoyer.throttle, aEnvoyer.yaw,
-                ca.cineflight.stage.control.CommandOrigin.AUTOMATIC
+            journalVol.etat(
+                droneLat = dLat, droneLon = dLon, droneAltM = dAlt, droneCapDeg = pont.capDroneDeg().toDouble(),
+                cibleLat = cibleLat, cibleLon = cibleLon, distanceM = distCar,
+                capSujetDeg = capEffectif, angle = mouvementActif?.name ?: positionSuivi,
+                cadrageM = distanceCadrageM,
+                pitch = aEnvoyer.pitch, roll = aEnvoyer.roll,
+                throttle = aEnvoyer.throttle, yaw = aEnvoyer.yaw,
+                sourceEtat = if (SUIVI_ATHLETE_SIMU) athleteEtat.toString() else autoRtk,
+                sourceAgeS = autoAgeS, sourcePrecisionM = autoHacc,
+                predictionPrete = predPret,
+                raison = if (SUIVI_ATHLETE_SIMU) athleteRaison else "-",
+                batteriePct = try { pont.batteriePourcent() } catch (_: Throwable) { -1 },
+                satellites = try { pont.nbSatellitesActuel() } catch (_: Throwable) { -1 },
             )
-        } catch (_: Exception) {}
+        } catch (_: Throwable) {}
+
+        // MODE OBSERVATION ATHLÈTE : on N'ENVOIE RIEN (VS jamais activé), on AFFICHE seulement
+        // la commande calculée. Les moteurs ne tournent pas -> hélices peuvent rester en place.
+        if (athleteObs) {
+            // Étape 6 : montre si la CAMÉRA (YOLO) corrige le cadrage à cet instant (fusion).
+            val yoloTxt = if (yoloCadre) "OUI %.0f%%".format(yoloConf * 100f) else "non"
+            majSuivi(("OBS athlète — av=%.2f lat=%.2f vert=%.2f yaw=%.0f | dist=%.1fm " +
+                "yolo(cadrage)=%s état=%s (rien envoyé)")
+                .format(aEnvoyer.pitch, aEnvoyer.roll, aEnvoyer.throttle, aEnvoyer.yaw, distCar, yoloTxt, athleteEtat))
+        } else {
+            try {
+                pont.envoyerVitesses(
+                    aEnvoyer.pitch, aEnvoyer.roll, aEnvoyer.throttle, aEnvoyer.yaw,
+                    ca.cineflight.stage.control.CommandOrigin.AUTOMATIC
+                )
+            } catch (_: Exception) {}
+        }
 
         // SPORT SOCCER — MIROIR DE MOUVEMENT (Phase 9B) : log de la vitesse theorique.
         if (SOCCER_RAIL_MIRROR_ENABLED) {
@@ -1222,6 +2020,60 @@ class Phase3Activity : AppCompatActivity() {
     }
 
     /** Bascule le mode CAMERA (suivi vision, sans boitier RTK) on/off. */
+    /**
+     * TEST AXES HORIZONTAUX — SIMULATEUR SEULEMENT (2026-07-25).
+     * Mesure la sémantique RÉELLE du Virtual Stick : commande « pitch +1 m/s » pendant 4 s,
+     * puis compare la DIRECTION du déplacement simulé au CAP du drone.
+     *   écart ≈ 0°   -> pitch = AVANT  -> INVERSER_ROLL_PITCH=false CORRECT
+     *   écart ≈ ±90° -> pitch = LATÉRAL -> sémantique INVERSÉE -> passer INVERSER_ROLL_PITCH=true
+     *   écart ≈ 180° -> pitch = ARRIÈRE -> signe à inverser
+     * REFUSE hors simulateur (aucun risque d'orbite réelle). Exige d'avoir DÉCOLLÉ (sim).
+     * Verdict au Logcat (tag TestAxes) ET à l'écran.
+     */
+    private fun testAxesSimulateur() {
+        if (!pont.simulateurActif()) { txtEtat.text = "TEST AXES : active d'abord le SIMULATEUR."; return }
+        if (!enVol) { txtEtat.text = "TEST AXES : DÉCOLLE (simulateur) d'abord."; return }
+        lifecycleScope.launch(Dispatchers.Main) {
+            val lat0 = pont.latitudeDrone(); val lon0 = pont.longitudeDrone(); val cap0 = pont.capDroneDeg()
+            if (lat0.isNaN() || lon0.isNaN() || cap0.isNaN()) {
+                txtEtat.text = "TEST AXES : position/cap simulés absents."; return@launch
+            }
+            if (!vsActif) {
+                try { pont.activerVirtualStick(true) } catch (_: Exception) {}
+                vsActif = true
+                kotlinx.coroutines.delay(800)
+            }
+            android.util.Log.i("TestAxes", "DEBUT cap0=${"%.0f".format(cap0)} lat0=$lat0 lon0=$lon0 pitch=+1.0 4s")
+            txtEtat.text = "TEST AXES : pitch +1 m/s pendant 4 s…"
+            repeat(40) {
+                try { pont.envoyerVitesses(1f, 0f, 0f, 0f, ca.cineflight.stage.control.CommandOrigin.AUTOMATIC) } catch (_: Exception) {}
+                kotlinx.coroutines.delay(100)
+            }
+            repeat(5) {   // retour au neutre
+                try { pont.envoyerVitesses(0f, 0f, 0f, 0f, ca.cineflight.stage.control.CommandOrigin.AUTOMATIC) } catch (_: Exception) {}
+                kotlinx.coroutines.delay(100)
+            }
+            val lat1 = pont.latitudeDrone(); val lon1 = pont.longitudeDrone()
+            val dN = (lat1 - lat0) * 111_320.0
+            val dE = (lon1 - lon0) * 111_320.0 * cos(Math.toRadians(lat0))
+            val dist = hypot(dE, dN)
+            val capMouv = Math.toDegrees(kotlin.math.atan2(dE, dN))   // 0=N, 90=E (boussole)
+            val ecart = ca.cineflight.stage.cine.PanoramaStateMachine
+                .ecartAngulaire(cap0, capMouv.toFloat())
+            val verdict = when {
+                dist < 1.0 -> "IMMOBILE (${"%.1f".format(dist)} m) — non concluant (VS accordé ? en vol sim ?)"
+                kotlin.math.abs(ecart) <= 30f -> "PITCH=AVANT ✓ — INVERSER_ROLL_PITCH=false CORRECT"
+                kotlin.math.abs(kotlin.math.abs(ecart) - 90f) <= 30f ->
+                    "PITCH=LATÉRAL ⚠ SÉMANTIQUE INVERSÉE — passer INVERSER_ROLL_PITCH=true (cause de l'ORBITE)"
+                kotlin.math.abs(ecart) >= 150f -> "PITCH=ARRIÈRE ⚠ signe inversé"
+                else -> "AMBIGU (écart ${"%.0f".format(ecart)}°) — répéter le test"
+            }
+            android.util.Log.i("TestAxes", "FIN dist=${"%.1f".format(dist)}m cap_mouvement=${"%.0f".format(capMouv)}" +
+                " cap0=${"%.0f".format(cap0)} ecart=${"%.0f".format(ecart)} -> $verdict")
+            txtEtat.text = "TEST AXES : $verdict"
+        }
+    }
+
     /** Active/desactive le simulateur DJI (test du suivi sans vol reel). */
     private fun basculerSimulateur() {
         if (pont.simulateurActif()) {
@@ -1337,7 +2189,7 @@ class Phase3Activity : AppCompatActivity() {
         // TEST E-01 : diagnostic ecrit dans le fichier a chaque frame de detection recue.
         // Nous dit si YOLO tourne et combien de personnes il voit, meme si on n'entre jamais
         // dans le bloc d'emission 2D. SUPPRIMER apres le test (flag=false le desactive).
-        if (TEST_E01_SIGNE_THROTTLE) {
+        if (SOCCER_2D_EMISSION_ACTIVE) {
             try {
                 val f = java.io.File(getExternalFilesDir(null), "test_e01_signe.log")
                 java.io.FileOutputStream(f, true).use {
@@ -1514,16 +2366,56 @@ class Phase3Activity : AppCompatActivity() {
      *
      * @param actionFiable resultat deja calcule de la fiabilite d'action (contexte rail ou 2D).
      */
-    private fun capturerSnapshotSecurite(actionFiable: Boolean): ca.cineflight.stage.sport.soccer.SafetySnapshotFactory.Published {
+    private fun capturerSnapshotSecurite(actionFiable: Boolean, mode2D: Boolean = false): ca.cineflight.stage.sport.soccer.SafetySnapshotFactory.Published {
         // --- CAPTURE EN UNE PASSE (aucune logique metier entre les lectures) ---
         val cPilote = modeManuel
         val cUrgence = soccerArretUrgence
         val cVs = vsActif
-        val cEnVol = enVol
+        // DÉROGATION DE BANC (E-03, §378) : hélices retirées, l'aéronef n'est PAS en vol,
+        // et l'arbitre refuserait donc toute émission — rendant l'essai impossible. Le
+        // mode banc, armé MANUELLEMENT et REFUSÉ si l'aéronef vole réellement, force ce
+        // seul bit. Tous les autres bits restent évalués normalement, et chaque ligne du
+        // journal porte `banc=OUI` pour que la nature de la mesure ne soit jamais perdue.
+        val cEnVol = enVol || (TEST_E03_CESSATION_VS && TEST_E03_BANC && e03BancArme)
         val cRtk = autoRtk.uppercase()
         val cBatt = try { pont.batteriePourcent() } catch (_: Throwable) { -1 }
         val cOperateurProche = estOperateurProcheDuRail()
         // --- FIN DE CAPTURE : plus aucune variable partagee n'est relue apres ce point ---
+
+        // ── DÉROGATION DE BANC — PÉRIMÈTRE EXACT ────────────────────────────────────
+        // Audit 2026-07-22 : forcer le seul bit IF ne suffisait pas. DEUX autres conditions
+        // sont STRUCTURELLEMENT insatisfiables au banc, quoi que fasse l'opérateur :
+        //
+        //   PF `dronePositionFresh` — vaut FIX/FLOAT du RTK de la VOITURE, lu sur le réseau
+        //      (lirePositionAuto). Au banc il n'y a pas de voiture : autoRtk reste "—",
+        //      donc PF=0 pour toujours et l'arbitre bloque avant même d'examiner le reste.
+        //   ON `operatorNearRail` — distance opérateur↔rail calculée depuis le profil et le
+        //      GPS ; sans profil chargé ni fix GPS (essai en intérieur), fail-closed à 0.
+        //
+        // Ces trois bits (IF, PF, ON) sont des PRÉCONDITIONS DE SITE. Ils ne disent rien de
+        // la cessation Virtual Stick, qui est le seul objet de E-03, et ils sont couverts
+        // par d'autres essais. On les neutralise donc explicitement, et EUX SEULS.
+        //
+        // RESTENT JUGES, sans exception : PO (priorité pilote), EM (arrêt d'urgence),
+        // VS (Virtual Stick), AC (détection YOLO fraîche et confiante), BO (batterie),
+        // RV, CC, OG. Un essai qui les contournerait ne prouverait plus rien.
+        val derog = TEST_E03_CESSATION_VS && TEST_E03_BANC && e03BancArme
+        // FRAÎCHEUR DE POSITION — SOURCE SELON LE MODE (découplage 2026-07-23, réserve §5).
+        //   RAIL  : la position vient du RTK de la VOITURE (le drone suit le rail/la voiture).
+        //   2D    : le drone suit les JOUEURS par vision, PAS la voiture → la fraîcheur vient
+        //           de la position PROPRE du drone (GPS valide + seuil satellites du vol auto).
+        //           Sans ce découplage, l'absence de voiture bloquait TOUTE émission 2D en vol.
+        val cPositionFraiche = if (mode2D) {
+            // `gpsValide()` garantit déjà lat/lon valides + fix de base ; on impose EN PLUS le
+            // seuil du vol automatique (SAT_MIN_AUTO=14) via nbSatellitesActuel().
+            val gpsOk = try { pont.gpsValide() } catch (_: Throwable) { false }
+            val sats = try { pont.nbSatellitesActuel() } catch (_: Throwable) { 0 }
+            ca.cineflight.stage.sport.soccer.SafetyPosition2D.positionFraiche(
+                gpsOk, sats, ca.cineflight.stage.MainActivity.SAT_MIN_AUTO) || derog
+        } else {
+            (cRtk == "FIX" || cRtk == "FLOAT") || derog
+        }
+        val cOperateurOk = cOperateurProche || derog
 
         val sample = ca.cineflight.stage.sport.soccer.RawSafetySample(
             pilotOverride = cPilote,
@@ -1538,11 +2430,11 @@ class Phase3Activity : AppCompatActivity() {
             virtualStickAvailable = cVs,
             inFlightCompatible = cEnVol,
             railLoadedAndValid = true,
-            dronePositionFresh = (cRtk == "FIX" || cRtk == "FLOAT"),
+            dronePositionFresh = cPositionFraiche,
             actionFreshAndConfident = actionFiable,
             batteryOk = (cBatt >= SOCCER_BATT_MIN_PCT),
             corridorClear = true,
-            operatorNearRail = cOperateurProche,
+            operatorNearRail = cOperateurOk,
         )
         return soccerSnapshotFactory.publish(sample)
     }
@@ -1576,7 +2468,7 @@ class Phase3Activity : AppCompatActivity() {
                 val ageYolo = if (yoloVueMs > 0L) System.currentTimeMillis() - yoloVueMs else -1L
                 logSecuTest("E06 ts=${System.currentTimeMillis()} yolo_age_ms=$ageYolo yoloConf=$yoloConf nbJoueurs=$soccerNbJoueurs actionFiable=$actionFiable2D (AC)")
             }
-            val pub = capturerSnapshotSecurite(actionFiable = actionFiable2D)
+            val pub = capturerSnapshotSecurite(actionFiable = actionFiable2D, mode2D = true)
             val safety = pub.snapshot
             // DECISION : source UNIQUE du double verrou 2D + arbitre (Emission2DGuard, teste).
             // Le throttle passe a l'arbitre est celui DEJA surveille par le watchdog.
@@ -1587,7 +2479,41 @@ class Phase3Activity : AppCompatActivity() {
                 vMaxMps = SOCCER_2D_MAX_VSPEED_MPS,
                 safety = safety,
             )
-            val throttleEmis = if (r.emettre) r.command.throttle else 0f
+            // ── VERROU D'AUTORITÉ — dernière barrière avant l'aéronef ──────────────
+            // INVARIANT : une seule autorité de commande pilote par aéronef. Si CETTE
+            // instance ne détient pas l'autorité, elle n'émet RIEN, quoi qu'ait décidé
+            // l'arbitre. C'est une barrière de dernier recours contre les producteurs
+            // concurrents (relevé du 2026-07-22 : 6 arrêts d'urgence pour un événement).
+            // Elle ne corrige pas la cause — le cycle de vie s'en charge — elle borne la
+            // conséquence si la cause resurgit.
+            val autorite = ca.cineflight.stage.control.AutoriteCommandeDrone.detient(instanceId)
+            if (!autorite && r.emettre) {
+                logSecuTest("AUTORITE_REFUSEE instance=$instanceId " +
+                            "proprietaire=${ca.cineflight.stage.control.AutoriteCommandeDrone.proprietaireActuel()} " +
+                            "throttle_bloque=${r.command.throttle} ts=${System.currentTimeMillis()}")
+            }
+            val throttleEmis = if (r.emettre && autorite) r.command.throttle else 0f
+            // ESSAI E-03 : POINT D'ÉMISSION UNIQUE — T0 et persistance de COMMANDE.
+            //
+            // T0 est marqué à CHAQUE cycle, y compris quand le guard bloque l'émission.
+            // C'est VOULU : la fiche définit T0 comme « dernier heartbeat / dernière
+            // commande émise ». La sémantique HEARTBEAT est celle qui rend E03-03 (gel du
+            // fil d'émission) mesurable — le délai de détection T1-T0 doit alors valoir
+            // environ le timeout du watchdog (500 ms). Marquer T0 uniquement lors d'une
+            // émission réelle fausserait ce scénario, où justement plus rien n'est émis.
+            //
+            // La persistance, elle, n'est alimentée que par un throttle NON NUL réellement
+            // émis (observerThrottleEmis ignore les zéros) : c'est la commande partie au
+            // drone qui peut persister, pas le battement de la boucle.
+            // Hors essai, aucun coût : le flag court-circuite les deux appels.
+            if (TEST_E03_CESSATION_VS) {
+                e03Capteur.marquerT0()
+                e03Capteur.observerThrottleEmis(throttleEmis)
+                // E03-05 : mémorise l'instant de la dernière commande NON NULLE réellement
+                // partie. Le marqueur de crash s'en sert pour dire depuis combien de temps
+                // l'aéronef était commandé quand le process est mort.
+                if (throttleEmis != 0f) e03DerniereEmissionNonNulleNanos.set(nowNanos)
+            }
             if (r.emettre) {
                 // EMISSION REELLE : throttle seul (roll/pitch/yaw = 0).
                 pont.envoyerVitesses(0f, 0f, r.command.throttle, 0f,
@@ -1612,7 +2538,7 @@ class Phase3Activity : AppCompatActivity() {
             // TEST E-01 : ecrit aussi chaque ligne dans un fichier sur le telephone, pour
             // pouvoir lire les logs sans cable ADB (telephone occupe par la manette DJI).
             // Fichier : Android/data/ca.cineflight.solo/files/test_e01_signe.log
-            if (TEST_E01_SIGNE_THROTTLE) {
+            if (SOCCER_2D_EMISSION_ACTIVE) {
                 try {
                     val f = java.io.File(getExternalFilesDir(null), "test_e01_signe.log")
                     java.io.FileOutputStream(f, true).use {
@@ -1781,7 +2707,7 @@ class Phase3Activity : AppCompatActivity() {
             // soit la cible mono-YOLO fraiche (repli).
             val multi = soccerNbJoueurs > 0
             // TEST E-01 : diag a l'entree de la boucle d'emission (thread pilote).
-            if (TEST_E01_SIGNE_THROTTLE) {
+            if (SOCCER_2D_EMISSION_ACTIVE) {
                 try {
                     val f = java.io.File(getExternalFilesDir(null), "test_e01_signe.log")
                     java.io.FileOutputStream(f, true).use {
@@ -1892,7 +2818,20 @@ class Phase3Activity : AppCompatActivity() {
                 // TEST E-01 AU SOL SEULEMENT (hélices retirées) : force un throttle POSITIF
                 // connu (+0.2 = montée) pour vérifier le SIGNE au log. En production
                 // (flag=false) on utilise la valeur calculée normale, rien n'est modifié.
-                val throttle2D = if (TEST_E01_SIGNE_THROTTLE) 0.2f else throttle2Dcalcule
+                // E03-02 « ZÉRO MAINTENU » : le scénario envoie 10 zéros, mais la boucle
+                // pilote réécrivait +0.2 à 10 Hz juste après — l'application contredisait
+                // donc son propre stimulus, et le journal l'a montré
+                // (persist_commande_ms≈2998, soit toute la fenêtre d'observation).
+                // Le drapeau impose le zéro pendant la fenêtre : sans lui, ce scénario ne
+                // mesure pas ce que son nom annonce.
+                val throttle2D = when {
+                    e03ForcerZero -> 0f                       // scénario « zéro maintenu »
+                    // VOL RÉEL PRIORITAIRE : asservissement d'altitude (borné par vMax). JAMAIS
+                    // le +0.2 forcé en vol — celui-ci est réservé au test de SIGNE au sol.
+                    SOCCER_2D_VOL_REEL -> throttle2Dcalcule
+                    TEST_E01_SIGNE_THROTTLE -> 0.2f           // TEST DE SIGNE AU SOL, hélices retirées
+                    else -> throttle2Dcalcule
+                }
                 // WATCHDOG (Phase 1.2) : si la boucle de decision s'est figee (dernier battement
                 // trop vieux), on force le throttle a 0 AVANT l'arbitre. Barriere independante
                 // du double verrou : un cycle mort ne peut plus commander de mouvement.
@@ -2047,34 +2986,113 @@ class Phase3Activity : AppCompatActivity() {
     }
 
     private fun demarrerSuivi() {
-        if (!enVol) { txtEtat.text = getString(R.string.p3_decolle_dabord); return }
-        if (!suiviVision && !reseauOk) { txtEtat.text = getString(R.string.p3_voiture_non_captee); return }
+        // FILET : `enVol` suit le SDK via obsEnVol, mais si l'aéronef vient de décoller à la RC
+        // et que l'observateur n'a pas encore propagé, on relit l'état RÉEL du SDK au moment
+        // du clic. Évite le faux « décolle d'abord » sur un aéronef déjà en l'air.
+        if (!enVol && try { pont.estEnVolReel() } catch (_: Throwable) { false }) enVol = true
+        // OBSERVATION athlète : pas besoin d'être en vol (rien n'est envoyé, on affiche l'intention).
+        if (!enVol && !athleteObs) { txtEtat.text = getString(R.string.p3_decolle_dabord); return }
+        if (!suiviVision && !reseauOk) {
+            // §16 : « Démarrer » refusé tant que la source n'est pas fraîche et exploitable.
+            txtEtat.text = if (SUIVI_ATHLETE_SIMU)
+                "Athlète non prêt — position fraîche requise (état : $athleteEtat)."
+            else getString(R.string.p3_voiture_non_captee)
+            return
+        }
         // FAIL-CLOSED : en mode RTK, on n'arme pas le suivi si le RTK n'est pas exploitable.
-        if (!suiviVision) {
+        // En mode athlète, le GPS téléphone n'est pas du RTK : la doctrine RTK ne s'applique
+        // pas ; c'est l'adaptateur (précision/âge/saut) qui a déjà décidé via reseauOk.
+        if (!suiviVision && !SUIVI_ATHLETE_SIMU) {
             val r = etatFeuRtk()
             if (r.feu == FeuRtk.ROUGE) { afficherBlocageRtk(r); return }
         }
         // Si on etait en MODE MANUEL (ou VirtualStick coupe), l'app reprend la main
         // AVANT de lancer le suivi -> sinon la commande n'aurait aucun effet.
-        if (!vsActif) { try { pont.activerVirtualStick(true) } catch (_: Exception) {}; vsActif = true }
+        // OBSERVATION athlète : NE PAS activer le Virtual Stick (sécurité hélices en place).
+        if (!vsActif && !athleteObs) { try { pont.activerVirtualStick(true) } catch (_: Exception) {}; vsActif = true }
         if (modeManuel) { modeManuel = false; majBoutonManuel() }
         // ETAPE 2 : repartir d'un historique de prediction propre (pas de residu
         // d'une session precedente qui fausserait vitesse/cap au demarrage).
         try { predicteur.reinitialiser() } catch (_: Exception) {}
+        try { capDeplacement.reinitialiser() } catch (_: Exception) {}   // aucun cap hérité d'un vol précédent
         predPret = false
         dernierGimbalPitch = Double.NaN   // ETAPE 3 : forcer un 1er envoi de nacelle
         gimbalVisionDeg = Double.NaN
         mouvementActif = null; positionSuivi = "derriere"; phaseMouv = 0.0   // on demarre en suivi simple (derriere)
         azimutCourantDeg = Double.NaN
         suiviActif = true
+        // ENREGISTREMENT VIDÉO AUTO (2026-07-25) : un suivi qui démarre est un plan qu'on
+        // veut filmer — le vol boîtier du jour n'a RIEN enregistré. Pas en OBSERVATION
+        // (athleteObs : rien ne vole), pas si déjà en cours (lancé à la RC par exemple).
+        if (!athleteObs && enVol) {
+            try {
+                if (!pont.enregistreEnCours()) {
+                    pont.demarrerEnregistrement()
+                    android.util.Log.i("Phase3", "Enregistrement vidéo démarré avec le suivi")
+                }
+            } catch (_: Exception) {}
+        }
+        // JOURNAL DE VOL : un fichier par session de suivi, avec la configuration EXACTE.
+        // Sans cet en-tête, on ne sait pas après coup avec quels réglages le vol a eu lieu.
+        try {
+            journalVol.demarrer(
+                ctx = this,
+                mode = when {
+                    SUIVI_ATHLETE_SIMU -> "ATHLETE"
+                    suiviVision -> "VISION"
+                    else -> "BOITIER"
+                },
+                entete = "profil=$profilSujet cadrage=${distanceCadrageM}m angle=$positionSuivi" +
+                    " vMaxH=${if (SUIVI_ATHLETE_SIMU) V_MAX_HORIZ.toDouble() else vMaxHorizSelonDrone()}" +
+                    " altCible=${OFFSET_HAUTEUR_M}m inverserRollPitch=" +
+                    "${ca.cineflight.stage.control.PontDjiReel.INVERSER_ROLL_PITCH}" +
+                    " anticipation=$ANTICIPATION_ACTIVE observation=$athleteObs" +
+                    " drone=${pont.modeleDrone()}")
+        } catch (_: Throwable) {}
+
+        // SIGNAL VISUEL « MODE AUTOMATIQUE ARMÉ » (2026-07-25) : LED AVANT allumée dès que
+        // le suivi est actif. Deux usages : les personnes autour voient que l'appareil est
+        // en mode automatique ; le SUJET FILMÉ, souvent loin, sait qu'il est encore suivi.
+        // ⚠ NE TOUCHE PAS aux feux de navigation (réglementaires, laissés au firmware).
+        if (!athleteObs) try { ca.cineflight.stage.control.BaliseLeds.signalEtatVol(true) } catch (_: Throwable) {}
         txtEtat.text = getString(R.string.p3_suivi_actif)
     }
 
     /** Change le mouvement cinematographique EN DIRECT (null = suivi simple). */
+    /**
+     * DISTANCE DE CADRAGE — cycle les paliers (plus proche → plus large → retour).
+     * Applicable EN VOL : la cible se déplace, le drone rejoint la nouvelle distance à
+     * vitesse bornée comme tout le reste (aucun mouvement brusque). Mémorisé pour la
+     * prochaine session. Le plancher de sécurité du noyau reste prioritaire.
+     */
+    private fun cyclerDistanceCadrage() {
+        idxCadrage = (idxCadrage + 1) % paliersCadrage.size
+        getSharedPreferences("cineflight", MODE_PRIVATE).edit()
+            .putInt(CLE_CADRAGE, idxCadrage).apply()
+        majBoutonCadrage()
+        azimutCourantDeg = Double.NaN          // recale l'arc sur la nouvelle distance
+        dernierGimbalPitch = Double.NaN        // force un réajustement de nacelle
+        try { journalVol.evenement("cadrage -> ${distanceCadrageM} m") } catch (_: Throwable) {}
+        txtEtat.text = getString(R.string.p3_cadrage_change, distanceCadrageM)
+        android.util.Log.i("Phase3", "distance de cadrage = ${distanceCadrageM} m (palier $idxCadrage)")
+    }
+
+    private fun majBoutonCadrage() {
+        if (!::btnCadrage.isInitialized) return
+        val libelle = when (idxCadrage) {
+            0 -> getString(R.string.p3_cadrage_tres_proche)
+            1 -> getString(R.string.p3_cadrage_proche)
+            2 -> getString(R.string.p3_cadrage_moyen)
+            else -> getString(R.string.p3_cadrage_large)
+        }
+        btnCadrage.text = getString(R.string.p3_cadrage_btn, libelle, distanceCadrageM)
+    }
+
     /** Change l'ANGLE du suivi simple EN DIRECT (derriere/devant/gauche/droite/plongee). */
     private fun choisirPosition(pos: String) {
         mouvementActif = null
         positionSuivi = pos
+        try { journalVol.evenement("angle -> $pos") } catch (_: Throwable) {}
         phaseMouv = 0.0
         azimutCourantDeg = Double.NaN     // repart de l'azimut REEL -> arc sur par l'arriere
         dernierGimbalPitch = Double.NaN
@@ -2105,7 +3123,34 @@ class Phase3Activity : AppCompatActivity() {
     private fun arreterSuivi() {
         suiviActif = false
         hover()
+        try { ca.cineflight.stage.control.BaliseLeds.signalEtatVol(false) } catch (_: Throwable) {}
+        try { journalVol.terminer("suivi arrêté par le pilote") } catch (_: Throwable) {}
         txtEtat.text = getString(R.string.p3_suivi_arrete)
+    }
+
+    /**
+     * RETOUR MAISON depuis un mode de suivi (boîtier / voiture / vision, 2026-07-25).
+     * ORDRE IMPOSÉ : (1) suivi coupé, (2) commande NEUTRE, (3) Virtual Stick RENDU au
+     * firmware — sinon l'app et le RTH se disputent l'autorité —, (4) KeyStartGoHome.
+     * Annulation : bouger un stick de la RC (comportement DJI standard).
+     */
+    private fun lancerRthSuivi() {
+        suiviActif = false
+        hover()                                                       // neutre immédiat
+        try { ca.cineflight.stage.control.BaliseLeds.signalEtatVol(false) } catch (_: Throwable) {}
+        if (vsActif) { try { pont.activerVirtualStick(false) } catch (_: Exception) {}; vsActif = false }
+        try { journalVol.terminer("RTH demandé par le pilote") } catch (_: Throwable) {}
+        txtEtat.text = getString(R.string.p3_rth_encours)
+        // Petit délai : laisser l'acquittement de la sortie VS arriver avant le GoHome.
+        lifecycleScope.launch {
+            delay(600)
+            pont.lancerRth { ok ->
+                runOnUiThread {
+                    txtEtat.text = if (ok) getString(R.string.p3_rth_actif)
+                    else getString(R.string.p3_rth_echec)
+                }
+            }
+        }
     }
 
     /** Bascule le pilotage : AUTO (l'app commande) <-> MANUEL (telecommande DJI). */
@@ -2167,26 +3212,129 @@ class Phase3Activity : AppCompatActivity() {
             if (overlayYoloVisible) "Masquer les détections" else "Afficher les détections"
     }
 
+    /**
+     * ÉPINGLAGE DE L'ÉCRAN pendant que le mode soccer est armé.
+     *
+     * PROTECTION D'ERGONOMIE, PAS DE SÉCURITÉ. Elle évite qu'un geste distrait envoie
+     * l'écran en arrière-plan pendant un vol automatisé. Elle ne garantit RIEN : Android
+     * peut toujours arrêter l'écran (appel entrant, mémoire basse, extinction, arrêt
+     * système), et l'utilisateur peut sortir volontairement en maintenant Retour + Aperçu.
+     *
+     * La vraie protection reste ailleurs, et ne doit jamais dépendre de cet appel :
+     * autorité de commande unique, arrêt de la boucle à onStop, désinscription des
+     * écouteurs DJI, réaction sûre à la perte du premier plan.
+     *
+     * L'échec est journalisé, jamais propagé : un épinglage refusé ne doit pas empêcher
+     * d'armer, encore moins de désarmer.
+     */
+    private fun epinglerEcran(actif: Boolean) {
+        try {
+            if (actif) {
+                window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                startLockTask()
+                journalCycleVie("EPINGLAGE actif=OUI")
+            } else {
+                stopLockTask()
+                window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                journalCycleVie("EPINGLAGE actif=NON")
+            }
+        } catch (e: Throwable) {
+            journalCycleVie("EPINGLAGE_ECHEC actif=$actif cause=${e.javaClass.simpleName}")
+        }
+    }
+
+    /**
+     * DÉSARMEMENT DU MODE SOCCER — ordre imposé.
+     *
+     * Les commandes cessent AVANT que l'écran soit libéré. L'inverse laisserait une
+     * fenêtre, si courte soit-elle, où le pilote peut quitter l'écran alors que la
+     * commande automatisée est encore en vigueur.
+     *
+     * NOTE — écart assumé par rapport à la séquence proposée : on n'arrête PAS ici la
+     * boucle pilote ni les écouteurs DJI. Ils servent AUSSI au vol manuel et au mode rail,
+     * qui doivent rester opérants après un désarmement du soccer. Leur arrêt reste lié au
+     * cycle de vie (onStop), là où il a un sens. De même, l'autorité de commande reste
+     * attachée à l'écran vivant, pas à l'armement : la libérer ici bloquerait le stationnaire
+     * et la reprise manuelle, c'est-à-dire précisément ce dont le pilote a besoin après un
+     * désarmement.
+     */
+    private fun desarmerModeSoccer(raison: String) {
+        // 1) LES COMMANDES D'ABORD.
+        soccerArme = false
+        soccerWatchdogIndep.desarmerSurveillance()  // desarmement volontaire, pas une defaillance
+        try {
+            pont.envoyerVitesses(0f, 0f, 0f, 0f, ca.cineflight.stage.control.CommandOrigin.AUTOMATIC)
+        } catch (_: Throwable) {}
+        // 2) L'ÉCRAN ENSUITE.
+        epinglerEcran(false)
+        majBoutonSoccer()
+        journalCycleVie("SOCCER_DESARME raison=$raison")
+        try { txtEtat.text = "Mode SOCCER désarmé — contrôle automatique inactif" } catch (_: Throwable) {}
+    }
+
     private fun basculerArmementSoccer() {
         if (soccerArme) {
-            soccerArme = false
-            soccerWatchdogIndep.desarmerSurveillance()  // desarmement volontaire, pas une defaillance
-            majBoutonSoccer()
+            // Le désarmement passe par l'appui long (voir le bouton) : un simple appui ne
+            // doit pas pouvoir désarmer par inadvertance pendant un vol.
+            //
+            // TRACE OBLIGATOIRE — un appui qui ne produit RIEN doit laisser une marque. Sans
+            // elle (relevé du 2026-07-22), un opérateur pouvait appuyer plusieurs fois sur un
+            // bouton annoncé « désarmé » pendant que le code le croyait armé : aucun dialogue,
+            // aucune ligne, et 20 minutes d'essai perdues sans indice au journal.
+            // Le champ `detecteur` révèle immédiatement l'incohérence « armé sans watchdog ».
+            if (TEST_E03_CESSATION_VS) {
+                logE03("E03 SOCCER_APPUI_SANS_EFFET etat_interne=ARME " +
+                       "detecteur=${if (try { soccerWatchdogIndep.estEnService() } catch (_: Throwable) { false }) "EN_SERVICE" else "HORS_SERVICE"} " +
+                       "action_attendue=appui_maintenu_3s_pour_desarmer ts=${System.currentTimeMillis()}")
+            }
+            try {
+                txtEtat.text = "Maintenir « Mode SOCCER » 3 s pour désarmer"
+            } catch (_: Throwable) {}
+            return
+        }
+        // AUTORITÉ DE COMMANDE — vérifiée AVANT d'armer. Si un autre écran la détient,
+        // on refuse : deux producteurs de commandes vers un même aéronef est le défaut
+        // que ce verrou existe pour empêcher.
+        if (!ca.cineflight.stage.control.AutoriteCommandeDrone.acquerir(instanceId)) {
+            val proprio = ca.cineflight.stage.control.AutoriteCommandeDrone.proprietaireActuel()
+            journalCycleVie("ARMEMENT_REFUSE cause=autorite_detenue_par=$proprio")
+            try { txtEtat.text = "⛔ Armement refusé : un autre écran contrôle déjà le drone" } catch (_: Throwable) {}
             return
         }
         confirmerVol(
             "Armer le mode SOCCER ?",
-            "Le drone pourra se déplacer sur le rail si toutes les conditions de sécurité sont réunies. Le pilote garde la priorité et l'arrêt d'urgence désarme immédiatement.",
+            "Le drone pourra se déplacer sur le rail si toutes les conditions de sécurité sont réunies. Le pilote garde la priorité et l'arrêt d'urgence désarme immédiatement.\n\nL'écran sera épinglé pendant l'armement. Pour désarmer : maintenir le bouton SOCCER 3 secondes.",
             "Armer", true
         ) {
+            // TRACE D'ARMEMENT — indispensable au diagnostic.
+            // Sans elle, un journal montrant `soccerArme_avant=false` au moment d'un
+            // événement ne permet pas de distinguer « l'opérateur n'a pas armé » de
+            // « l'armement a échoué ». Constaté le 2026-07-22 : contre-essai non concluant
+            // faute de savoir laquelle des deux situations s'était produite.
+            val latchAvant = soccerArretUrgence
             soccerArretUrgence = false     // un nouvel armement leve un ancien arret d'urgence
             soccerArme = true
+            epinglerEcran(true)
             // WATCHDOG INDEPENDANT (REQ-WDG-001) : la confirmation du dialog EST la
             // decision humaine explicite -> reset d'un eventuel latch, armement de la
             // surveillance, demarrage du thread B (idempotent).
             soccerWatchdogIndep.reset()
             soccerWatchdogIndep.armer()
             soccerWatchdogIndep.demarrer()
+            // TRACE ÉCRITE APRÈS LE DÉMARRAGE DU DÉTECTEUR — pas avant. Le champ
+            // `detecteur` doit rendre compte de l'état qui suivra l'armement ; journalisé
+            // en amont il aurait consigné « hors service » à chaque fois, ce qui n'aurait
+            // rien voulu dire. Sans ce champ (relevé du 2026-07-22), une session de 15 min
+            // sans déclenchement ne prouvait pas que le détecteur surveillait pendant ce
+            // temps — l'absence d'alarme et l'absence de détecteur se ressemblent trop.
+            if (TEST_E03_CESSATION_VS) {
+                logE03("E03 SOCCER_ARME instance=$instanceId latch_urgence_avant=" +
+                       "${if (latchAvant) "POSE" else "LIBRE"} latch_apres=LIBRE " +
+                       "mode_manuel=${if (modeManuel) "OUI" else "NON"} " +
+                       "detecteur=${if (try { soccerWatchdogIndep.estEnService() } catch (_: Throwable) { false }) "EN_SERVICE" else "HORS_SERVICE"} " +
+                       "vs=${if (vsActif) "OUI" else "NON"} banc=${if (e03BancArme) "OUI" else "NON"} " +
+                       "ts=${System.currentTimeMillis()}")
+            }
             // TRAÇABILITÉ (v54) : identifiant de la configuration de sécurité qui gouverne
             // cet armement (empreinte des seuils SafetyLimits) — exigence du dossier.
             logSecuTest("SAFETYLIMITS ts=${System.currentTimeMillis()} config_id=${ca.cineflight.stage.control.SafetyLimits.CONFIG_ID} armement=soccer")
@@ -2222,15 +3370,629 @@ class Phase3Activity : AppCompatActivity() {
     // ESSAI E-03 — infrastructure au banc (drapeau TEST_E03_CESSATION_VS)
     // ══════════════════════════════════════════════════════════════════════════════
     private val e03Log = ca.cineflight.stage.sport.soccer.EssaiE03Log()
+    /** CAPTEUR des mesures T0..T6 + persistance (classe pure, testée en JVM). */
+    private val e03Capteur = ca.cineflight.stage.sport.soccer.EssaiE03Capteur()
     // Point de vol simulé (mêmes coordonnées que le CONOPS ; le simulateur ne bouge pas
     // le drone physiquement, hélices retirées).
     private val E03_LAT = 45.50189
     private val E03_LON = -73.56739
     @Volatile private var e03Compteur = 0
-    // Horodatages de la répétition en cours (nanos monotones).
-    @Volatile private var e03T0 = -1L
-    @Volatile private var e03DerniereV = 0f
-    @Volatile private var e03FinVNonNulle = -1L
+    /** true une fois les observateurs E-03 branchés (idempotence). */
+    @Volatile private var e03ObservateursBranches = false
+    /**
+     * GEL DES BATTEMENTS (scénario E03-03 uniquement). Quand true, la boucle pilote cesse
+     * d'alimenter le watchdog INDÉPENDANT : c'est le seul moyen de le mettre réellement en
+     * situation de détecter un fil d'émission figé. Levé automatiquement à la fin de la
+     * fenêtre d'observation. N'a AUCUN effet hors TEST_E03_CESSATION_VS.
+     */
+    @Volatile private var e03GelBattements = false
+
+    /** Nombre d'événements de connexion RC reçus — révèle un abonnement multiple. */
+    @Volatile private var e03CptConnexionRc = 0
+
+    /**
+     * Nombre d'événements de connexion de l'AÉRONEF reçus (E-03 scénario 08).
+     *
+     * Compteur SÉPARÉ de celui de la radiocommande : les deux maillons tombent
+     * indépendamment, et les confondre empêcherait de distinguer « le drone a disparu »
+     * de « la radiocommande a disparu » — deux pannes différentes, deux réactions à
+     * tracer distinctement au dossier.
+     */
+    @Volatile private var e03CptConnexionDrone = 0
+
+    /**
+     * Dernier état connu de la liaison AÉRONEF. `null` tant qu'aucun événement n'est arrivé.
+     *
+     * Sert à distinguer une PERTE (présent → absent) d'une ABSENCE INITIALE (écran ouvert
+     * avant la mise sous tension du drone). Seule la première est une défaillance.
+     */
+    @Volatile private var droneConnecteDernier: Boolean? = null
+
+    /**
+     * ZÉRO IMPOSÉ (scénario E03-02 uniquement). Quand true, la boucle pilote commande 0
+     * au lieu du throttle d'essai : c'est le seul moyen que « zéro maintenu » signifie
+     * réellement zéro maintenu. Levé en fin de fenêtre d'observation.
+     */
+    @Volatile private var e03ForcerZero = false
+
+    /** Dernier état de liaison RC annoncé par le SDK (vrai par défaut : on ne présume pas une panne). */
+    @Volatile private var rcConnecteDernier = true
+
+    /**
+     * Délai de CONFIRMATION d'une perte de radiocommande avant mise en sécurité.
+     * Assez court pour rester dans l'enveloppe de réaction attendue (§378), assez long
+     * pour absorber un faux négatif ponctuel de la clé DJI (mesuré le 2026-07-22).
+     */
+    private val RC_PERTE_CONFIRMATION_MS = 400L
+
+    /**
+     * Simulateur DJI déjà activé dans cette session. `enableSimulator` ÉCHOUE quand le
+     * simulateur tourne déjà — c'est ce qui a produit six `simulateur=ECHEC` consécutifs
+     * alors qu'il était bel et bien actif depuis l'ouverture de l'écran. On ne le
+     * réactive donc pas, au lieu d'interpréter un refus légitime comme une panne.
+     */
+    @Volatile private var e03SimulateurActif = false
+
+    /**
+     * MODE BANC ARMÉ (voir TEST_E03_BANC). Faux au lancement de l'écran : il faut une
+     * action explicite de l'opérateur. Tant qu'il est faux, l'application se comporte
+     * EXACTEMENT comme en production.
+     */
+    @Volatile private var e03BancArme = false
+
+    /** Libellé du bouton d'armement du banc, tenu à jour après chaque bascule. */
+    private var e03BtnBanc: android.widget.Button? = null
+
+    /**
+     * ARME ou DÉSARME le mode banc.
+     *
+     * REFUS si l'aéronef est en vol : la dérogation n'a de sens qu'au sol, hélices
+     * retirées. L'autoriser en vol reviendrait à court-circuiter le bit IF sur un aéronef
+     * qui vole — exactement ce que l'arbitre est là pour empêcher.
+     *
+     * À l'armement on demande le Virtual Stick au SDK. Le résultat (accepté / refusé) est
+     * journalisé par les observateurs déjà branchés : c'est LUI qui dira si le Mini 4 Pro
+     * accepte le VS au sol, question restée ouverte jusqu'ici.
+     */
+    private fun e03BasculerBanc() {
+        if (!TEST_E03_CESSATION_VS || !TEST_E03_BANC) return
+        // txtEtat est lateinit : on ne laisse JAMAIS un défaut d'affichage faire tomber
+        // l'écran pendant un essai — le journal, lui, garde la trace dans tous les cas.
+        fun etat(msg: String) { try { txtEtat.text = msg } catch (_: Throwable) {} }
+        if (!e03BancArme) {
+            if (enVol) {
+                etat("BANC REFUSÉ : aéronef en vol")
+                logE03("E03 BANC refus=aeronef_en_vol consequence=derogation_non_armee")
+                return
+            }
+            e03BancArme = true
+            // L'identité matérielle est souvent servie par le SDK APRÈS l'ouverture de
+            // l'écran. On la reprend ici : l'en-tête doit être complet avant toute mesure.
+            e03ReviserConfigSiIdentiteArrivee()
+            logE03("E03 BANC arme=OUI helices=RETIREES_DECLARE " +
+                   "derogation_bits=IF,PF,ON juges=PO,EM,VS,AC,BO,RV,CC,OG " +
+                   "portee=T0_a_T5_uniquement " +
+                   "non_mesurable=T6_persistance_physique_moteurs_a_l_arret")
+            // ORDRE IMPOSÉ : simulateur D'ABORD, Virtual Stick ENSUITE. Constat 2026-07-22 :
+            // le SDK a accordé le VS (accorde=OUI) dans la seule session où le simulateur
+            // était ACTIF, et l'a refusé (accorde=NON) dans celle où il avait échoué.
+            // Demander le VS avant que le simulateur soit prêt revient donc à le demander
+            // pour rien. Voir e03PreparerBanc().
+            e03PreparerBanc(essaisRestants = 5)
+            etat("⚠ BANC ARMÉ — préparation…")
+        } else {
+            e03BancArme = false
+            try { pont.activerVirtualStick(false) } catch (_: Throwable) {}
+            vsActif = false
+            logE03("E03 BANC arme=NON vs_relache=OUI")
+            etat("Banc désarmé")
+        }
+        e03BtnBanc?.text = if (e03BancArme) "🔓 BANC ARMÉ" else "🔒 ARMER LE BANC"
+        e03BtnBanc?.backgroundTintList = android.content.res.ColorStateList.valueOf(
+            if (e03BancArme) 0xFF2E7D32.toInt() else 0xFFB71C1C.toInt())
+    }
+
+    /**
+     * Lance une charge de diagnostic et encadre la fenêtre dans le journal.
+     *
+     * La charge ne prouve rien à elle seule : ce sont les lignes `WDG_INDEP` (ou leur
+     * ABSENCE) entre STRESS DEBUT et STRESS FIN qui constituent la preuve. On journalise
+     * donc les bornes explicitement, pour qu'un relevé postérieur puisse les corréler sans
+     * avoir à deviner quand la charge tournait.
+     *
+     * Un déclenchement pendant la fenêtre n'est PAS automatiquement un défaut : il peut
+     * signaler une vraie perte de cycle sous charge extrême. C'est l'analyse qui tranche,
+     * pas l'étiquette — d'où le libellé neutre côté journal.
+     */
+    private fun e03LancerStress(mode: ca.cineflight.stage.diag.StressBanc.Mode) {
+        if (!TEST_E03_STRESS) return
+        if (ca.cineflight.stage.diag.StressBanc.actif()) {
+            txtEtat.text = "Charge déjà en cours"
+            return
+        }
+        // ── PRÉCONDITION : LE DÉTECTEUR DOIT ÊTRE EN SERVICE ──────────────────────
+        // Un essai anti-faux-positif ne vaut QUE si le watchdog surveille pendant la charge.
+        // Sans cela, l'absence de WDG_INDEP ne prouve rien — c'est vérifier un détecteur de
+        // fumée en l'ayant débranché (relevé du 2026-07-22 : 3 charges avec `soccer_arme=NON`).
+        //
+        // Le banc doit être armé — c'est la décision humaine, elle ne s'automatise pas. Le
+        // mode soccer, lui, est réarmé ICI comme la série le fait déjà : chaque scénario le
+        // désarme, et exiger un réarmement manuel entre chaque charge n'apportait aucune
+        // sécurité supplémentaire — seulement 8 refus consécutifs et aucune mesure.
+        if (!e03BancArme) {
+            logE03("E03 STRESS REFUS mode=${mode.name} cause=banc_non_arme " +
+                   "action=armer_le_banc_helices_retirees ts=${System.currentTimeMillis()}")
+            txtEtat.text = "⛔ Armer le banc d'abord"
+            return
+        }
+        // ÉTAT DE SANTÉ, PAS INTENTION : `estEnService()` vérifie que le thread porteur est
+        // VIVANT. `surveillanceArmee()` seul rendait true sur un détecteur mort après un
+        // passage en arrière-plan — la charge se serait déroulée sans surveillance.
+        if (!soccerArme || !(try { soccerWatchdogIndep.estEnService() } catch (_: Throwable) { false })) {
+            logE03("E03 STRESS PREPARATION detecteur=hors_service action=rearmement_automatique " +
+                   "arme=${try { soccerWatchdogIndep.surveillanceArmee() } catch (_: Throwable) { false }} " +
+                   "en_service=${try { soccerWatchdogIndep.estEnService() } catch (_: Throwable) { false }} " +
+                   "ts=${System.currentTimeMillis()}")
+            e03RearmerSoccerAuto(0)
+        }
+        val nbFils = Runtime.getRuntime().availableProcessors()
+        // Laisse la boucle pilote publier quelques battements avant de charger : démarrer la
+        // charge sur un watchdog tout juste armé mesurerait le démarrage, pas la robustesse.
+        lifecycleScope.launch {
+            kotlinx.coroutines.delay(1000)
+            val enService = soccerArme &&
+                (try { soccerWatchdogIndep.estEnService() } catch (_: Throwable) { false })
+            if (!enService) {
+                logE03("E03 STRESS REFUS mode=${mode.name} cause=detecteur_toujours_hors_service " +
+                       "apres_rearmement=OUI consequence=absence_de_declenchement_ne_prouverait_rien " +
+                       "ts=${System.currentTimeMillis()}")
+                runOnUiThread { try { txtEtat.text = "⛔ Détecteur hors service — voir le journal" } catch (_: Throwable) {} }
+                return@launch
+            }
+            e03DemarrerStress(mode, nbFils)
+        }
+    }
+
+    /** Démarre effectivement la charge, détecteur vérifié en service. */
+    private fun e03DemarrerStress(mode: ca.cineflight.stage.diag.StressBanc.Mode, nbFils: Int) {
+        logE03("E03 " + ca.cineflight.stage.diag.StressBanc.descriptionDemarrage(
+            mode, E03_STRESS_DUREE_MS, nbFils) +
+            " timeout_ms=${ca.cineflight.stage.control.SafetyLimits.WATCHDOG_TIMEOUT_MS}" +
+            " periode_ms=${ca.cineflight.stage.control.SafetyLimits.WATCHDOG_INDEP_PERIODE_MS}" +
+            // MESURÉ, PAS AFFIRMÉ. Ces trois champs étaient écrits en dur : le journal
+            // affirmait « EN_SERVICE » sans jamais l'avoir constaté. Une preuve d'essai ne
+            // se déclare pas, elle se relève.
+            " soccer_arme=${if (soccerArme) "OUI" else "NON"}" +
+            " surveillance_watchdog=${if (try { soccerWatchdogIndep.surveillanceArmee() } catch (_: Throwable) { false }) "ARMEE" else "DESARMEE"}" +
+            " detecteur=${if (try { soccerWatchdogIndep.estEnService() } catch (_: Throwable) { false }) "EN_SERVICE" else "HORS_SERVICE"}" +
+            " ts=${System.currentTimeMillis()}")
+        val lance = ca.cineflight.stage.diag.StressBanc.demarrer(
+            mode = mode, dureeMs = E03_STRESS_DUREE_MS, nbFilsCpu = nbFils,
+        ) { compteRendu ->
+            // ÉTAT DU DÉTECTEUR EN FIN DE CHARGE : s'il s'est désarmé entre-temps (un
+            // déclenchement pose le latch et coupe la surveillance), la fenêtre n'a PAS été
+            // surveillée jusqu'au bout et la preuve est partielle. Le dire ici évite de
+            // conclure à tort à une absence de faux positif.
+            val encoreArme = try {
+                soccerArme && soccerWatchdogIndep.estEnService()
+            } catch (_: Throwable) { false }
+            logE03("E03 $compteRendu " +
+                   "detecteur_en_fin=${if (encoreArme) "TOUJOURS_EN_SERVICE" else "DESARME_EN_COURS_preuve_partielle"} " +
+                   "ts=${System.currentTimeMillis()}")
+            runOnUiThread { try { txtEtat.text = "Charge terminée — relire le journal" } catch (_: Throwable) {} }
+        }
+        txtEtat.text = if (lance) "⚡ Charge ${mode.name} — 30 s" else "Charge refusée"
+    }
+
+    // ── SÉRIE AUTOMATIQUE DE RÉPÉTITIONS ────────────────────────────────────────────
+    /**
+     * Scénarios dont le stimulus est ENTIÈREMENT logiciel, donc répétables sans geste
+     * humain. Les autres (débrancher l'USB, éteindre la RC, tuer le processus…) exigent
+     * une action physique : les « automatiser » reviendrait à journaliser un stimulus qui
+     * n'a pas eu lieu. Ils restent en déclenchement unitaire, c'est délibéré.
+     */
+    private val E03_SCENARIOS_AUTOMATISABLES: Set<ca.cineflight.stage.sport.soccer.EssaiE03Log.Scenario> =
+        setOf(
+            ca.cineflight.stage.sport.soccer.EssaiE03Log.Scenario.E03_01_ARRET_NORMAL,
+            ca.cineflight.stage.sport.soccer.EssaiE03Log.Scenario.E03_02_ZERO_MAINTENU,
+            ca.cineflight.stage.sport.soccer.EssaiE03Log.Scenario.E03_03_GEL_THREAD,
+            ca.cineflight.stage.sport.soccer.EssaiE03Log.Scenario.E03_04_EXCEPTION,
+            ca.cineflight.stage.sport.soccer.EssaiE03Log.Scenario.E03_11_SORTIE_VS_EXPLICITE,
+        )
+
+    // Scénarios PHYSIQUES où une commande NON NULLE doit couler au moment du stimulus pour
+    // que la persistance soit mesurable. On les distingue des pertes de liaison (07/08/09) :
+    // là, la commande cesse d'elle-même dès que la perception meurt — l'absence de commande
+    // est le comportement ATTENDU, pas une erreur d'opérateur. Pour CEUX-CI au contraire,
+    // une perception fraîche est indispensable ; sans elle l'arbitre fail-closed bloque
+    // l'émission et la répétition rend NUL après 15 s d'attente inutile. On refuse donc tout
+    // de suite, avec un retour à l'écran, au lieu de laisser l'opérateur découvrir le NUL en
+    // fin de fenêtre (relevé 2026-07-22 : E03-13 répété en vain, mire non accrochée).
+    private val E03_SCENARIOS_COMMANDE_ATTENDUE: Set<ca.cineflight.stage.sport.soccer.EssaiE03Log.Scenario> =
+        setOf(
+            ca.cineflight.stage.sport.soccer.EssaiE03Log.Scenario.E03_06_ARRIERE_PLAN,
+            ca.cineflight.stage.sport.soccer.EssaiE03Log.Scenario.E03_13_SURCHARGE_THERMIQUE,
+            // E03-05 (crash) : le marqueur n'a de sens que si l'aéronef était RÉELLEMENT
+            // commandé au moment du crash. Sans commande vivante, on refuse — sinon on
+            // « prouverait » une cessation qui n'avait rien à cesser.
+            ca.cineflight.stage.sport.soccer.EssaiE03Log.Scenario.E03_05_CRASH_PROCESS,
+        )
+
+    /** Nombre de répétitions déclenchées par un appui (1 = unitaire, 5 = série §378). */
+    @Volatile private var e03Repetitions = 1
+    /** Une série est en cours : empêche tout chevauchement. */
+    @Volatile private var e03SerieEnCours = false
+    private var e03BtnSerie: android.widget.Button? = null
+
+    /** Délai entre la fin d'une répétition et le réarmement de la suivante. */
+    private val E03_PAUSE_ENTRE_REPETITIONS_MS = 800L
+    /** Temps laissé à la boucle pour émettre un throttle non nul avant le stimulus. */
+    private val E03_DELAI_AVANT_STIMULUS_MS = 3000L
+
+    /**
+     * RÉARMEMENT AUTOMATIQUE DU MODE SOCCER entre deux répétitions d'une série.
+     *
+     * En usage normal, l'armement passe par une confirmation humaine — c'est un garde-fou
+     * voulu. Ici il est contourné, et il faut être clair sur le prix : pendant une série,
+     * l'opérateur n'est plus consulté à chaque cycle. Ce contournement est acceptable
+     * UNIQUEMENT parce que la série ne peut démarrer qu'au banc, hélices retirées, après
+     * un armement manuel explicite du banc, et qu'elle s'interrompt au premier écart.
+     * Chaque réarmement est journalisé : rien n'est implicite dans la preuve.
+     */
+    private fun e03RearmerSoccerAuto(rep: Int) {
+        soccerArretUrgence = false
+        modeManuel = false
+        soccerArme = true
+        try {
+            soccerWatchdogIndep.reset(); soccerWatchdogIndep.armer(); soccerWatchdogIndep.demarrer()
+            // BATTEMENT IMMÉDIAT après armement. Sans lui, le thread B peut évaluer l'âge
+            // avant que la boucle pilote ait publié son premier battement et déclencher
+            // aussitôt — observé le 2026-07-22 avec `WDG_INDEP declenche age_ms=-3`, qui a
+            // désarmé le soccer et interrompu la série E03-02 à 0/5. Un âge négatif n'est
+            // pas une défaillance à détecter, c'est une mesure faite trop tôt.
+            soccerWatchdogIndep.battement()
+        } catch (_: Throwable) {}
+        if (e03BancArme && !vsActif) {
+            try { pont.activerVirtualStick(true) } catch (_: Throwable) {}
+            vsActif = true
+        }
+        runOnUiThread { try { majBoutonSoccer(); majBoutonManuel() } catch (_: Throwable) {} }
+        // RELEVÉ, pas déclaré : ces champs étaient écrits en dur (« soccer_arme=OUI »). Si le
+        // réarmement échouait, le journal l'affirmait quand même. On lit l'état réel.
+        logE03("E03 SERIE_REARMEMENT rep=$rep " +
+               "soccer_arme=${if (soccerArme) "OUI" else "NON"} " +
+               "mode_manuel=${if (modeManuel) "OUI" else "NON"} " +
+               "urgence_latch=${if (soccerArretUrgence) "OUI" else "NON"} " +
+               "detecteur=${if (try { soccerWatchdogIndep.estEnService() } catch (_: Throwable) { false }) "EN_SERVICE" else "HORS_SERVICE"} " +
+               "vs=${if (vsActif) "OUI" else "NON"} " +
+               "note=confirmation_humaine_contournee_pendant_la_serie_banc_uniquement")
+    }
+
+    /**
+     * Enchaîne [n] répétitions d'un scénario automatisable.
+     *
+     * ARRÊT IMMÉDIAT si une précondition tombe (banc désarmé, aéronef en vol). Mieux vaut
+     * une série incomplète qu'une série dont les dernières répétitions ne mesurent rien.
+     */
+    private fun e03LancerSerie(s: ca.cineflight.stage.sport.soccer.EssaiE03Log.Scenario, n: Int) {
+        if (e03SerieEnCours) {
+            txtEtat.text = "Série déjà en cours"
+            return
+        }
+        if (!e03BancArme) {
+            txtEtat.text = "⛔ Armer le banc d'abord"
+            logE03("E03 SERIE refus=banc_non_arme scenario=${s.name}")
+            return
+        }
+        e03SerieEnCours = true
+        // Dernier filet avant de mesurer : si l'identité SDK est arrivée entre-temps,
+        // l'en-tête est révisé maintenant, pas après coup.
+        e03ReviserConfigSiIdentiteArrivee()
+        logE03("E03 SERIE DEBUT scenario=${s.name} repetitions=$n " +
+               "ts=${System.currentTimeMillis()}")
+        lifecycleScope.launch {
+            var faites = 0
+            try {
+                for (i in 1..n) {
+                    if (!e03BancArme || enVol) {
+                        logE03("E03 SERIE INTERRUPTION apres=$faites/$n " +
+                               "cause=${if (enVol) "aeronef_en_vol" else "banc_desarme"}")
+                        break
+                    }
+                    e03RearmerSoccerAuto(i)
+                    runOnUiThread {
+                        try { txtEtat.text = "🧪 Série ${s.name} — répétition $i/$n" } catch (_: Throwable) {}
+                    }
+                    // Laisse la boucle pilote émettre un throttle non nul : sans commande
+                    // en vigueur, il n'y a aucune persistance à mesurer.
+                    kotlinx.coroutines.delay(E03_DELAI_AVANT_STIMULUS_MS)
+                    if (!soccerArme) {
+                        logE03("E03 SERIE INTERRUPTION apres=$faites/$n cause=soccer_desarme_avant_stimulus")
+                        break
+                    }
+                    // Une répétition REFUSÉE (environnement non conforme, précondition
+                    // manquante) ne compte pas, et la répéter 4 fois de plus ne ferait
+                    // qu'empiler des refus identiques — vu le 2026-07-22 : E03-11 refusé
+                    // 5 fois pour la même cause, avec un compteur affichant « 5/5 faites ».
+                    if (!e03Declencher(s)) {
+                        logE03("E03 SERIE INTERRUPTION apres=$faites/$n cause=repetition_refusee " +
+                               "note=corriger_la_cause_avant_de_relancer")
+                        break
+                    }
+                    faites += 1
+                    // Fenêtre d'observation + écriture de la synthèse + marge.
+                    kotlinx.coroutines.delay(E03_FENETRE_OBSERVATION_MS + E03_PAUSE_ENTRE_REPETITIONS_MS)
+                }
+            } finally {
+                e03SerieEnCours = false
+                logE03("E03 SERIE FIN scenario=${s.name} repetitions_faites=$faites/$n " +
+                       "ts=${System.currentTimeMillis()}")
+                runOnUiThread {
+                    try { txtEtat.text = "Série terminée : $faites/$n répétitions" } catch (_: Throwable) {}
+                }
+            }
+        }
+    }
+
+    /**
+     * PRÉPARATION DU BANC : simulateur DJI, PUIS Virtual Stick.
+     *
+     * POURQUOI DES RÉESSAIS. `enableSimulator` était appelé à l'ouverture de l'écran, donc
+     * avant que la liaison SDK soit établie : il échouait (`simulateur=ECHEC`), toujours
+     * en compagnie de `identite_sdk=PARTIELLE` — même cause, SDK pas encore prêt. On
+     * réessaie ici, déclenché par une action opérateur qui suppose tout branché.
+     *
+     * SI LE SIMULATEUR RESTE INDISPONIBLE, on demande quand même le Virtual Stick : le
+     * refus éventuel du SDK est une DONNÉE d'essai (`VS_ACTIVATION accorde=NON`), pas un
+     * échec à masquer. Le journal dira alors que les commandes partent sans être suivies
+     * d'effet, et la portée de la mesure s'en trouve réduite — explicitement.
+     */
+    private fun e03PreparerBanc(essaisRestants: Int) {
+        if (!TEST_E03_SIMULATEUR) {
+            logE03("E03 BANC simulateur=NON_DEMANDE env=CHAINE_REELLE vs_demande=OUI")
+            e03DemanderVsBanc()
+            return
+        }
+        if (e03SimulateurActif) {
+            logE03("E03 BANC simulateur=DEJA_ACTIF reactivation=INUTILE vs_demande=OUI")
+            e03DemanderVsBanc()
+            return
+        }
+        try {
+            pont.activerSimulateur(E03_LAT, E03_LON) { ok ->
+                if (ok) e03SimulateurActif = true
+                logE03("E03 BANC simulateur=${if (ok) "ACTIF" else "ECHEC"} " +
+                       "essais_restants=$essaisRestants ts=${System.currentTimeMillis()}")
+                when {
+                    ok -> e03DemanderVsBanc()
+                    essaisRestants > 0 -> lifecycleScope.launch {
+                        kotlinx.coroutines.delay(1000)
+                        if (e03BancArme) e03PreparerBanc(essaisRestants - 1)
+                    }
+                    else -> {
+                        logE03("E03 BANC simulateur=INDISPONIBLE apres_reessais=OUI " +
+                               "consequence=vs_demande_quand_meme_resultat_journalise")
+                        e03DemanderVsBanc()
+                    }
+                }
+            }
+        } catch (_: Throwable) {
+            logE03("E03 BANC simulateur=EXCEPTION consequence=vs_demande_quand_meme")
+            e03DemanderVsBanc()
+        }
+    }
+
+    /** Demande le Virtual Stick au banc. La réponse du SDK est journalisée par les observateurs. */
+    private fun e03DemanderVsBanc() {
+        try { pont.activerVirtualStick(true) } catch (_: Throwable) {}
+        vsActif = true
+        runOnUiThread {
+            try { txtEtat.text = "⚠ BANC ARMÉ — hélices retirées obligatoire" } catch (_: Throwable) {}
+        }
+    }
+
+    /**
+     * VERROU INVERSE : si l'aéronef décolle alors que le banc est armé, on désarme
+     * immédiatement. Appelé depuis la boucle pilote, donc réévalué en continu.
+     */
+    private fun e03SurveillerVolPendantBanc() {
+        if (e03BancArme && enVol) {
+            e03BancArme = false
+            logE03("E03 BANC desarme_auto=OUI cause=aeronef_en_vol " +
+                   "consequence=mesures_suivantes_non_recevables_au_banc")
+            runOnUiThread {
+                try {
+                    e03BtnBanc?.text = "🔒 ARMER LE BANC"
+                    txtEtat.text = "BANC DÉSARMÉ : aéronef en vol"
+                } catch (_: Throwable) {}
+            }
+        }
+    }
+
+    /**
+     * CONFIGURATION FIGÉE de l'essai (§381). Les champs lisibles automatiquement sont
+     * renseignés ici ; les champs MATÉRIELS (SN et firmware de la RC, type de câble,
+     * SN/firmware du drone) doivent être complétés par l'opérateur AVANT la campagne —
+     * tant qu'ils sont vides, l'en-tête du journal porte `complete=NON` et liste les
+     * manquants, ce qui signale de lui-même que la campagne n'est pas recevable.
+     */
+    private fun e03Config(): ca.cineflight.stage.sport.soccer.EssaiE03Config {
+        // Identité matérielle lue au SDK (SN + firmware du drone et de la RC). Les champs
+        // que le SDK ne sert pas restent vides et sont signalés manquants dans l'en-tête.
+        val id = try {
+            ca.cineflight.stage.control.SondeIdentiteDji.lire()
+        } catch (_: Throwable) {
+            ca.cineflight.stage.control.SondeIdentiteDji.Identite()
+        }
+        return ca.cineflight.stage.sport.soccer.EssaiE03Config(
+            // ── Lus au SDK (vides si non servis : saisie manuelle au cahier d'essai) ──
+            rcNumeroSerie = id.rcNumeroSerie,
+            rcFirmware = id.rcFirmware,
+            droneNumeroSerie = id.droneNumeroSerie,
+            droneFirmware = id.droneFirmware,
+            // ── IMPOSSIBLES à lire : propriétés physiques, aucun capteur. Saisie manuelle. ──
+            cableType = "",
+            portUtilise = "",
+            // Hash APK : calculé automatiquement (mis en cache). Voir e03HashApk().
+            apkHash = e03HashApkCache ?: "",
+            // ── Renseignés automatiquement ──
+            telModele = "${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}",
+            // SN du téléphone : NON lisible par l'application (Build.getSerial() exige
+            // l'API 26 + READ_PHONE_STATE et reste refusé aux apps non privilégiées).
+            // Consigné MANUELLEMENT par l'opérateur — l'en-tête le signale comme manquant
+            // tant qu'il n'est pas renseigné.
+            telNumeroSerie = "",
+            androidVersion = android.os.Build.VERSION.RELEASE ?: "",
+            appVersion = try {
+                packageManager.getPackageInfo(packageName, 0).versionName ?: ""
+            } catch (_: Throwable) { "" },
+            // Version MSDK : lue par RÉFLEXION (l'API exacte varie selon les versions du
+            // SDK et n'est utilisée nulle part ailleurs dans le projet — une référence
+            // directe ferait courir un risque de compilation). Repli sur la version
+            // ÉPINGLÉE dans app/build.gradle, qui fait foi pour la traçabilité.
+            msdkVersion = e03LireVersionMsdk(),
+            droneModele = try { pont.modeleDrone() } catch (_: Throwable) { "" },
+            configId = ca.cineflight.stage.control.SafetyLimits.CONFIG_ID,
+            simulateurActif = TEST_E03_SIMULATEUR,
+        )
+    }
+
+    /** Hash SHA-256 de l'APK, calculé une seule fois (opération disque non triviale). */
+    @Volatile private var e03HashApkCache: String? = null
+
+    /** true si l'en-tête déjà écrit portait une identité SDK COMPLÈTE. */
+    @Volatile private var e03IdentiteSdkConsignee = false
+
+    /**
+     * RÉVISION DE L'EN-TÊTE DE CONFIGURATION — supprime une contrainte de procédure.
+     *
+     * L'en-tête §381 est écrit à l'ouverture de l'écran, après une attente de 8 s au plus
+     * sur les numéros de série servis par le SDK. Si le drone ou la radiocommande ne sont
+     * pas encore vus à ce moment-là, l'en-tête part avec `drone_sn=A_CONSIGNER` et
+     * `identite_sdk=PARTIELLE` — et il n'était JAMAIS corrigé ensuite. L'opérateur devait
+     * donc quitter l'écran, tout rebrancher, effacer le journal et recommencer. Constaté
+     * deux fois le 2026-07-22, dont une campagne complète à refaire.
+     *
+     * Une exigence de traçabilité ne doit pas dépendre de l'ordre dans lequel on allume le
+     * matériel. On relit donc la sonde au moment où l'identité compte VRAIMENT — armement
+     * du banc, démarrage d'une série — et si elle est devenue complète, on réécrit
+     * l'en-tête intégral.
+     *
+     * L'en-tête initial est CONSERVÉ, la révision est explicite (`E03 CONFIG_REVISION`) :
+     * on ne réécrit pas l'histoire, on la complète. La dernière ligne `E03 CONFIG` fait foi.
+     * Idempotent : sans effet une fois l'identité consignée.
+     */
+    private fun e03ReviserConfigSiIdentiteArrivee() {
+        if (!TEST_E03_CESSATION_VS || e03IdentiteSdkConsignee) return
+        val id = try {
+            ca.cineflight.stage.control.SondeIdentiteDji.lire()
+        } catch (_: Throwable) { return }
+        if (!id.complete()) return
+        e03IdentiteSdkConsignee = true
+        logE03("E03 CONFIG_REVISION raison=identite_sdk_disponible_apres_ouverture_de_l_ecran " +
+               "portee=en_tete_initial_conserve_la_ligne_CONFIG_suivante_fait_foi " +
+               "ts=${System.currentTimeMillis()}")
+        logE03(e03Config().ligneEntete(System.currentTimeMillis()))
+        logE03("E03 CONFIG_LECTURE essais=revision identite_sdk=COMPLETE " +
+               "note=cable_port_sn_telephone_a_consigner_au_cahier")
+    }
+
+    /**
+     * HASH SHA-256 DE L'APK EN COURS D'EXÉCUTION (§381 : « application + hash APK »).
+     *
+     * Lit le fichier APK réellement installé (`sourceDir`) et en calcule l'empreinte. Cela
+     * identifie sans ambiguïté le binaire utilisé pendant la campagne — une saisie manuelle
+     * serait à la fois pénible et sujette à erreur, alors que c'est précisément la donnée
+     * qui rend les résultats rattachables à une version.
+     *
+     * ⚠ À appeler HORS du fil UI : sur une APK de plusieurs dizaines de Mo, la lecture peut
+     * prendre ~1 s. Le résultat est mis en cache.
+     */
+    private fun e03HashApk(): String {
+        e03HashApkCache?.let { return it }
+        val h = try {
+            val chemin = packageManager.getApplicationInfo(packageName, 0).sourceDir
+            val md = java.security.MessageDigest.getInstance("SHA-256")
+            java.io.FileInputStream(chemin).use { fis ->
+                val buf = ByteArray(8192)
+                while (true) {
+                    val n = fis.read(buf)
+                    if (n <= 0) break
+                    md.update(buf, 0, n)
+                }
+            }
+            md.digest().joinToString("") { "%02x".format(it) }
+        } catch (e: Throwable) {
+            android.util.Log.w("CineFlightE03", "Hash APK indisponible: ${e.message}")
+            ""
+        }
+        e03HashApkCache = h
+        return h
+    }
+
+    /**
+     * Version du MSDK pour la traçabilité E-03. Tente plusieurs accesseurs par réflexion
+     * (les noms varient selon les versions) ; à défaut, rend la version ÉPINGLÉE dans
+     * app/build.gradle, suffixée pour indiquer qu'elle vient de la déclaration de build
+     * et non d'une lecture à l'exécution.
+     */
+    private fun e03LireVersionMsdk(): String {
+        return try {
+            val cls = Class.forName("dji.v5.manager.SDKManager")
+            val inst = cls.getMethod("getInstance").invoke(null)
+            val noms = listOf("getSDKVersion", "getSdkVersion", "sdkVersion")
+            for (n in noms) {
+                try {
+                    val v = cls.getMethod(n).invoke(inst)?.toString()
+                    if (!v.isNullOrBlank()) return v
+                } catch (_: Throwable) {}
+            }
+            MSDK_VERSION_BUILD
+        } catch (_: Throwable) {
+            MSDK_VERSION_BUILD
+        }
+    }
+
+    /**
+     * Branche les observateurs qui alimentent le capteur E-03. Idempotent.
+     * - vitesse verticale RÉELLE (télémétrie) -> persistance physique + T6 automatique ;
+     * - acquittement SDK de la sortie Virtual Stick -> T5.
+     * Aucun effet hors essai : appelé uniquement sous TEST_E03_CESSATION_VS.
+     */
+    private fun e03BrancherObservateurs() {
+        if (e03ObservateursBranches) return
+        e03ObservateursBranches = true
+        try {
+            pont.obsVitesseVerticale = { v -> e03Capteur.observerVitesseReelle(v) }
+        } catch (_: Throwable) {}
+        try {
+            pont.obsVsDesactivationConfirmee = { ok ->
+                e03Capteur.marquerT5()
+                logE03("E03 T5 acquittement_sortie_vs ok=$ok ts=${System.currentTimeMillis()}")
+            }
+        } catch (_: Throwable) {}
+        // ACQUITTEMENT D'ACTIVATION DU VS — indispensable au banc.
+        // `vsActif` est un drapeau APPLICATIF : il dit que l'app a DEMANDÉ le Virtual
+        // Stick, pas que le SDK l'a accordé. Si DJI refuse (aéronef au sol, autorité non
+        // rendue…), les commandes partent mais l'aéronef les ignore : la persistance
+        // mesurée porterait alors sur une chaîne interrompue. On journalise donc la
+        // réponse RÉELLE du SDK, pour que la lecture du journal ne puisse pas se tromper.
+        try {
+            pont.obsVsEnableAccepte = {
+                logE03("E03 VS_ACTIVATION accorde=OUI par=SDK_DJI ts=${System.currentTimeMillis()} " +
+                       "portee=commandes_effectivement_transmises")
+            }
+        } catch (_: Throwable) {}
+        try {
+            pont.obsVsEnableRefuse = {
+                logE03("E03 VS_ACTIVATION accorde=NON par=SDK_DJI ts=${System.currentTimeMillis()} " +
+                       "consequence=commandes_emises_mais_IGNOREES_par_l_aeronef " +
+                       "portee=mesure_limitee_a_la_chaine_applicative")
+            }
+        } catch (_: Throwable) {}
+        logE03("E03 observateurs=branches vitesse_verticale+acquittement_vs+activation_vs " +
+               "ts=${System.currentTimeMillis()}")
+    }
 
     /** Écrit une ligne E-03 dans son propre fichier (indépendant du log E06-09). */
     private fun logE03(ligne: String) {
@@ -2244,6 +4006,7 @@ class Phase3Activity : AppCompatActivity() {
     /** Active le simulateur DJI pour l'essai (drone connecté, hélices retirées). */
     private fun e03ActiverSimulateur() {
         pont.activerSimulateur(E03_LAT, E03_LON) { ok ->
+            if (ok) e03SimulateurActif = true
             logE03("E03 simulateur=${if (ok) "ACTIF" else "ECHEC"} ts=${System.currentTimeMillis()}")
             runOnUiThread {
                 try { txtEtat.text = if (ok) "🧪 E-03 : simulateur DJI ACTIF (banc, hélices retirées)" else "🧪 E-03 : échec activation simulateur" } catch (_: Throwable) {}
@@ -2258,58 +4021,356 @@ class Phase3Activity : AppCompatActivity() {
      * La MESURE FINE de T1..T6 et de la persistance se lit ensuite dans les journaux
      * corrélés (WDG_INDEP, E08, télémétrie) ; cette méthode pose le cadre et le verdict.
      */
-    private fun e03Declencher(s: ca.cineflight.stage.sport.soccer.EssaiE03Log.Scenario) {
+    /** @return true si la répétition a été LANCÉE, false si elle a été refusée. */
+    private fun e03Declencher(s: ca.cineflight.stage.sport.soccer.EssaiE03Log.Scenario): Boolean {
         e03Compteur += 1
         val rep = e03Compteur
-        e03T0 = System.nanoTime()
-        e03DerniereV = 0f
-        e03FinVNonNulle = -1L
         val cfg = ca.cineflight.stage.control.SafetyLimits.CONFIG_ID
-        logE03("E03 DEBUT scenario=${s.name} rep=$rep config_id=$cfg ts=${System.currentTimeMillis()}")
 
+        // (1) CONFORMITÉ D'ENVIRONNEMENT (tableau 36) : un scénario « RÉEL » exécuté sous
+        // simulateur ne prouve RIEN. On le journalise et on REFUSE de produire une ligne
+        // de résultat, plutôt que de laisser une mesure trompeuse entrer au dossier.
+        val nc = e03Config().nonConformiteEnv(s)
+        if (nc != null) {
+            logE03("E03 REFUS scenario=${s.name} rep=$rep $nc ts=${System.currentTimeMillis()}")
+            runOnUiThread {
+                try { txtEtat.text = "⛔ E-03 : scénario ${s.name} exige la chaîne RÉELLE (simulateur actif) — répétition refusée." } catch (_: Throwable) {}
+            }
+            return false
+        }
+
+        // (1 bis) BANC ARMÉ ? Au sol et sans dérogation, l'arbitre bloque toute émission
+        // (bit IF=0) : aucune commande ne part, la persistance mesurée vaut 0 et le verdict
+        // serait un PASS vide de sens. On REFUSE plutôt que de produire cette fausse preuve.
+        if (TEST_E03_BANC && !e03BancArme && !enVol) {
+            logE03("E03 REFUS scenario=${s.name} rep=$rep cause=banc_non_arme " +
+                   "consequence=aucune_commande_emise_persistance_sans_signification " +
+                   "action=armer_le_banc_helices_retirees ts=${System.currentTimeMillis()}")
+            runOnUiThread {
+                try { txtEtat.text = "⛔ Armer le banc d'abord (hélices retirées)" } catch (_: Throwable) {}
+            }
+            return false
+        }
+
+        // (1 ter) MODE SOCCER ARMÉ ? Sans lui, l'arbitre rend « non arme » et AUCUNE
+        // commande n'est émise : `v_commandee=0.0`, `MESURE_SANS_OBJET`, répétition nulle.
+        // Le piège est sournois — le verdict peut afficher PASS alors que rien n'a été
+        // exercé (constaté 2026-07-22 : 4 répétitions perdues de cette façon). On refuse
+        // AVANT le stimulus, au lieu de laisser une ligne trompeuse entrer au journal.
+        if (!soccerArme) {
+            logE03("E03 REFUS scenario=${s.name} rep=$rep cause=soccer_non_arme " +
+                   "consequence=aucune_commande_non_nulle_persistance_non_exercee " +
+                   "action=armer_le_mode_soccer_avant_le_stimulus ts=${System.currentTimeMillis()}")
+            runOnUiThread {
+                try { txtEtat.text = "⛔ Armer le mode SOCCER d'abord" } catch (_: Throwable) {}
+            }
+            return false
+        }
+
+        // (1 quater) PERCEPTION VIVANTE ? Pour les scénarios physiques où la persistance se
+        // mesure (E03-06, E03-13), une commande NON NULLE doit couler AU MOMENT du stimulus.
+        // Sans perception fraîche, l'arbitre fail-closed bloque l'émission → v_commandee=0 →
+        // répétition NULLE, mais découverte seulement au bout de 15 s. On applique ici la
+        // MÊME condition que le point d'émission (yoloFrais + conf|joueurs) et on refuse
+        // immédiatement avec un message clair. On ne truque RIEN : si la mire n'est pas
+        // accrochée, il n'y a réellement rien à faire cesser — on épargne juste à l'opérateur
+        // une fenêtre perdue. Exclut volontairement les pertes de liaison (07/08/09).
+        if (s in E03_SCENARIOS_COMMANDE_ATTENDUE) {
+            val ageYolo = if (yoloVueMs > 0L) System.currentTimeMillis() - yoloVueMs else -1L
+            val yoloFrais = (yoloVueMs > 0L && ageYolo < YOLO_FRAIS_MS)
+            val perceptionVivante = yoloFrais && (yoloConf >= YOLO_CONF_MIN || soccerNbJoueurs > 0)
+            if (!perceptionVivante) {
+                logE03("E03 REFUS scenario=${s.name} rep=$rep cause=perception_non_fraiche " +
+                       "yolo_age_ms=$ageYolo joueurs_vus=$soccerNbJoueurs conf=$yoloConf " +
+                       "consequence=aucune_commande_non_nulle_la_repetition_serait_NULLE " +
+                       "action=accrocher_la_mire_avant_le_stimulus ts=${System.currentTimeMillis()}")
+                runOnUiThread {
+                    try { txtEtat.text = "⛔ Mire non accrochée — vise la cible puis recommence" } catch (_: Throwable) {}
+                }
+                return false
+            }
+        }
+
+        // (1 quinquies) THERMIQUE DÉJÀ AU SEUIL ? La détection E03-13 repose sur une
+        // TRANSITION sous→au-dessus du seuil (même garde que la perte d'aéronef, pour ne pas
+        // déclencher un arrêt d'urgence à chaque ouverture d'écran quand l'appareil est déjà
+        // chaud). Conséquence : si le niveau est DÉJÀ à SEVERE au moment du stimulus —
+        // typiquement un override adb laissé verrouillé d'un tir précédent —, AUCUNE
+        // transition ne peut survenir, et le tir rend NUL sans qu'il y ait le moindre défaut
+        // de sécurité. On le détecte et on refuse tout de suite, en indiquant le reset requis
+        // (relevé 2026-07-22 : niveau_initial=SEVERE, override non remis à zéro entre tirs).
+        if (s == ca.cineflight.stage.sport.soccer.EssaiE03Log.Scenario.E03_13_SURCHARGE_THERMIQUE) {
+            val niveauThermiqueActuel = try {
+                (getSystemService(android.content.Context.POWER_SERVICE) as? android.os.PowerManager)
+                    ?.currentThermalStatus ?: -1
+            } catch (_: Throwable) { -1 }
+            if (niveauThermiqueActuel >= E03_SEUIL_THERMIQUE) {
+                logE03("E03 REFUS scenario=${s.name} rep=$rep cause=thermique_deja_au_seuil " +
+                       "niveau=${libelleThermique(niveauThermiqueActuel)} " +
+                       "consequence=aucune_transition_possible_le_tir_serait_NUL " +
+                       "action=cmd_thermalservice_reset_avant_le_stimulus ts=${System.currentTimeMillis()}")
+                runOnUiThread {
+                    try { txtEtat.text = "⛔ Thermique déjà à SEVERE — fais 'reset' puis recommence" } catch (_: Throwable) {}
+                }
+                return false
+            }
+        }
+
+        // (2) DÉBUT D'OBSERVATION : efface T1..T6. On NE réinitialise PAS les vitesses —
+        // la dernière commande non nulle émise AVANT le stimulus est justement la donnée
+        // dont on mesure la persistance.
+        //
+        // DEUX RÉGIMES, parce que le stimulus n'a pas la même nature :
+        //  - LOGICIEL (E03-01..04, 11) : l'appui EST le stimulus → T0 est figé maintenant.
+        //  - PHYSIQUE (USB, RC, kill…) : l'appui annonce seulement l'intention ; l'événement
+        //    arrive quelques secondes plus tard. Figer T0 ici comptait le temps de réaction
+        //    de l'opérateur comme de la persistance logicielle (relevé E03-07 :
+        //    persist_ms=1561 → FAIL, sans aucun défaut de sécurité). T0 continue donc de
+        //    suivre le heartbeat jusqu'à la DÉTECTION réelle, qui le fige.
+        val stimulusPhysique = s !in E03_SCENARIOS_AUTOMATISABLES
+        if (stimulusPhysique) e03Capteur.armerObservationDifferee()
+        else e03Capteur.demarrerObservation()
+        // FENÊTRE D'OBSERVATION. Courte pour un stimulus logiciel (la chaîne réagit en
+        // dizaines de ms) ; longue pour un stimulus physique, où il faut laisser à
+        // l'opérateur le temps matériel de débrancher, d'éteindre ou de tuer le processus.
+        // Allonger la fenêtre n'assouplit AUCUN critère : la persistance se mesure de T0 à
+        // la dernière commande non nulle, pas sur la durée de la fenêtre. Une fenêtre trop
+        // courte ne rendait pas l'essai sévère, elle le rendait impossible (relevé du
+        // 2026-07-22 : trois tentatives E03-07, l'événement tombant chaque fois après la
+        // fermeture).
+        val fenetreMs = if (stimulusPhysique) E03_FENETRE_PHYSIQUE_MS else E03_FENETRE_OBSERVATION_MS
+        logE03("E03 DEBUT scenario=${s.name} rep=$rep config_id=$cfg " +
+               "simulateur=${if (TEST_E03_SIMULATEUR) "ACTIF" else "INACTIF"} " +
+               "banc=${if (e03BancArme) "OUI" else "NON"} en_vol_reel=${if (enVol) "OUI" else "NON"} " +
+               // PRÉREQUIS D'ÉMISSION, relevés AU MOMENT DU STIMULUS. Sans eux, une
+               // persistance de 0 se lit comme un succès alors qu'aucune commande n'a pu
+               // partir. Les trois doivent être vrais, sinon la répétition ne mesure rien.
+               "soccer_arme=${if (soccerArme) "OUI" else "NON"} mode2D=${if (soccerMode2D) "OUI" else "NON"} " +
+               "joueurs_vus=$soccerNbJoueurs mode_manuel=${if (modeManuel) "OUI" else "NON"} " +
+               "urgence_latch=${if (soccerArretUrgence) "OUI" else "NON"} " +
+               // ÉTAT DE SANTÉ DU DÉTECTEUR au moment du stimulus. E03-03 repose ENTIÈREMENT
+               // sur le watchdog indépendant : si son thread porteur est mort, le scénario ne
+               // peut rien détecter et l'absence de déclenchement n'aurait aucune valeur.
+               "detecteur=${if (try { soccerWatchdogIndep.estEnService() } catch (_: Throwable) { false }) "EN_SERVICE" else "HORS_SERVICE"} " +
+               // PÉRIMÈTRE DE LA DÉROGATION, avec les valeurs RÉELLES des bits neutralisés.
+               // Le dossier doit pouvoir lire ce qui a été forcé ET ce qui aurait été mesuré :
+               // sans cela, un lecteur ne peut pas distinguer une condition satisfaite d'une
+               // condition contournée.
+               (if (e03BancArme) " derogation_bits=IF,PF,ON reels[IF]=${if (enVol) "1" else "0"} " +
+                                 "reels[PF]=${if (autoRtk.uppercase() == "FIX" || autoRtk.uppercase() == "FLOAT") "1" else "0"} " +
+                                 "rtk=${autoRtk} " +
+                                 "reels[ON]=${if (try { estOperateurProcheDuRail() } catch (_: Throwable) { false }) "1" else "0"}"
+                else " derogation_bits=aucune") + " " +
+               "t0_fige=${e03Capteur.t0Fige()} ts=${System.currentTimeMillis()}")
+
+        // (3) STIMULUS. Les scénarios automatisables marquent leurs propres T ; les
+        // scénarios à stimulus PHYSIQUE (USB, kill, RC…) sont horodatés ici en T1 : le
+        // déclencheur humain EST l'événement de détection pour ces cas.
         when (s) {
             ca.cineflight.stage.sport.soccer.EssaiE03Log.Scenario.E03_03_GEL_THREAD -> {
-                // Ne PAS geler le fil UI : on simule un gel de la BOUCLE d'émission en
-                // cessant les battements du watchdog indépendant depuis un fil dédié.
-                Thread {
-                    logE03("E03 stimulus=arret_battements scenario=${s.name} rep=$rep")
-                    // (En banc réel, on couperait la source de battements ; ici on force
-                    //  le watchdog à conclure en n'émettant plus de battement.)
-                }.start()
+                // GEL RÉEL des battements — sans cela le watchdog ne déclencherait JAMAIS
+                // et le scénario ne prouverait rien. On ne gèle PAS le fil UI (l'app doit
+                // rester pilotable) : on coupe la SOURCE de battements, ce qui place le
+                // watchdog indépendant dans la situation exacte qu'il doit détecter.
+                // C'est lui, depuis le thread B, qui marquera T1..T4 via
+                // mettreEnSecuriteDepuisWatchdogIndep(). Le drapeau est levé automatiquement
+                // à la fin de la fenêtre d'observation.
+                e03GelBattements = true
+                logE03("E03 stimulus=gel_battements_REEL scenario=${s.name} rep=$rep " +
+                       "attendu=detection_par_watchdog_independant_sous_500ms")
             }
             ca.cineflight.stage.sport.soccer.EssaiE03Log.Scenario.E03_11_SORTIE_VS_EXPLICITE -> {
+                e03Capteur.marquerT1()                       // l'action EST l'événement
                 try { pont.activerVirtualStick(false) } catch (_: Throwable) {}
-                e03FinVNonNulle = System.nanoTime()
+                e03Capteur.marquerT4()                       // sortie VS demandée
+                vsActif = false
                 logE03("E03 stimulus=sortie_vs scenario=${s.name} rep=$rep")
             }
             ca.cineflight.stage.sport.soccer.EssaiE03Log.Scenario.E03_01_ARRET_NORMAL -> {
+                e03Capteur.marquerT1()
                 soccerArme = false
+                e03Capteur.marquerT2()                       // désarmement applicatif
                 soccerWatchdogIndep.desarmerSurveillance()
-                e03FinVNonNulle = System.nanoTime()
+                try {
+                    pont.envoyerVitesses(0f, 0f, 0f, 0f,
+                        ca.cineflight.stage.control.CommandOrigin.AUTOMATIC)
+                    e03Capteur.marquerT3()                   // commande neutre demandée
+                } catch (_: Throwable) {}
+                try {
+                    pont.activerVirtualStick(false)
+                    e03Capteur.marquerT4()                   // sortie VS demandée
+                    vsActif = false
+                } catch (_: Throwable) {}
                 logE03("E03 stimulus=arret_normal scenario=${s.name} rep=$rep")
             }
+            ca.cineflight.stage.sport.soccer.EssaiE03Log.Scenario.E03_02_ZERO_MAINTENU -> {
+                // Envoi répété de zéro : on vérifie l'absence d'emballement sous zéro.
+                // Le drapeau empêche la boucle pilote de réécrire +0.2 juste derrière.
+                e03ForcerZero = true
+                e03Capteur.marquerT1()
+                repeat(10) {
+                    try {
+                        pont.envoyerVitesses(0f, 0f, 0f, 0f,
+                            ca.cineflight.stage.control.CommandOrigin.AUTOMATIC)
+                    } catch (_: Throwable) {}
+                }
+                e03Capteur.marquerT3()
+                logE03("E03 stimulus=zero_maintenu n=10 scenario=${s.name} rep=$rep")
+            }
+            ca.cineflight.stage.sport.soccer.EssaiE03Log.Scenario.E03_04_EXCEPTION -> {
+                // Exception dans la boucle : la chaîne doit se mettre en sécurité
+                // (fail-closed) sans emporter le processus.
+                e03Capteur.marquerT1()
+                try {
+                    throw IllegalStateException("E-03 : exception provoquee (essai au banc)")
+                } catch (e: Throwable) {
+                    logE03("E03 stimulus=exception capturee=${e.javaClass.simpleName} " +
+                           "scenario=${s.name} rep=$rep")
+                    try { arretUrgence(); e03Capteur.marquerT2() } catch (_: Throwable) {}
+                }
+            }
+            ca.cineflight.stage.sport.soccer.EssaiE03Log.Scenario.E03_05_CRASH_PROCESS -> {
+                // CRASH RÉEL du processus. À la DIFFÉRENCE de E03-04, on n'INTERCEPTE PAS :
+                // l'exception part sur un thread dédié, atteint le handler par défaut (le nôtre,
+                // installé à onCreate), qui écrit `E03 CRASH_PROCESS` puis laisse ART tuer le
+                // process. La synthèse retardée NE s'écrira jamais (le process est mort) — c'est
+                // ATTENDU : le marqueur CRASH_PROCESS tient lieu de résultat. La persistance
+                // après crash est nulle par construction (émetteur DJI in-process, il meurt avec).
+                val derN = e03DerniereEmissionNonNulleNanos.get()
+                val depuisMs = if (derN > 0L) (System.nanoTime() - derN) / 1_000_000 else -1L
+                logE03("E03 stimulus=crash_process scenario=${s.name} rep=$rep " +
+                       "derniere_emission_non_nulle_il_y_a_ms=$depuisMs " +
+                       "note=exception_NON_interceptee_va_tuer_le_process_marqueur_CRASH_PROCESS_a_suivre")
+                Thread({
+                    throw RuntimeException("E-03-05 : crash processus provoque (essai au banc, helices retirees)")
+                }, "E03-05-crash").start()
+            }
             else -> {
-                logE03("E03 stimulus=manuel scenario=${s.name} rep=$rep (provoquer le stimulus physique : débrancher/éteindre/kill selon la fiche)")
+                // Stimulus PHYSIQUE : l'opérateur agit (débrancher, éteindre, kill…).
+                //
+                // ON NE MARQUE PLUS T1 ICI. L'appui n'est pas une détection : c'est une
+                // annonce. Marquer T1 au bouton figeait l'instant de détection AVANT que
+                // l'événement ait eu lieu, et rendait la mesure inexploitable — T1 valait
+                // le temps de réaction de l'opérateur, pas celui de la chaîne.
+                // T1 sera marqué par le VRAI détecteur (perte RC, watchdog, exception),
+                // et c'est lui qui figera T0.
+                logE03("E03 stimulus=manuel scenario=${s.name} rep=$rep " +
+                       "fenetre_ms=$fenetreMs t0_suit_le_heartbeat=OUI " +
+                       "action=provoquer_le_stimulus_physique_MAINTENANT " +
+                       "note=T0_sera_fige_a_la_detection_reelle_T1_T6_marques_par_la_chaine")
             }
         }
-        // Ligne de synthèse (les Tx détaillés sont corrélés depuis les autres journaux).
-        val mesures = ca.cineflight.stage.sport.soccer.EssaiE03Log.Mesures(
-            t0Nanos = e03T0,
-            derniereVitesse = e03DerniereV,
-            finVitesseNonNulleNanos = e03FinVNonNulle,
-        )
-        logE03(e03Log.ligne(s, rep, mesures, cfg))
+
+        // (4) SYNTHÈSE. Écrite APRÈS un court délai pour laisser la chaîne réagir : sans
+        // cela, T2..T6 seraient systématiquement absents et TOUT scénario rendrait FAIL
+        // pour une raison de chronologie, pas de sécurité. Le délai est journalisé.
+        lifecycleScope.launch {
+            kotlinx.coroutines.delay(fenetreMs)
+            // AU BANC, la télémétrie est écartée : moteurs à l'arrêt, elle ne mesure que du
+            // bruit. Voir construireMesures(banc).
+            val mesures = e03Capteur.construireMesures(banc = e03BancArme)
+            logE03(e03Log.ligne(s, rep, mesures, cfg))
+            // Marquages BRUTS : lève l'ambiguïté quand T0 manque (tous les Tx relatifs
+            // s'affichent alors « - » même s'ils ont été atteints).
+            logE03(e03Capteur.ligneMarquages())
+            logE03(e03Capteur.ligneSources(e03Log, banc = e03BancArme))
+            // Au banc, l'absence d'effet physique est ATTENDUE : le motif rendu décrit une
+            // limite du protocole (MESURE_BANC) et la répétition reste recevable. Ailleurs,
+            // un motif dénonce un défaut et la répétition doit être rejouée sans être comptée.
+            e03Capteur.incoherenceMesure(banc = e03BancArme)?.let {
+                val recevable = it.startsWith("MESURE_BANC")
+                val etiquette = if (recevable) "LIMITE" else "INCOHERENCE"
+                val suite = if (recevable) "" else " consequence=repetition_a_rejouer_NON_COMPTABILISEE"
+                logE03("E03 $etiquette scenario=${s.name} rep=$rep $it$suite")
+            }
+            logE03("E03 FIN scenario=${s.name} rep=$rep fenetre_ms=$fenetreMs " +
+                   "stimulus=${if (stimulusPhysique) "PHYSIQUE" else "LOGICIEL"} " +
+                   "t0_fige=${e03Capteur.t0Fige()} " +
+                   "detection_survenue=${!e03Capteur.observationDiffereeEnAttente()} " +
+                   "banc=${if (e03BancArme) "OUI" else "NON"} ts=${System.currentTimeMillis()}")
+            // Remise en état pour la répétition suivante : on relève le gel des battements
+            // (sinon le watchdog resterait aveugle) et on déverrouille T0 pour qu'il
+            // resuive le heartbeat. Fait APRÈS l'écriture des mesures, jamais avant.
+            e03GelBattements = false
+            e03ForcerZero = false
+            e03Capteur.reinitialiser()
+            // RÉTABLISSEMENT DU VIRTUAL STICK entre deux répétitions.
+            // La plupart des scénarios coupent le VS — c'est précisément ce qu'ils mesurent.
+            // Sans rétablissement, la répétition suivante partirait avec VS=0 et l'arbitre
+            // bloquerait : on mesurerait l'absence de commande, pas la cessation.
+            // On ne rétablit QUE le VS, et seulement si le banc est encore armé. Le
+            // réarmement du mode SOCCER reste MANUEL : c'est une décision humaine explicite,
+            // et l'automatiser reviendrait à retirer l'opérateur de la boucle.
+            val vsARetablir = e03BancArme && !vsActif
+            if (vsARetablir) {
+                try { pont.activerVirtualStick(true) } catch (_: Throwable) {}
+                vsActif = true
+            }
+            logE03("E03 REARME gel_battements=false zero_impose=false t0_fige=${e03Capteur.t0Fige()} " +
+                   "vs_retabli=${if (vsARetablir) "OUI" else "NON_deja_actif_ou_banc_desarme"} " +
+                   "soccer_arme=${if (soccerArme) "OUI" else "NON_a_rearmer_manuellement"} " +
+                   "pret_pour=rep${rep + 1}")
+        }
+        return true
     }
 
+    /**
+     * ARRÊT D'URGENCE — IDEMPOTENT.
+     *
+     * Un système DÉJÀ en arrêt d'urgence n'a pas à s'arrêter une seconde fois. Rejouer la
+     * séquence n'apporte aucune sécurité supplémentaire : le mode est désarmé, le latch est
+     * posé, le Virtual Stick est coupé, la commande neutre est partie. En revanche elle
+     * ajoute des appels SDK inutiles et, surtout, elle DUPLIQUE la trace — ce qui rend le
+     * journal trompeur : on ne distingue plus « deux événements » de « un événement livré
+     * deux fois ».
+     *
+     * Constat au banc (2026-07-22) : un seul débranchement de radiocommande produisait deux
+     * arrêts d'urgence, le second avec `soccerArme_avant=false` — donc sur un système déjà
+     * sûr. La cause exacte de la double livraison (double abonnement ou redondance du SDK)
+     * n'a pas besoin d'être tranchée pour que cette garde soit correcte : quelle qu'elle
+     * soit, la deuxième exécution est sans objet.
+     *
+     * ⚠ Le latch n'est levé QUE par un réarmement humain explicite. La garde ne peut donc
+     * pas masquer un second événement survenu APRÈS un retour à l'état armé.
+     */
     private fun arretUrgence() {
+        if (soccerArretUrgence) {
+            if (TEST_E03_CESSATION_VS) {
+                logE03("E03 ARRET_URGENCE_IGNORE cause=deja_en_arret_urgence " +
+                       "soccer_arme=${if (soccerArme) "OUI" else "NON"} " +
+                       "vs=${if (vsActif) "OUI" else "NON"} " +
+                       "note=systeme_deja_sur_seconde_execution_sans_objet " +
+                       "ts=${System.currentTimeMillis()}")
+            }
+            return
+        }
+        // ESSAI E-03 : T1 = détection/déclenchement de l'arrêt d'urgence (scénarios
+        // E03-04 exception, E03-08 perte MSDK, E03-09 perte RC qui passent par ici).
+        if (TEST_E03_CESSATION_VS) e03Capteur.marquerT1()
         suiviActif = false
         soccerArme = false                // SECURITE : l'arret d'urgence desarme le soccer
+        // L'écran est libéré APRÈS le désarmement — jamais avant. Un arrêt d'urgence qui
+        // laisserait l'écran épinglé enfermerait le pilote dans un écran devenu inerte.
+        try { epinglerEcran(false) } catch (_: Throwable) {}
         soccerArretUrgence = true         // ...et pose le drapeau (l'arbitre -> commande neutre)
         soccerWatchdogIndep.desarmerSurveillance()  // mode desarme -> surveillance suspendue
+        if (TEST_E03_CESSATION_VS) e03Capteur.marquerT2()   // T2 = désarmement applicatif
         // TEST E-08 : trace l'instant precis de la cessation.
         logSecuTest("E08 ts=${System.currentTimeMillis()} emergencyStop=true soccerArme=false vsActif=false raison=arret_urgence")
-        try { pont.envoyerVitesses(0f, 0f, 0f, 0f, ca.cineflight.stage.control.CommandOrigin.AUTOMATIC) } catch (_: Exception) {}
-        try { pont.activerVirtualStick(false) } catch (_: Exception) {}
+        // ESSAI E-03 : même trace dans le journal de l'essai (scénarios 04/08/09 passent
+        // par l'arrêt d'urgence). Journal autoportant, indépendant de TEST_E06_09_SECU.
+        if (TEST_E03_CESSATION_VS) {
+            logE03("E03 ARRET_URGENCE emergencyStop=true soccerArme=false vsActif=false " +
+                   "raison=arret_urgence ts=${System.currentTimeMillis()}")
+        }
+        try {
+            pont.envoyerVitesses(0f, 0f, 0f, 0f, ca.cineflight.stage.control.CommandOrigin.AUTOMATIC)
+            if (TEST_E03_CESSATION_VS) e03Capteur.marquerT3()   // T3 = commande neutre demandée
+        } catch (_: Exception) {}
+        try {
+            pont.activerVirtualStick(false)
+            if (TEST_E03_CESSATION_VS) e03Capteur.marquerT4()   // T4 = sortie VS demandée
+        } catch (_: Exception) {}
         vsActif = false
         modeManuel = true                 // apres l'arret, c'est la telecommande qui commande
         majBoutonManuel()
@@ -2321,7 +4382,41 @@ class Phase3Activity : AppCompatActivity() {
     private enum class FeuRtk { VERT, JAUNE, ROUGE }
     private data class EtatFeuRtk(val feu: FeuRtk, val pastille: String, val titre: String, val detail: String)
 
+    // ── Badge en mode ATHLÈTE : libellé « Athlète » + ANTI-CLIGNOTEMENT ──────────────
+    // Basé sur l'état de l'évaluateur (PRÊT/DÉGRADÉ/PERDU). Une DÉGRADATION doit PERSISTER
+    // (grâce de 1,5 s) avant d'assombrir le badge ; une amélioration passe tout de suite.
+    // N'affecte QUE l'affichage — le suivi reste fail-closed (reseauOk immédiat).
+    private var athleteFeuAffiche = FeuRtk.ROUGE
+    private var athleteFeuBrutDernier = FeuRtk.ROUGE
+    private var athleteFeuBrutDepuisMs = 0L
+    private val ATHLETE_FEU_GRACE_MS = 1500L
+    private fun rangFeu(f: FeuRtk) = when (f) { FeuRtk.VERT -> 2; FeuRtk.JAUNE -> 1; FeuRtk.ROUGE -> 0 }
+    private fun feuAthleteStable(brut: FeuRtk): FeuRtk {
+        val now = System.currentTimeMillis()
+        if (brut != athleteFeuBrutDernier) { athleteFeuBrutDernier = brut; athleteFeuBrutDepuisMs = now }
+        if (rangFeu(brut) >= rangFeu(athleteFeuAffiche) || now - athleteFeuBrutDepuisMs >= ATHLETE_FEU_GRACE_MS)
+            athleteFeuAffiche = brut
+        return athleteFeuAffiche
+    }
+    private fun etatFeuAthlete(): EtatFeuRtk {
+        val brut = when (athleteEtat) {
+            ca.cineflight.stage.athlete.EvaluateurSourceAthlete.Etat.PRET -> FeuRtk.VERT
+            ca.cineflight.stage.athlete.EvaluateurSourceAthlete.Etat.DEGRADE,
+            ca.cineflight.stage.athlete.EvaluateurSourceAthlete.Etat.REPRISE -> FeuRtk.JAUNE
+            ca.cineflight.stage.athlete.EvaluateurSourceAthlete.Etat.PERDU -> FeuRtk.ROUGE
+        }
+        val feu = feuAthleteStable(brut)
+        val ageTxt = if (!autoAgeS.isFinite()) "—" else "%.1f s".format(autoAgeS)
+        val (past, titre) = when (feu) {
+            FeuRtk.VERT  -> "🟢" to "CineFlight Athlète — position précise"
+            FeuRtk.JAUNE -> "🟡" to "CineFlight Athlète — position moyenne"
+            FeuRtk.ROUGE -> "🔴" to "CineFlight Athlète — position perdue"
+        }
+        return EtatFeuRtk(feu, past, titre, "Source : iPhone CineFlight Athlète · âge $ageTxt · $athleteRaison")
+    }
+
     private fun etatFeuRtk(): EtatFeuRtk {
+        if (SUIVI_ATHLETE_SIMU) return etatFeuAthlete()   // badge « Athlète » stabilisé
         val q = autoRtk.uppercase()
         val ageTxt = if (!autoAgeS.isFinite()) "—" else "%.1f s".format(autoAgeS)
         // Ligne de diagnostic technique, ajoutee au message quand l'info est dispo.
@@ -2420,12 +4515,151 @@ class Phase3Activity : AppCompatActivity() {
     private fun fmtAlt(a: Double) = if (a.isNaN()) "—" else "%.1f m".format(a)
     private fun setVoyant(t: String, c: Int) { voyant.text = t; voyant.setBackgroundColor(c) }
 
+    // ── CYCLE DE VIE ET UNICITÉ DE L'AUTORITÉ DE COMMANDE ───────────────────────────
+    /**
+     * Identité de CETTE instance d'écran. Journalisée à chaque transition de cycle de vie,
+     * et utilisée comme clé du verrou d'autorité.
+     *
+     * Relevé du 2026-07-22 : un même événement de perte de radiocommande a produit SIX
+     * arrêts d'urgence, avec des compteurs d'occurrence distincts — donc PLUSIEURS
+     * producteurs actifs en même temps. Sans identité par instance, impossible de savoir
+     * lesquels, ni combien. C'est cette trace qui permettra de trancher.
+     */
+    private val instanceId: String = "P3-" + Integer.toHexString(System.identityHashCode(this))
+
+    /** Garde d'idempotence : la boucle pilote ne s'arrête qu'une fois. */
+    private val boucleActive = java.util.concurrent.atomic.AtomicBoolean(false)
+
+    /** Instant du début d'appui sur le bouton SOCCER (0 = aucun appui en cours). */
+    @Volatile private var appuiDesarmementDebutMs = 0L
+
+    /**
+     * Désarmement déclenché par un appui maintenu 3 s. Isolé dans un Runnable nommé pour
+     * pouvoir être ANNULÉ si le doigt se lève avant l'échéance — sans quoi un appui bref
+     * désarmerait quand même, avec 3 s de retard.
+     */
+    private val runnableDesarmementLong = Runnable {
+        if (soccerArme) {
+            appuiDesarmementDebutMs = 0L
+            desarmerModeSoccer("appui_maintenu_3s")
+        }
+    }
+
+    private fun journalCycleVie(etape: String) {
+        val msg = "CYCLE_VIE instance=$instanceId task=$taskId etape=$etape " +
+                  "autorite=${ca.cineflight.stage.control.AutoriteCommandeDrone.proprietaireActuel()} " +
+                  "boucle_active=${boucleActive.get()} ts=${System.currentTimeMillis()}"
+        android.util.Log.i("Phase3Lifecycle", msg)
+        if (TEST_E03_CESSATION_VS) logE03("E03 $msg")
+    }
+
+    /**
+     * ARRÊT DE LA BOUCLE PILOTE — idempotent.
+     *
+     * DÉFAUT CORRIGÉ : la boucle vivait dans `lifecycleScope`, qui n'est annulé qu'à
+     * `onDestroy()`. Or Android ne garantit PAS que `onDestroy()` soit appelé rapidement.
+     * Un écran passé en arrière-plan continuait donc d'émettre à 10 Hz vers l'aéronef,
+     * indéfiniment. Pour une boucle qui commande un drone, l'arrêt doit avoir lieu dès que
+     * l'écran quitte le premier plan — pas « un jour, quand le système voudra bien ».
+     */
+    /**
+     * DÉMARRE le poller réseau et la boucle pilote. Appelée à la création ET à chaque
+     * retour au premier plan.
+     *
+     * IDEMPOTENTE : si les boucles tournent déjà, l'appel est sans effet. Sans cette
+     * garde, un aller-retour rapide en arrière-plan empilerait plusieurs boucles pilotes
+     * — exactement le défaut de producteurs concurrents qu'on cherche à supprimer.
+     */
+    private fun demarrerBoucles() {
+        if (!boucleActive.compareAndSet(false, true)) return
+        journalCycleVie("BOUCLES_DEMARREES")
+        // ── POLLER RESEAU : recupere la position RTK de l'auto (~5 Hz) ──────────
+        jobReseau = lifecycleScope.launch(Dispatchers.IO) {
+            while (isActive) {
+                if (SUIVI_ATHLETE_SIMU) lirePositionAthlete() else lirePositionAuto()
+                delay(200)   // 5 Hz
+            }
+        }
+
+        // ── BOUCLE PILOTE : envoie la commande de suivi (ou hover) a ~10 Hz ─────
+        jobPilote = lifecycleScope.launch(Dispatchers.Default) {
+            while (isActive) {
+                // VERROU INVERSE DU BANC : réévalué à chaque tour. Si l'aéronef décolle
+                // pendant qu'une dérogation de banc est armée, elle tombe immédiatement.
+                if (TEST_E03_CESSATION_VS && TEST_E03_BANC) e03SurveillerVolPendantBanc()
+                // ══ TEST E-01 AU SOL — HÉLICES RETIRÉES ══════════════════════════════════
+                // Appelle DIRECTEMENT le pipeline soccer 2D (observerMiroirMouvementSoccer),
+                // en sautant tickSuivi() qui exige un contexte voiture RTK absent en mode soccer.
+                // But : observer le SIGNE du throttle au sol. NE JAMAIS voler avec ce build
+                // (throttle force a +0.2 = montee continue). Flag=false -> code normal.
+                if (SOCCER_2D_EMISSION_ACTIVE && soccerMode2D) {
+                    try { observerMiroirMouvementSoccer(commandSent = "TEST_E01_SOL") } catch (_: Throwable) {}
+                    soccerWatchdog.battement(System.nanoTime())
+                    // ESSAI E-03 (scénario 03) : le gel volontaire COUPE ce battement, pour
+                    // placer le watchdog indépendant en situation réelle de détection.
+                    if (!e03GelBattements) soccerWatchdogIndep.battement()
+                    delay(100)
+                    continue
+                }
+                // ═════════════════════════════════════════════════════════════════════════
+                if (athleteObs) {
+                    // OBSERVATION athlète : le suivi calcule et AFFICHE, sans VS ni vol requis,
+                    // sans rien envoyer (le garde dans tickSuivi bloque l'émission).
+                    if (suiviActif) tickSuivi()
+                } else if (vsActif) {
+                    if (suiviActif && enVol) {
+                        if (suiviVision) tickSuiviVision() else tickSuivi()
+                    } else if (enVol) {
+                        try { pont.envoyerVitesses(0f, 0f, 0f, 0f, ca.cineflight.stage.control.CommandOrigin.AUTOMATIC) } catch (_: Exception) {}  // hover
+                    }
+                }
+                // WATCHDOG (Phase 1.2) : battement de fin d'iteration SAINE. Si la boucle se
+                // fige, ce battement cesse ; l'emission 2D forcera alors le throttle a 0.
+                soccerWatchdog.battement(System.nanoTime())
+                // WATCHDOG INDEPENDANT (REQ-WDG-001) : meme battement publie vers le
+                // thread B — si CETTE boucle gele totalement, B le detecte et met en
+                // securite depuis son propre fil (desarme + neutre + sortie VS).
+                // ESSAI E-03 (scénario 03) : le gel volontaire coupe ce battement pour
+                // reproduire EXACTEMENT la défaillance que le watchdog doit détecter.
+                if (!e03GelBattements) soccerWatchdogIndep.battement()
+                delay(100)   // 10 Hz
+            }
+        }
+    }
+
+    private fun arreterBouclePilote(raison: String) {
+        if (!boucleActive.compareAndSet(true, false)) return
+        try { jobPilote?.cancel() } catch (_: Throwable) {}
+        jobPilote = null
+        try { jobReseau?.cancel() } catch (_: Throwable) {}
+        jobReseau = null
+        suiviActif = false
+        journalCycleVie("BOUCLE_ARRETEE raison=$raison")
+    }
+
     override fun onPause() {
         super.onPause()
+        journalCycleVie("PAUSE")
+        // ESSAI E-03 SCÉNARIO 06 « PASSAGE EN ARRIÈRE-PLAN ».
+        //
+        // T1 = DÉTECTION. C'est ICI, et pas plus tard, que l'application apprend qu'elle
+        // quitte le premier plan : onPause est le premier rappel du cycle de vie à survenir.
+        // Le marquer dans onStop daterait la détection de plusieurs centaines de ms trop
+        // tard, et surtout APRÈS la sortie du Virtual Stick faite juste en dessous — ce qui
+        // produirait des jalons dans le désordre.
+        //
+        // Ne marque QUE si le mode automatique était armé : une mise en veille alors que
+        // rien n'est armé n'est pas une cessation, il n'y a rien à faire cesser.
+        if (TEST_E03_CESSATION_VS && soccerArme) e03Capteur.marquerT1()
         // securite : ecran en arriere-plan -> on coupe le suivi et l'envoi.
         suiviActif = false
         cmdHoverSiPossible()
-        if (vsActif && !enVol) { try { pont.activerVirtualStick(false) } catch (_: Exception) {}; vsActif = false }
+        if (vsActif && !enVol) {
+            try { pont.activerVirtualStick(false) } catch (_: Exception) {}
+            vsActif = false
+            // T4 = sortie Virtual Stick demandée au SDK.
+            if (TEST_E03_CESSATION_VS) e03Capteur.marquerT4()
+        }
     }
 
     private fun cmdHoverSiPossible() {
@@ -2434,20 +4668,117 @@ class Phase3Activity : AppCompatActivity() {
 
     override fun onStart() {
         super.onStart()
+        // ACQUISITION DE L'AUTORITÉ. Si un autre écran la détient encore, celui-ci
+        // n'émettra rien — le point d'émission le vérifie. Mieux vaut un écran muet
+        // qu'un second flux de commandes vers le même aéronef.
+        val obtenue = ca.cineflight.stage.control.AutoriteCommandeDrone.acquerir(instanceId)
+        journalCycleVie("START autorite_obtenue=$obtenue")
+        if (!obtenue) {
+            try {
+                txtEtat.text = "⛔ Autorité de commande détenue par un autre écran — émission bloquée"
+            } catch (_: Throwable) {}
+        }
         try { lecteurPerception.demarrer() } catch (_: Throwable) {}
+        // Les écouteurs DJI ont été retirés à onStop() : on les rétablit pour CETTE instance.
+        try { pont.initialiserListeners() } catch (_: Throwable) {}
+        try { brancherSurveillanceThermique() } catch (_: Throwable) {}
+        // Relance des boucles arrêtées à onStop(). Idempotent.
+        demarrerBoucles()
+        // AUCUN RÉARMEMENT AUTOMATIQUE. Le mode soccer a été désarmé par la sortie du
+        // premier plan ; on le DIT au pilote au lieu de le reprendre en silence. Le
+        // watchdog indépendant reste volontairement arrêté : il ne repart qu'à l'armement.
+        soccerDesarmeParCycleVie?.let { raison ->
+            soccerDesarmeParCycleVie = null
+            journalCycleVie("REPRISE_SANS_REARMEMENT raison_desarmement=$raison soccer_arme=NON")
+            try {
+                txtEtat.text = "Mode SOCCER désarmé\n" +
+                    "Raison : application passée en arrière-plan\n" +
+                    "Réarmement manuel requis"
+            } catch (_: Throwable) {}
+            try { majBoutonSoccer() } catch (_: Throwable) {}
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        journalCycleVie("RESUME")
     }
 
     override fun onStop() {
-        try { lecteurPerception.arreter() } catch (_: Throwable) {}
+        journalCycleVie("STOP")
+        desarmerSoccerCycleVie("ecran_hors_premier_plan")
         super.onStop()
+    }
+
+    /**
+     * DÉSARMEMENT COMPLET LIÉ AU CYCLE DE VIE — l'écran quitte le premier plan.
+     *
+     * DÉFAUT CORRIGÉ (2026-07-22). `onStop` tuait le thread B du watchdog indépendant
+     * (`arreter()`) mais laissait `soccerArme = true`, et `onStart` ne relançait jamais ce
+     * thread. Après un simple aller-retour en arrière-plan — appel entrant, verrouillage
+     * d'écran, notification plein écran — la boucle pilote redémarrait et recommençait à
+     * commander l'aéronef, tandis que la protection contre le gel du fil d'émission
+     * (REQ-WDG-001) était HORS SERVICE sans que rien ne le signale : ni le bouton, ni le
+     * journal, ni le garde-fou de la campagne de charge, qui interrogeaient tous une
+     * variable d'intention (`surveillanceArmee`) au lieu d'un état de santé.
+     *
+     * Le piège était double : un essai « arrière-plan / premier plan » cherchant des
+     * déclenchements intempestifs n'en aurait trouvé AUCUN, et cette absence aurait été
+     * portée au dossier comme une preuve d'absence de faux positif.
+     *
+     * DÉCISION (Christian, 2026-07-22) : une perte du premier plan INTERROMPT l'automatisme.
+     * Le retour dans l'application ne reprend JAMAIS un mode armé — le réarmement est un
+     * geste humain délibéré, avec la personne dans le champ. Afficher « armé » alors que la
+     * boucle est arrêtée, les écouteurs retirés et l'autorité rendue serait un mensonge sur
+     * la disponibilité réelle du système.
+     *
+     * ORDRE IMPOSÉ : les commandes cessent AVANT que l'écran et les ressources soient
+     * libérés. IDEMPOTENT — appelable depuis onStop puis onDestroy sans effet de bord.
+     */
+    private fun desarmerSoccerCycleVie(raison: String) {
+        val etaitArme = soccerArme
+        // 1) LES COMMANDES D'ABORD — l'automatisme cesse avant tout le reste.
+        soccerArme = false
+        // ESSAI E-03 SCÉNARIO 06 : T2 = désarmement applicatif effectué.
+        if (TEST_E03_CESSATION_VS && etaitArme) e03Capteur.marquerT2()
+        suiviActif = false
+        try { soccerWatchdogIndep.desarmerSurveillance() } catch (_: Throwable) {}
+        try {
+            pont.envoyerVitesses(0f, 0f, 0f, 0f, ca.cineflight.stage.control.CommandOrigin.AUTOMATIC)
+            // T3 = commande neutre demandée au pont.
+            if (TEST_E03_CESSATION_VS && etaitArme) e03Capteur.marquerT3()
+        } catch (_: Throwable) {}
+        // 2) L'ÉCRAN — le laisser épinglé enfermerait l'appareil dans un écran inerte.
+        try { epinglerEcran(false) } catch (_: Throwable) {}
+        // 3) LES RESSOURCES.
+        arreterBouclePilote("onStop")
+        // Sans ce retrait, un écran en arrière-plan continue de réagir aux événements de
+        // l'aéronef — c'est l'origine des arrêts d'urgence multipliés observés au banc.
+        try { pont.libererEcouteurs() } catch (_: Throwable) {}
+        try { debrancherSurveillanceThermique() } catch (_: Throwable) {}
+        try { soccerWatchdogIndep.arreter() } catch (_: Throwable) {}
+        try { lecteurPerception.arreter() } catch (_: Throwable) {}
+        // L'autorité est rendue : un autre écran pourra légitimement la prendre.
+        ca.cineflight.stage.control.AutoriteCommandeDrone.liberer(instanceId)
+        // 4) L'ÉTAT AFFICHÉ REDEVIENT FIDÈLE, et la raison survit au retour au premier plan.
+        if (etaitArme) soccerDesarmeParCycleVie = raison
+        try { majBoutonSoccer() } catch (_: Throwable) {}
+        journalCycleVie(
+            "SOCCER_DESARME_CYCLE_VIE raison=$raison etait_arme=${if (etaitArme) "OUI" else "NON"} " +
+            "detecteur_en_service=${try { soccerWatchdogIndep.estEnService() } catch (_: Throwable) { false }}"
+        )
     }
 
     override fun onDestroy() {
         super.onDestroy()
+        journalCycleVie("DESTROY")
+        arreterBouclePilote("onDestroy")
+        try { pont.libererEcouteurs() } catch (_: Throwable) {}
         try { flux?.arreter() } catch (_: Exception) {}       // libere la video live
         try { yoloSuivi?.arreter() } catch (_: Exception) {}  // stoppe la detection YOLO
         try { lecteurPerception.arreter() } catch (_: Exception) {}
         try { soccerWatchdogIndep.arreter() } catch (_: Exception) {}  // stoppe le thread B
+        ca.cineflight.stage.control.AutoriteCommandeDrone.liberer(instanceId)
     }
 
     /**
@@ -2459,12 +4790,47 @@ class Phase3Activity : AppCompatActivity() {
      * L'EFFET physique de la cessation reste a caracteriser par E-03.
      */
     private fun mettreEnSecuriteDepuisWatchdogIndep(ageMs: Long) {
+        // ESSAI E-03 : T1 = DÉTECTION par le watchdog indépendant. C'est l'horodatage
+        // central du scénario E03-03 (gel du fil d'émission). Marqué en TOUT PREMIER,
+        // avant les actions, pour ne pas inclure leur durée dans le délai de détection.
+        if (TEST_E03_CESSATION_VS) e03Capteur.marquerT1()
         soccerArme = false
         soccerArretUrgence = true
-        try { pont.envoyerVitesses(0f, 0f, 0f, 0f, ca.cineflight.stage.control.CommandOrigin.AUTOMATIC) } catch (_: Throwable) {}
-        try { pont.activerVirtualStick(false) } catch (_: Throwable) {}
+        if (TEST_E03_CESSATION_VS) e03Capteur.marquerT2()   // T2 = désarmement applicatif
+        try {
+            pont.envoyerVitesses(0f, 0f, 0f, 0f, ca.cineflight.stage.control.CommandOrigin.AUTOMATIC)
+            if (TEST_E03_CESSATION_VS) e03Capteur.marquerT3()   // T3 = commande neutre demandée
+        } catch (_: Throwable) {}
+        try {
+            pont.activerVirtualStick(false)
+            if (TEST_E03_CESSATION_VS) e03Capteur.marquerT4()   // T4 = sortie VS demandée
+        } catch (_: Throwable) {}
         vsActif = false
         logSecuTest("WDG_INDEP ts=${System.currentTimeMillis()} defaillance=battement_perime age_ms=$ageMs actions=desarme+urgence+neutre+sortieVS")
+        // ESSAI E-03 : la MEME ligne est écrite dans essai_e03.log. Sans cela, la preuve de
+        // détection du scénario E03-03 (âge du battement périmé) partirait uniquement dans
+        // test_secu_e0x.log, qui est conditionné par TEST_E06_09_SECU — un drapeau SANS
+        // rapport avec E-03. Le journal de l'essai doit être autoportant.
+        if (TEST_E03_CESSATION_VS) {
+            // CONTEXTE — distingue un déclenchement ATTENDU d'un déclenchement INATTENDU.
+            // Pendant une fenêtre d'observation E-03, T0 est figé : le déclenchement est le
+            // résultat voulu du stimulus. Hors fenêtre, rien ne le justifie a priori.
+            // Le libellé CONSTATE sans conclure : « inattendu » n'est pas « faux positif ».
+            // Un déclenchement hors fenêtre peut aussi révéler une vraie perte de cycle —
+            // trancher demande d'analyser la charge et l'ordonnancement du moment, pas de
+            // lire une étiquette. Le budget resserré à 350 ms rend cette distinction
+            // d'autant plus importante à ne pas préjuger.
+            val fenetreE03 = e03Capteur.t0Fige()
+            logE03("E03 WDG_INDEP declenche age_ms=$ageMs " +
+                   "contexte=${if (fenetreE03) "FENETRE_E03_DECLENCHEMENT_ATTENDU" else "HORS_FENETRE_E03_DECLENCHEMENT_INATTENDU"} " +
+                   "timeout_ms=${ca.cineflight.stage.control.SafetyLimits.WATCHDOG_TIMEOUT_MS} " +
+                   "periode_ms=${ca.cineflight.stage.control.SafetyLimits.WATCHDOG_INDEP_PERIODE_MS} " +
+                   // Anomalies d'horloge AMPLES cumulées : 0 attendu. Une valeur non nulle
+                   // signalerait un problème de source de temps, distinct d'un simple
+                   // entrelacement de lectures (celui-ci est désormais ramené à zéro).
+                   "anomalies_horloge=${try { soccerWatchdogIndep.anomaliesHorloge() } catch (_: Throwable) { -1 }} " +
+                   "actions=desarme+urgence+neutre+sortieVS ts=${System.currentTimeMillis()}")
+        }
         android.util.Log.e("CineFlightWDG",
             "WATCHDOG INDEPENDANT declenche (age=$ageMs ms) : desarmement + neutralisation + sortie Virtual Stick demandes")
         // UI en meilleur effort seulement (peut ne jamais s'executer si le fil UI est mort).

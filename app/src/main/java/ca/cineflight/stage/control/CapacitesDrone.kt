@@ -68,6 +68,21 @@ object CapacitesDrone {
         return Profil(modeleBrut ?: "", evitement, nomLisible(m))
     }
 
+    /**
+     * MISSIONS WAYLINE NATIVES (WaypointMissionManager / pushKMZFileToAircraft) :
+     * réservées aux drones ENTERPRISE par le MSDK v5. Les drones GRAND PUBLIC
+     * (Mini/Air/Mavic consommateur, dont le Mini 4 Pro) NE les supportent PAS —
+     * l'upload échoue et la mission « ne peut pas être exécutée » (audit 2026-07-25).
+     * Pour eux, l'app joue le KMZ elle-même en Virtual Stick (LecteurMissionKmz).
+     * Fail-closed : modèle inconnu -> false (chemin Virtual Stick, toujours disponible).
+     */
+    fun supporteWaylinesNatives(modeleBrut: String?): Boolean {
+        val m = (modeleBrut ?: "").uppercase().replace(" ", "_")
+        return listOf("MATRICE", "M30", "M300", "M350", "M400",
+                      "M3E", "M3T", "M3M", "M3D", "M4E", "M4T", "M4D")
+            .any { m.contains(it) }
+    }
+
     /** Code drone attendu par la meteo serveur (SEUILS_VENT) : mini3 | mini4 | air3 | mavic3.
      *  Repli prudent sur "mini3" (seuils les plus bas) pour tout modele inconnu. */
     fun codeMeteo(modeleBrut: String?): String {

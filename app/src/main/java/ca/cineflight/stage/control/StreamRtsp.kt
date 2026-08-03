@@ -39,6 +39,13 @@ object StreamRtsp {
         private set
 
     /**
+     * Resynchronise le drapeau [enCours] a "arrete". Le liveStreamManager DJI est
+     * UNIQUE : quand le module YouTube (RTMP) arrete le flux partage, le flux RTSP
+     * est coupe aussi. Cette methode evite que [enCours] reste "true" a tort.
+     */
+    fun marquerArrete() { enCours = false }
+
+    /**
      * Demarre le serveur RTSP. [onResultat] est rappele avec :
      *  - (true, "rtsp://.../streaming/live/1")  si le stream demarre
      *  - (false, raison)                        sinon (ex. Mini 3 non supporte)

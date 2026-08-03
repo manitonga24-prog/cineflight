@@ -109,7 +109,7 @@ object Catalogue {
 
     /** "Premier vol" : ultra-sure, pour reussir sa toute premiere video. */
     val PREMIER_VOL = Recette(
-        "🚁", "Premier vol", "Une premiere video reussie, en toute securite.",
+        "🚁", "Décollage d'essai", "Une premiere video reussie, en toute securite.",
         Famille.COMPLETE, Effet.EMOTION, sceneFixe = Scene.DANSEUR_SOLO,
         sujetsCompatibles = Scene.values().toList(),
         espaceRequis = Espace.RESTREINT, dureeS = 14

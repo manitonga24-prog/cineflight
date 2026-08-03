@@ -94,7 +94,7 @@ internal class DjiLiveStreamStatusAdapter : LiveStreamStatusPort {
                         isStreaming = status.isStreaming,
                         fps = status.fps,
                         bitrate = status.vbps,
-                        resolution = status.resolution?.toString(),
+                        resolution = resolutionLisible(status.resolution),
                         packetLoss = status.packetLoss,
                         packetCacheLength = status.packetCacheLen,
                         rttMs = status.rtt,
@@ -104,6 +104,18 @@ internal class DjiLiveStreamStatusAdapter : LiveStreamStatusPort {
 
             override fun onError(error: IDJIError) {
                 onError(error.description() ?: "erreur de statut inconnue")
+            }
+
+            // Rend la resolution lisible : le toString() DJI donne parfois un nom de
+            // classe (ex. "dji.v5.manager..."). On extrait la partie utile ; a defaut
+            // on renvoie null (l'UI affichera "—" plutot qu'un nom de package).
+            private fun resolutionLisible(res: Any?): String? {
+                val s = res?.toString()?.trim().orEmpty()
+                if (s.isEmpty()) return null
+                // Un nom de classe/enum qualifie -> on garde le dernier segment.
+                val court = s.substringAfterLast('.').ifBlank { s }
+                // Si ca ressemble encore a un identifiant de package sans valeur, on ignore.
+                return if (court.startsWith("manager") || court.contains("@")) null else court
             }
         }
 

@@ -30,12 +30,70 @@ object SafetyLimits {
     const val YOLO_CONF_MIN: Float = 0.35f
 
     // ── WATCHDOG DE CYCLE ───────────────────────────────────────────────────────
-    /** Âge maximal du dernier battement de la boucle (ms). Au-delà : cycle figé → throttle 0. */
-    const val WATCHDOG_TIMEOUT_MS: Long = 500L
+    /**
+     * Âge maximal du dernier battement de la boucle (ms). Au-delà : cycle figé → throttle 0.
+     *
+     * BUDGET RÉVISÉ le 2026-07-22 (500 → 350 ms) — décision fondée sur l'essai E-03.
+     *
+     * Avec l'ancienne valeur, le scénario E03-03 (gel du fil d'émission) ne pouvait PAS
+     * satisfaire le §378. Démonstration : le watchdog ne déclare la panne qu'au-DELÀ de son
+     * timeout, et le thread B ne vérifie qu'à intervalle fixe → détection au pire à
+     * `timeout + periode`. Avec 500 + 100, la détection tombait entre 500 et 600 ms
+     * (mesuré : 514, 547, 549, 578, 585 ms) alors que le budget de persistance TOTAL est
+     * de 500 ms. Le budget était donc consommé en entier par la seule détection, avant même
+     * que la réaction commence : 4 répétitions sur 5 en FAIL, à 518..536 ms.
+     *
+     * Le critère n'était pas trop sévère — la configuration était incompatible avec lui.
+     *
+     * Nouveau dimensionnement : détection au pire à 350 + 50 = 400 ms ; réaction mesurée
+     * 10..40 ms ; total attendu 410..440 ms ; marge ≈ 60 ms sous le seuil de 500 ms.
+     * 350 ms tolère ~3,5 périodes de la boucle pilote (10 Hz), ce qui laisse de la gigue
+     * d'ordonnancement Android sans rendre le déclenchement fragile.
+     *
+     * ⚠ PORTÉE : cette constante gouverne AUSSI le watchdog de CYCLE (CommandeWatchdog),
+     * pas seulement le watchdog indépendant. Le resserrer rend les deux plus stricts —
+     * volontaire, un budget de détection unique se défend mieux au dossier que deux
+     * valeurs divergentes. La campagne anti-faux-positif doit couvrir les DEUX.
+     */
+    const val WATCHDOG_TIMEOUT_MS: Long = 350L
 
     // ── WATCHDOG INDÉPENDANT (REQ-WDG-001) ──────────────────────────────────────
-    /** Période de vérification du thread B indépendant (ms). Doit être < WATCHDOG_TIMEOUT_MS. */
-    const val WATCHDOG_INDEP_PERIODE_MS: Long = 100L
+    /**
+     * Période de vérification du thread B indépendant (ms). Doit être < WATCHDOG_TIMEOUT_MS.
+     * Ramenée de 100 à 50 ms le 2026-07-22 : c'est elle qui fixe la LATENCE DE DÉTECTION
+     * au-delà du timeout (au pire une période entière). La diviser par deux réduit d'autant
+     * la dispersion observée sur E03-03, sans coût mesurable (le thread B ne fait qu'une
+     * comparaison d'horodatages).
+     */
+    const val WATCHDOG_INDEP_PERIODE_MS: Long = 50L
+
+    // ── BUDGET DE PERSISTANCE (§378) ────────────────────────────────────────────
+    /**
+     * Durée maximale pendant laquelle la dernière commande verticale non nulle peut
+     * rester en vigueur après une cessation. Exigence du dossier, PAS une valeur de
+     * réglage : elle ne se négocie pas pour faire passer un essai.
+     * Source unique — [ca.cineflight.stage.sport.soccer.EssaiE03Log] s'y réfère.
+     */
+    const val PERSISTANCE_MAX_MS: Long = 500L
+
+    /**
+     * Budget ALLOUÉ à la réaction (désarmement + commande neutre + sortie Virtual Stick),
+     * une fois la défaillance détectée.
+     *
+     * C'est un CONTRAT, pas un relevé. Les mesures actuelles donnent 10..40 ms ; fixer le
+     * budget à la valeur observée rendrait l'invariant dépendant du matériel du jour et
+     * il céderait au premier téléphone plus lent. 80 ms laisse le double de la pire
+     * réaction mesurée, tout en gardant 20 ms de marge sous le seuil :
+     *   350 (timeout) + 50 (période) + 80 (réaction) = 480 < 500.
+     */
+    const val REACTION_BUDGET_MAX_MS: Long = 80L
+
+    /**
+     * Nombre minimal de cycles de la boucle pilote que le timeout doit tolérer avant de
+     * déclarer une perte. En dessous, une simple gigue d'ordonnancement Android suffirait
+     * à déclencher une mise en sécurité sans cause.
+     */
+    const val WATCHDOG_CYCLES_BOUCLE_MIN: Int = 3
 
     // ── FRÉQUENCES DES BOUCLES (Hz) — valeurs de conception ─────────────────────
     /** Boucle pilote (émission de commande) : ~10 Hz (période 100 ms). */
@@ -83,7 +141,14 @@ object SafetyLimits {
     val CONFIG_ID: String = run {
         val valeurs = listOf(
             YOLO_FRAIS_MS, RTK_AGE_MAX_S, YOLO_CONF_MIN, WATCHDOG_TIMEOUT_MS,
-            WATCHDOG_INDEP_PERIODE_MS, BOUCLE_PILOTE_HZ, BOUCLE_TEST_AXES_HZ, POLLER_RTK_HZ,
+            WATCHDOG_INDEP_PERIODE_MS,
+            // Inclus DÉLIBÉRÉMENT bien qu'ils ne changent aucun comportement à l'exécution :
+            // ils portent l'argument de sécurité (budget de persistance et de réaction).
+            // Le modifier sans rejouer la campagne serait exactement l'erreur que l'essai
+            // E-03 a révélée ; le faire apparaître dans l'empreinte l'empêche de passer
+            // inaperçu.
+            PERSISTANCE_MAX_MS, REACTION_BUDGET_MAX_MS, WATCHDOG_CYCLES_BOUCLE_MIN,
+            BOUCLE_PILOTE_HZ, BOUCLE_TEST_AXES_HZ, POLLER_RTK_HZ,
             BATTERIE_MIN_PCT, V_MAX_HORIZ_MPS, V_MAX_VERT_MPS, SOCCER_2D_VMAX_MPS,
             ALT_MAX_M, ALT_OP_MAX_M, DIST_DECROCHAGE_M, DIST_OPERATEUR_MAX_M,
             BUFFER_CONFINEMENT_M,

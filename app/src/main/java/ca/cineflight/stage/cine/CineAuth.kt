@@ -180,6 +180,37 @@ object CineAuth {
             }
         }
 
+    /**
+     * Termine le direct YouTube cote serveur (POST /api/youtube/stop_live).
+     * Le serveur passe le broadcast en "complete" ET efface le watch_url, pour que la
+     * page publique /live/{user} repasse sur l'ecran d'attente au lieu d'afficher une
+     * video morte (« Video non disponible »). A appeler quand l'operateur arrete le direct.
+     * Non bloquant : si non connecte / reseau absent / pas de direct, renvoie false sans lever.
+     */
+    suspend fun arreterLiveYoutube(ctx: Context): Boolean =
+        withContext(Dispatchers.IO) {
+            val t = token(ctx) ?: return@withContext false
+            val url = URL("$BASE_URL/api/youtube/stop_live")
+            var conn: HttpURLConnection? = null
+            try {
+                conn = (url.openConnection() as HttpURLConnection).apply {
+                    requestMethod = "POST"
+                    doOutput = true
+                    connectTimeout = 15000
+                    readTimeout = 20000
+                    setRequestProperty("Authorization", "Bearer $t")
+                    setRequestProperty("Content-Type", "application/json")
+                }
+                // Corps vide : stop_live n'attend aucun parametre.
+                conn.outputStream.use { it.write("{}".toByteArray()) }
+                conn.responseCode in 200..299
+            } catch (_: Exception) {
+                false
+            } finally {
+                conn?.disconnect()
+            }
+        }
+
     /** Verifie que le jeton stocke est encore valide (via /api/auth/me).
      *  Utile au lancement : si false, demander une reconnexion. */
     suspend fun verifierToken(ctx: Context): Boolean =

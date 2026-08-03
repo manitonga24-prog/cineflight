@@ -4,7 +4,9 @@ import android.util.Log
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -54,7 +56,14 @@ internal class DjiLiveStreamEngine(
 
     private companion object {
         const val TAG = "LIVE_STREAM"
+        // Au-dela de ce delai sans confirmation du SDK (isStreaming), un demarrage
+        // ou un arret est considere comme echoue : on debloque l'UI (Erreur) au lieu
+        // de rester coince en Starting/Stopping (bouton Demarrer grise a vie).
+        const val TIMEOUT_MS = 15_000L
     }
+
+    // Watchdog du demarrage/arret : annule des qu'une transition reelle survient.
+    private var timeoutJob: Job? = null
 
     private val engineJob = SupervisorJob()
     private val engineScope = CoroutineScope(engineJob + dispatcher)
@@ -87,7 +96,9 @@ internal class DjiLiveStreamEngine(
     // ------------------------------------------------------------------
 
     private fun demarrerSerialise(destination: LiveStreamDestination) {
-        if (_state.value !is LiveStreamState.Idle) {
+        // Idle ou Erreur = pret a (re)demarrer. Starting/Streaming/Stopping = occupe.
+        val pret = _state.value is LiveStreamState.Idle || _state.value is LiveStreamState.Erreur
+        if (!pret) {
             // Un direct est deja en cours (ou en transition) : on refuse en silence.
             Log.w(TAG, "Demarrage ignore : etat=${_state.value::class.simpleName} destination=${destination.label}")
             return
@@ -100,12 +111,40 @@ internal class DjiLiveStreamEngine(
         _metrics.value = LiveStreamMetrics.Empty
         _state.value = LiveStreamState.Starting
         Log.i(TAG, "Demarrage destination=${destination.label} state=STARTING")
+        // Watchdog : si isStreaming=true n'arrive pas a temps, on debloque en Erreur.
+        armerTimeout("Le drone n'a pas confirme le demarrage a temps. Verifie la connexion, la cle et le reseau.")
 
+        // CONFLIT DE FLUX UNIQUE : le liveStreamManager DJI est PARTAGE (RTSP + RTMP).
+        // Si un flux tourne deja (RTSP en cours, ancien live YouTube non arrete, ou etat
+        // fantome apres un plantage), startStream renverrait "live stream already started".
+        // On arrete d'abord ce flux, PUIS on enchaine la vraie configuration + demarrage.
+        if (manager.diffuseDeja()) {
+            Log.w(TAG, "Flux DJI deja actif : arret prealable avant de demarrer ${destination.label}")
+            manager.arreter(object : LiveStreamManagerAdapter.Completion {
+                override fun onSuccess() {
+                    engineScope.launch { configurerEtDemarrer(destination) }
+                }
+                override fun onFailure(raison: String) {
+                    // On tente quand meme : le stop a peut-etre suffi cote SDK.
+                    Log.w(TAG, "Arret prealable en echec ($raison) : on tente le demarrage quand meme")
+                    engineScope.launch { configurerEtDemarrer(destination) }
+                }
+            })
+            return
+        }
+
+        configurerEtDemarrer(destination)
+    }
+
+    /** Configure la destination puis lance startStream. Appelee directement, ou apres
+     *  l'arret prealable d'un flux DJI deja actif (conflit de manager unique). */
+    private fun configurerEtDemarrer(destination: LiveStreamDestination) {
         try {
             manager.configurer(destination)
         } catch (e: Throwable) {
-            // Config impossible (SDK absent, drone non supporte...) : retour a Idle.
-            _state.value = LiveStreamState.Idle
+            // Config impossible (SDK absent, drone non supporte...) : on remonte la raison.
+            val raison = "Configuration impossible : ${e.message ?: e.javaClass.simpleName}"
+            _state.value = LiveStreamState.Erreur(raison)
             _metrics.value = LiveStreamMetrics.Empty
             Log.e(TAG, "Configuration echouee destination=${destination.label} : ${e.message}")
             return
@@ -131,6 +170,8 @@ internal class DjiLiveStreamEngine(
 
         _state.value = LiveStreamState.Stopping
         Log.i(TAG, "Arret demande state=STOPPING")
+        // Watchdog : si isStreaming=false n'arrive pas a temps, on force le retour a Idle.
+        armerTimeout(null)  // null = timeout d'arret -> Idle (pas d'erreur affichee)
         // NB : on n'efface PAS les metriques ici ; elles restent visibles pendant l'arret.
 
         manager.arreter(object : LiveStreamManagerAdapter.Completion {
@@ -168,15 +209,53 @@ internal class DjiLiveStreamEngine(
         // 2) Transitions de cycle de vie confirmees par la diffusion reelle.
         when {
             snapshot.isStreaming && _state.value is LiveStreamState.Starting -> {
+                annulerTimeout()   // confirme a temps : plus de watchdog
                 _state.value = LiveStreamState.Streaming
                 Log.i(TAG, "Direct actif state=STREAMING")
             }
             !snapshot.isStreaming && _state.value is LiveStreamState.Stopping -> {
+                annulerTimeout()
                 _state.value = LiveStreamState.Idle
                 _metrics.value = LiveStreamMetrics.Empty
                 Log.i(TAG, "Direct arrete state=IDLE")
             }
         }
+    }
+
+    // ------------------------------------------------------------------
+    // Watchdog demarrage/arret : evite de rester coince en Starting/Stopping
+    // ------------------------------------------------------------------
+
+    /**
+     * Arme un delai [TIMEOUT_MS]. Si l'etat est TOUJOURS en transition a l'echeance,
+     * on debloque : Erreur([raison]) pour un demarrage, Idle pour un arret ([raison]=null).
+     * Un seul watchdog a la fois (le precedent est annule).
+     */
+    private fun armerTimeout(raison: String?) {
+        annulerTimeout()
+        timeoutJob = engineScope.launch {
+            delay(TIMEOUT_MS)
+            when (_state.value) {
+                is LiveStreamState.Starting -> {
+                    _state.value = LiveStreamState.Erreur(
+                        raison ?: "Demarrage non confirme (delai depasse)."
+                    )
+                    _metrics.value = LiveStreamMetrics.Empty
+                    Log.e(TAG, "Timeout demarrage : etat force en Erreur")
+                }
+                is LiveStreamState.Stopping -> {
+                    _state.value = LiveStreamState.Idle
+                    _metrics.value = LiveStreamMetrics.Empty
+                    Log.w(TAG, "Timeout arret : etat force en Idle")
+                }
+                else -> { /* deja resolu entre-temps : rien a faire */ }
+            }
+        }
+    }
+
+    private fun annulerTimeout() {
+        timeoutJob?.cancel()
+        timeoutJob = null
     }
 
     private fun onStatutErreur(raison: String) {
@@ -195,7 +274,9 @@ internal class DjiLiveStreamEngine(
     }
 
     private fun onDemarrageEchoue(raison: String) {
-        _state.value = LiveStreamState.Idle
+        annulerTimeout()   // echec immediat : le watchdog n'a plus de raison d'etre
+        // On EXPOSE la raison DJI a l'ecran (au lieu de retomber en silence sur Idle).
+        _state.value = LiveStreamState.Erreur(raison)
         _metrics.value = LiveStreamMetrics.Empty
         Log.e(TAG, "Demarrage echoue : $raison")
     }
@@ -206,6 +287,7 @@ internal class DjiLiveStreamEngine(
     }
 
     private fun onArretEchoue(raison: String) {
+        annulerTimeout()
         // Passe 2 : l'echec d'arret ramene a Idle (best-effort). Passe 4 : reconciliation
         // via isStreamingNow() + evenement d'erreur.
         _state.value = LiveStreamState.Idle

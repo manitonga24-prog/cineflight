@@ -41,18 +41,62 @@ enum class PanoramaPreset(
     val delaiStabMs: Long,
     val delaiApresMs: Long
 ) {
+    // ⚠ RECOUVREMENT (correctif 2026-07-26) : 6 colonnes = 60° entre deux prises, or
+    // l'objectif du Mini 4 Pro couvre ~82° -> il ne restait que ~20° de recouvrement.
+    // L'assembleur ne trouvait pas assez de points communs et COLLAIT les images bout à
+    // bout : coupure franche visible sur le panorama 12 photos du 2026-07-26.
+    // 8 colonnes = 45° d'écart, soit ~37° de recouvrement (≈45 %) : marge confortable.
     RAPIDE("Rapide", "Moins de photos, plus vite",
-        colonnes = 6, rangees = 2, pitchHautDeg = 0f, pitchBasDeg = -40f,
+        colonnes = 8, rangees = 2, pitchHautDeg = 0f, pitchBasDeg = -40f,
         nadir = false, delaiStabMs = 1500, delaiApresMs = 800),
     SIMPLE("Simple", "Bon equilibre qualite / duree",
         colonnes = 8, rangees = 3, pitchHautDeg = 30f, pitchBasDeg = -50f,
         nadir = true, delaiStabMs = 2000, delaiApresMs = 1000),
-    HAUTE_QUALITE("Haute qualite", "Couverture maximale",
+    // ⚠ ORDRE DE DECLARATION = ordre d'affichage. Les presets sont ranges par NOMBRE DE
+    // PHOTOS croissant (16, 25, 41, 49, 61) : c'est ce nombre qui decide de la duree de
+    // vol et de la batterie, donc c'est la grandeur que l'utilisateur compare.
+    // CIEL COMPLET (2026-07-27). Les presets ci-dessus s'arretent a +30 d'elevation : au
+    // dela, rien n'est photographie et le serveur COMBLE. Mesure sur un vol reel :
+    // 53 a 59 % de la sphere etait du remplissage, avec des trainees verticales bien
+    // visibles des qu'on leve les yeux en casque.
+    // La nacelle du Mini 4 Pro monte a +60 : une rangee la-haut, avec ~60 de champ
+    // vertical, couvre jusqu'au zenith. 5 rangees de +60 a -60 plus le nadir.
+    CIEL_COMPLET("Ciel complet", "Jusqu'au zenith — rien d'invente en haut",
+        colonnes = 8, rangees = 5, pitchHautDeg = 60f, pitchBasDeg = -60f,
+        nadir = true, delaiStabMs = 2000, delaiApresMs = 1000),
+    HAUTE_QUALITE("Haute qualite", "Beaucoup de recouvrement, mais s'arrete a +30",
         colonnes = 12, rangees = 4, pitchHautDeg = 30f, pitchBasDeg = -60f,
+        nadir = true, delaiStabMs = 2500, delaiApresMs = 1200),
+    // CIEL COMPLET + HAUTE QUALITE : meme couverture verticale, mais 12 colonnes au lieu
+    // de 8. Le pas passe de 45 a 30 degres, donc le recouvrement horizontal de 45 % a
+    // 70 % : moins de risque de coupure franche, et plus de matiere pour l'assembleur.
+    // 61 photos, environ 7 minutes de vol. C'est le preset le plus complet — et le plus
+    // exigeant en batterie comme en carte.
+    CIEL_COMPLET_HQ("Ciel complet — haute qualite", "Couverture totale, recouvrement maximal",
+        colonnes = 12, rangees = 5, pitchHautDeg = 60f, pitchBasDeg = -60f,
         nadir = true, delaiStabMs = 2500, delaiApresMs = 1200);
 
     /** Nombre total de photos de ce preset (grille + nadir eventuel). */
     fun nbPhotos(): Int = colonnes * rangees + (if (nadir) 1 else 0)
+
+    /**
+     * Durée de vol estimée, en secondes.
+     *
+     * ⚠ CALIBRÉE SUR UN VOL RÉEL, pas devinée : relief du 2026-07-27, preset Simple,
+     * 25 photos entre 13:09:50 et 13:13:28, soit 218 s — donc 8,7 s par cliché avec
+     * 3 s de délais configurés. Le reste (5,7 s) est la rotation, la stabilisation
+     * mécanique et l'écriture du fichier, qui ne dépendent pas du preset.
+     * C'est une ESTIMATION pour choisir en connaissance de cause, pas une promesse :
+     * le vent et la batterie allongent le vol.
+     */
+    fun dureeEstimeeS(): Int =
+        (nbPhotos() * ((delaiStabMs + delaiApresMs) / 1000.0 + 5.7)).toInt()
+
+    /** « 3 min 37 s » — pour l'affichage. */
+    fun dureeTexte(): String {
+        val s = dureeEstimeeS()
+        return if (s < 60) "$s s" else "${s / 60} min ${"%02d".format(s % 60)} s"
+    }
 }
 
 /**

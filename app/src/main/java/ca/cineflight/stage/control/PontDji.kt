@@ -87,6 +87,11 @@ class PontDjiReel(private val obstacleGateWiring: ObstacleGateWiring) : PiloteDr
     @Volatile private var batterie: Int = -1
     @Volatile private var connecte: Boolean = false
     @Volatile private var modele: String = ""
+    // Température batterie (°C) — diagnostic surchauffe. NaN = pas encore reçue.
+    @Volatile private var battTempC: Double = Double.NaN
+    private var battTempDernierLogC: Int = Int.MIN_VALUE
+    /** Température batterie du drone (°C), NaN si inconnue. */
+    fun temperatureBatterieC(): Double = battTempC
 
     // ObstacleSafetyGate — ÉTAPE 1, MODE MIROIR. Le cablage est desormais OBLIGATOIRE et TYPE
     // (obstacleGateWiring, injecte au constructeur) : Off = aucun gate, Mirror = observe/logue.
@@ -125,6 +130,11 @@ class PontDjiReel(private val obstacleGateWiring: ObstacleGateWiring) : PiloteDr
     var obsVsEnableRefuse: (() -> Unit)? = null
     var obsVsConfirme: ((Boolean) -> Unit)? = null
     var obsVsDesactivationVoulue: (() -> Unit)? = null
+    // ESSAI E-03 : ACQUITTEMENT SDK de la SORTIE Virtual Stick (T5 de la fiche).
+    // obsVsDesactivationVoulue signale la DEMANDE (T4) ; ce hook-ci signale la REPONSE
+    // du SDK (onSuccess de disableVirtualStick). Les deux sont distincts : c'est
+    // precisement l'ecart T4->T5 que l'essai doit mesurer.
+    var obsVsDesactivationConfirmee: ((Boolean) -> Unit)? = null
     // Lot 2C : decollage / atterrissage (etat reel via callback SDK).
     var obsTakeoffActive: (() -> Unit)? = null
     var obsTakeoffRefuse: (() -> Unit)? = null
@@ -134,11 +144,22 @@ class PontDjiReel(private val obstacleGateWiring: ObstacleGateWiring) : PiloteDr
     var obsBatterie: ((Int) -> Unit)? = null
     var obsConnexionDrone: ((Boolean) -> Unit)? = null
     var obsConnexionRc: ((Boolean) -> Unit)? = null
+    /** État de vol RÉEL de l'aéronef (SDK KeyIsFlying). true = en l'air, quelle que soit la
+     *  façon de décoller — bouton de l'app OU manches de la RC. Corrige le suivi de `enVol`
+     *  côté écran, qui autrement ne connaît QUE le décollage via le bouton de l'app. */
+    var obsEnVol: ((Boolean) -> Unit)? = null
     var obsGpsSatellites: ((Int) -> Unit)? = null
     // Phase 3B : camera / enregistrement (etat reel via callback SDK).
     var obsRecordStarted: (() -> Unit)? = null
     var obsRecordStopped: (() -> Unit)? = null
     var obsRecordFailed: (() -> Unit)? = null
+    // ESSAI E-03 : VITESSE VERTICALE REELLE de l'aeronef (m/s, + = montee).
+    // Alimente la mesure de PERSISTANCE PHYSIQUE, critere central de l'essai E-03
+    // (dossier 378 : « la derniere commande verticale ne persiste pas au-dela d'un
+    // delai mesure et accepte »). SANS cet observateur, seule la persistance de
+    // COMMANDE est mesurable — insuffisant pour E03-10 et E03-FS3.
+    // Nul par defaut : aucun impact sur le pilotage quand personne n'observe.
+    var obsVitesseVerticale: ((Float) -> Unit)? = null
 
     companion object {
         // Seuil de satellites pour considérer le fix exploitable pour piloter.
@@ -146,11 +167,18 @@ class PontDjiReel(private val obstacleGateWiring: ObstacleGateWiring) : PiloteDr
         // ne se fie PAS au GPS (gpsValide() = false -> le contrôleur Python doit
         // refuser de piloter / rester en hover).
         const val SAT_MIN = 8
-        // INVERSION roll/pitch (cf. doc MSDK v5). A VALIDER au test d'axes Phase 2b :
+        // INVERSION roll/pitch (cf. doc MSDK v5) :
         //  false = param.pitch<-pitch, param.roll<-roll (convention directe)
         //  true  = param.pitch<-roll, param.roll<-pitch (inversion signalee par DJI)
-        // Si "Avant" fait deriver le drone de COTE en test -> basculer cette valeur.
-        const val INVERSER_ROLL_PITCH = false
+        // ⚠ BASCULÉ à true le 2026-07-25 suite au VOL RÉEL : commande « avant 2 m/s »
+        // exécutée EN LATÉRAL -> le drone ORBITAIT autour du sujet (r≈25 m = 2,0 m/s ÷
+        // 4,5°/s, signature géométrique sans autre explication : la rotation
+        // TraductionAxes est vérifiée correcte). C'est le piège pitch/roll documenté du
+        // Virtual Stick DJI en mode vitesse/BODY. Conforme à la consigne ci-dessous qui
+        // l'avait prévu : « Si Avant fait dériver le drone de CÔTÉ -> basculer ».
+        // CONTRE-VÉRIFICATION : bouton « 🧭 TEST AXES (SIMULATEUR) » (Phase 3, mode dev)
+        // — doit rendre « PITCH=AVANT ✓ » avec cette valeur avant tout vol de suivi.
+        const val INVERSER_ROLL_PITCH = true
     }
 
     /**
@@ -167,7 +195,46 @@ class PontDjiReel(private val obstacleGateWiring: ObstacleGateWiring) : PiloteDr
      * valeurs (ex. structure de l'attitude ou de la location), Android Studio le
      * signalera et l'ajustement est minime.
      */
+    /**
+     * RETIRE tous les écouteurs DJI enregistrés par CE pont.
+     *
+     * Nécessaire dès qu'un écran quitte le premier plan : sans cela, une instance en
+     * arrière-plan continue de réagir aux événements de l'aéronef. Constaté au banc le
+     * 2026-07-22 — un seul événement de perte de radiocommande a déclenché SIX arrêts
+     * d'urgence, signe que plusieurs jeux d'écouteurs restaient vivants.
+     *
+     * Idempotent : appeler plusieurs fois est sans effet supplémentaire.
+     */
+    fun libererEcouteurs() {
+        try { KeyManager.getInstance().cancelListen(this) } catch (_: Throwable) {}
+        ecouteursActifs.set(false)
+        Log.i("PontDjiReel", "Ecouteurs DJI liberes pour ce pont")
+    }
+
+    /**
+     * VRAI dès que les écouteurs de ce pont sont enregistrés. Garde d'unicité.
+     *
+     * DÉFAUT CORRIGÉ (2026-07-22) : `initialiserListeners()` était appelé depuis DEUX
+     * chemins — le rappel d'enregistrement du SDK et `onStart()` de l'écran. Le
+     * `cancelListen(this)` en tête ne suffit pas si les deux appels se chevauchent : on se
+     * retrouvait avec DEUX abonnements sur la même clé, et donc DEUX réactions à un seul
+     * événement. Mesuré au banc : un débranchement de radiocommande produisait deux arrêts
+     * d'urgence (compteur d'occurrence 3 puis 4 à 17 ms d'intervalle, même instance).
+     *
+     * La garde rend l'enregistrement IDEMPOTENT : un second appel ne fait rien tant que
+     * [libererEcouteurs] n'a pas été appelé. C'est le seul moyen de garantir « un écouteur
+     * par clé et par pont », indépendamment de l'ordre d'appel.
+     */
+    private val ecouteursActifs = java.util.concurrent.atomic.AtomicBoolean(false)
+
+    /** true si ce pont a des écouteurs DJI enregistrés. Diagnostic. */
+    fun ecouteursEnregistres(): Boolean = ecouteursActifs.get()
+
     fun initialiserListeners() {
+        if (!ecouteursActifs.compareAndSet(false, true)) {
+            Log.i("PontDjiReel", "Ecouteurs DJI DEJA enregistres — second appel ignore (unicite)")
+            return
+        }
         val km = KeyManager.getInstance()
 
         // Idempotence : si on (ré)abonne après une reconnexion, on retire d'abord
@@ -192,12 +259,77 @@ class PontDjiReel(private val obstacleGateWiring: ObstacleGateWiring) : PiloteDr
             if (pct != null) { try { obsBatterie?.invoke(pct) } catch (_: Throwable) {} }
         }
 
+        // --- TEMPÉRATURE BATTERIE (diagnostic surchauffe au sol, 2026-07-24) ---
+        // Hypothèse : déconnexions régulières après ~4-5 min au sol = protection thermique.
+        // `listen` uniquement (le SDK pousse sur son propre fil — AUCUN accès concurrent).
+        // Clé optionnelle selon version/modèle -> try/catch, valeur tolérante (Int ou Double).
+        try {
+            km.listen(
+                KeyTools.createKey(BatteryKey.KeyBatteryTemperature), this
+            ) { _, t ->
+                val v = when (t) {
+                    is Double -> t
+                    is Int -> t.toDouble()
+                    is Number -> t.toDouble()
+                    else -> Double.NaN
+                }
+                if (v.isFinite()) {
+                    battTempC = v
+                    // Trace périodique légère : une ligne par degré franchi.
+                    val d = v.toInt()
+                    if (d != battTempDernierLogC) {
+                        battTempDernierLogC = d
+                        Log.i("PontDjiReel", "TEMP batterie=${d}°C connecte=$connecte")
+                    }
+                }
+            }
+        } catch (e: Throwable) { Log.w("PontDjiReel", "KeyBatteryTemperature indispo: " + e.message) }
+
         // --- CONNEXION du flight controller (= connexion appareil) ---
         km.listen(
             KeyTools.createKey(FlightControllerKey.KeyConnection), this
         ) { _, c ->
             connecte = (c == true)
+            // Diagnostic surchauffe : consigner la température AU MOMENT de la déconnexion.
+            if (c != true) Log.e("PontDjiReel",
+                "DECONNEXION drone — temp_batterie=${if (battTempC.isFinite()) "%.0f°C".format(battTempC) else "?"}")
             try { obsConnexionDrone?.invoke(c == true) } catch (_: Throwable) {}
+        }
+
+        // --- ÉTAT DE VOL RÉEL (aéronef en l'air) : KeyIsFlying. INDÉPENDANT de la façon de
+        // décoller (bouton app OU manches RC). Sans ça, l'écran ne « sait » que l'aéronef vole
+        // que s'il a décollé via le bouton de l'app -> le suivi refusait de s'armer après un
+        // décollage à la RC. Cle optionnelle selon la version SDK -> try/catch. ---
+        try {
+            km.listen(
+                KeyTools.createKey(FlightControllerKey.KeyIsFlying), this
+            ) { _, f ->
+                enVolReel = (f == true)
+                try { obsEnVol?.invoke(f == true) } catch (_: Throwable) {}
+            }
+        } catch (e: Throwable) {
+            Log.w("PontDjiReel", "Cle FlightControllerKey.KeyIsFlying indisponible: " + e.message)
+        }
+
+        // --- ÉTAT D'ENREGISTREMENT RÉEL (KeyIsRecording) : SOURCE DE VÉRITÉ. Se met à jour
+        // même si l'enregistrement est basculé par la RADIOCOMMANDE. Détection de CHANGEMENT
+        // pour ne pas doubler les événements avec le onSuccess de KeyStartRecord/KeyStopRecord.
+        // Cle optionnelle selon la version SDK -> try/catch. ---
+        try {
+            km.listen(
+                KeyTools.createCameraKey(dji.sdk.keyvalue.key.CameraKey.KeyIsRecording,
+                    dji.sdk.keyvalue.value.common.ComponentIndexType.LEFT_OR_MAIN,
+                    dji.sdk.keyvalue.value.common.CameraLensType.CAMERA_LENS_DEFAULT), this
+            ) { _, rec ->
+                val actif = (rec == true)
+                val avant = enregistre
+                enregistre = actif
+                if (actif != avant) {
+                    try { if (actif) obsRecordStarted?.invoke() else obsRecordStopped?.invoke() } catch (_: Throwable) {}
+                }
+            }
+        } catch (e: Throwable) {
+            Log.w("PontDjiReel", "Cle CameraKey.KeyIsRecording indisponible: " + e.message)
         }
 
         // --- CONNEXION de la TELECOMMANDE (Phase 3). Cle optionnelle selon la version
@@ -213,9 +345,11 @@ class PontDjiReel(private val obstacleGateWiring: ObstacleGateWiring) : PiloteDr
         }
 
         // --- GPS : POSITION 3D en WGS84 (lat/lon + altitude RELATIVE au décollage) ---
-        // KeyAircraftLocation3D fournit latitude, longitude et altitude. L'altitude
-        // est l'altitude relative au point de décollage (AGL) — exactement ce qu'on
-        // veut. (Doc DJI : "altitude means the relative altitude to the take off point".)
+        // KeyAircraftLocation3D fournit latitude, longitude et altitude. L'altitude est
+        // l'altitude relative au point de décollage (AGL). ⚠ RESTAURÉ à l'écouteur UNIQUE
+        // d'origine (2026-07-24) : l'ajout de KeyAircraftLocation(2D)+KeyAltitude coïncidait
+        // avec des DÉCONNEXIONS du drone au fix GPS. Retirés le temps de trouver une lecture
+        // de position/altitude sûre (probablement un getValue périodique, pas un abonnement).
         km.listen(
             KeyTools.createKey(FlightControllerKey.KeyAircraftLocation3D), this
         ) { _, loc ->
@@ -232,6 +366,24 @@ class PontDjiReel(private val obstacleGateWiring: ObstacleGateWiring) : PiloteDr
         ) { _, n ->
             if (n != null) nbSatellites = n
             if (n != null) { try { obsGpsSatellites?.invoke(n) } catch (_: Throwable) {} }
+        }
+
+        // --- VITESSE 3D REELLE (essai E-03 : persistance PHYSIQUE) ---
+        // KeyAircraftVelocity -> Velocity3D {x,y,z} en N-E-D (m/s) : x=Nord, y=Est, z=BAS.
+        // La vitesse verticale « + = montee » vaut donc -z (meme convention que
+        // PontCockpitImpl, ou cette cle est deja utilisee et compile en MSDK 5.18.0).
+        // Cle optionnelle selon modele/firmware -> try/catch pour ne JAMAIS casser l'init.
+        try {
+            km.listen(
+                KeyTools.createKey(FlightControllerKey.KeyAircraftVelocity), this
+            ) { _, v ->
+                if (v != null) {
+                    val vVerticale = (-v.z).toFloat()   // NED : z vers le bas
+                    try { obsVitesseVerticale?.invoke(vVerticale) } catch (_: Throwable) {}
+                }
+            }
+        } catch (e: Throwable) {
+            Log.w("PontDjiReel", "Cle KeyAircraftVelocity indisponible: " + e.message)
         }
 
         // --- MODELE du drone (type de produit) ---
@@ -290,9 +442,15 @@ class PontDjiReel(private val obstacleGateWiring: ObstacleGateWiring) : PiloteDr
             try { obsVsDesactivationVoulue?.invoke() } catch (_: Throwable) {}
             if (etaitConfirme) { try { obsVsConfirme?.invoke(false) } catch (_: Throwable) {} }
             vsm.disableVirtualStick(object : CommonCallbacks.CompletionCallback {
-                override fun onSuccess() { Log.i("PontDjiReel", "Virtual Stick désactivé") }
+                override fun onSuccess() {
+                    Log.i("PontDjiReel", "Virtual Stick désactivé")
+                    // T5 (essai E-03) : acquittement SDK de la sortie Virtual Stick.
+                    try { obsVsDesactivationConfirmee?.invoke(true) } catch (_: Throwable) {}
+                }
                 override fun onFailure(error: dji.v5.common.error.IDJIError) {
                     Log.e("PontDjiReel", "Échec désactivation Virtual Stick: $error")
+                    // Echec consigne aussi : un T5 en echec est une donnee d'essai.
+                    try { obsVsDesactivationConfirmee?.invoke(false) } catch (_: Throwable) {}
                 }
             })
         }
@@ -392,7 +550,13 @@ class PontDjiReel(private val obstacleGateWiring: ObstacleGateWiring) : PiloteDr
         cptLogAlt++
         if (cptLogAlt >= 15) {   // boucle ~15 Hz -> environ 1 log/sec
             cptLogAlt = 0
-            Log.i("PontDjiReel", "ALT=${"%.2f".format(altitudeDrone())}m | cmd throttle=${s.throttle} yaw=${s.yaw} pitch=$pPitch | vsActif=$vsActifConfirme")
+            // ⚠ ROLL AJOUTÉ (2026-07-26) : son absence a empêché de diagnostiquer directement
+            // l'orbite du 25/07 — il a fallu déduire le défaut d'axes de la géométrie du vol.
+            // On journalise ce qui part RÉELLEMENT au SDK (après mapping/inversion).
+            Log.i("PontDjiReel", "ALT=${"%.2f".format(altitudeDrone())}m | cmd throttle=${s.throttle}" +
+                " yaw=${s.yaw} pitch=$pPitch roll=$pRoll | cap=${"%.0f".format(capDroneDeg())}" +
+                " lat=${"%.6f".format(latitudeDrone())} lon=${"%.6f".format(longitudeDrone())}" +
+                " sat=$nbSatellites | vsActif=$vsActifConfirme")
         }
         // DIAGNOSTIC : trace la 1ere commande de MOUVEMENT envoyee (non nulle), pour
         // confirmer que le flux tourne. Si on voit "cmd envoyee" mais VS non confirme,
@@ -401,7 +565,15 @@ class PontDjiReel(private val obstacleGateWiring: ObstacleGateWiring) : PiloteDr
         if (bouge && !premiereCmdLoggee) {
             premiereCmdLoggee = true
             Log.i("PontDjiReel", "1ere commande MOUVEMENT envoyee (throttle=${s.throttle} yaw=${s.yaw} pitch=$pPitch roll=$pRoll) — vsActifConfirme=$vsActifConfirme")
-            if (!vsActifConfirme) Log.w("PontDjiReel", "ATTENTION: commande envoyee mais Virtual Stick PAS confirme actif -> le drone risque d'IGNORER")
+            try { JournalVol.evenement("1re commande de mouvement envoyée" +
+                " (thr=${s.throttle} yaw=${s.yaw} pitch=$pPitch roll=$pRoll) vsConfirmé=$vsActifConfirme") } catch (_: Throwable) {}
+            if (!vsActifConfirme) {
+                Log.w("PontDjiReel", "ATTENTION: commande envoyee mais Virtual Stick PAS confirme actif -> le drone risque d'IGNORER")
+                // ⚠ CAS CRITIQUE : l'app croit piloter, le drone n'obéit pas. Sans cette
+                // trace, le vol paraît « sans commande » alors que l'app en envoyait.
+                try { JournalVol.anomalie(
+                    "commandes envoyées SANS Virtual Stick confirmé — l'aéronef peut les IGNORER") } catch (_: Throwable) {}
+            }
         }
     }
 
@@ -497,6 +669,10 @@ class PontDjiReel(private val obstacleGateWiring: ObstacleGateWiring) : PiloteDr
 
     fun nbSatellitesActuel(): Int = nbSatellites
 
+    @Volatile private var enVolReel: Boolean = false
+    /** État de vol RÉEL lu au SDK (KeyIsFlying) : vrai que le décollage vienne de l'app OU de la RC. */
+    fun estEnVolReel(): Boolean = enVolReel
+
     // --- CAMÉRA / NACELLE ---
     @Volatile private var enregistre: Boolean = false
 
@@ -529,25 +705,100 @@ class PontDjiReel(private val obstacleGateWiring: ObstacleGateWiring) : PiloteDr
             })
     }
 
+    /**
+     * RETOUR MAISON (RTH) — FlightControllerKey.KeyStartGoHome (2026-07-25, demandé pour
+     * les modes de suivi Phase 3). L'appelant doit AVOIR CESSÉ d'émettre des commandes
+     * Virtual Stick AVANT (suivi arrêté + VS coupé) : sinon l'app et le firmware se
+     * disputent l'autorité. L'annulation se fait aux STICKS de la RC (pas de KeyStop stable).
+     */
+    fun lancerRth(onFini: (Boolean) -> Unit) {
+        try {
+            KeyManager.getInstance().performAction(
+                KeyTools.createKey(FlightControllerKey.KeyStartGoHome), null,
+                object : CommonCallbacks.CompletionCallbackWithParam<dji.sdk.keyvalue.value.common.EmptyMsg> {
+                    override fun onSuccess(t: dji.sdk.keyvalue.value.common.EmptyMsg?) {
+                        Log.i("PontDjiReel", "RTH lancé")
+                        try { JournalVol.evenement("RTH accepté par le SDK") } catch (_: Throwable) {}
+                        onFini(true)
+                    }
+                    override fun onFailure(error: dji.v5.common.error.IDJIError) {
+                        Log.e("PontDjiReel", "Échec RTH: ${error.errorCode()}")
+                        try { JournalVol.anomalie("RTH REFUSÉ : ${error.errorCode()}") } catch (_: Throwable) {}
+                        onFini(false)
+                    }
+                })
+        } catch (e: Throwable) { Log.e("PontDjiReel", "RTH ex: ${e.message}"); onFini(false) }
+    }
+
     override fun demarrerEnregistrement() {
-        KeyManager.getInstance().performAction(
-            KeyTools.createKey(dji.sdk.keyvalue.key.CameraKey.KeyStartRecord),
-            null,
-            object : CommonCallbacks.CompletionCallbackWithParam<dji.sdk.keyvalue.value.common.EmptyMsg> {
-                override fun onSuccess(t: dji.sdk.keyvalue.value.common.EmptyMsg?) {
-                    enregistre = true; Log.i("PontDjiReel", "Enregistrement démarré")
-                    try { obsRecordStarted?.invoke() } catch (_: Throwable) {}
-                }
-                override fun onFailure(error: dji.v5.common.error.IDJIError) {
-                    try { obsRecordFailed?.invoke() } catch (_: Throwable) {}
-                    Log.e("PontDjiReel", "Échec démarrage enregistrement: $error")
-                }
-            })
+        val h = android.os.Handler(android.os.Looper.getMainLooper())
+        // L'action d'enregistrement elle-même (ciblée LEFT_OR_MAIN + objectif par défaut).
+        // UN réessai différé : la transition PHOTO->VIDEO peut être encore en cours quand
+        // le premier StartRecord part (la caméra met ~0,5-1 s à changer de mode).
+        fun lancer(dejaReessaye: Boolean = false) {
+            KeyManager.getInstance().performAction(
+                KeyTools.createCameraKey(dji.sdk.keyvalue.key.CameraKey.KeyStartRecord,
+                    dji.sdk.keyvalue.value.common.ComponentIndexType.LEFT_OR_MAIN,
+                    dji.sdk.keyvalue.value.common.CameraLensType.CAMERA_LENS_DEFAULT),
+                null,
+                object : CommonCallbacks.CompletionCallbackWithParam<dji.sdk.keyvalue.value.common.EmptyMsg> {
+                    override fun onSuccess(t: dji.sdk.keyvalue.value.common.EmptyMsg?) {
+                        enregistre = true; Log.i("PontDjiReel", "Enregistrement démarré")
+                        try { obsRecordStarted?.invoke() } catch (_: Throwable) {}
+                    }
+                    override fun onFailure(error: dji.v5.common.error.IDJIError) {
+                        if (!dejaReessaye) {
+                            Log.w("PontDjiReel", "StartRecord refusé (${error.errorCode()}) -> réessai dans 800 ms")
+                            h.postDelayed({ lancer(true) }, 800L)
+                            return
+                        }
+                        // CODE + description + hint (description() souvent null, comme la photo).
+                        val detail = try {
+                            listOf(error.errorCode(), error.description(),
+                                try { error.hint() } catch (_: Throwable) { null })
+                                .filter { !it.isNullOrBlank() }
+                                .joinToString(" · ").ifEmpty { error.toString() }
+                        } catch (_: Throwable) { error.toString() }
+                        try { obsRecordFailed?.invoke() } catch (_: Throwable) {}
+                        Log.e("PontDjiReel", "Échec démarrage enregistrement: $detail")
+                    }
+                })
+        }
+        // BASCULE MODE VIDÉO d'abord : sinon « CAN NOT RECORD » si la caméra est restée en
+        // mode PHOTO (le chemin photo force PHOTO_NORMAL à chaque prise). Symétrique du code
+        // photo, AVEC le même délai de stabilisation de 500 ms après la bascule — lancer
+        // l'enregistrement pendant la transition rend « CAN NOT RECORD ». Mode obtenu par
+        // RÉFLEXION (nom d'enum incertain selon la version SDK). Si la bascule échoue, on
+        // tente quand même l'enregistrement (la caméra était peut-être déjà en vidéo).
+        try {
+            val clsMode = Class.forName("dji.sdk.keyvalue.value.camera.CameraMode")
+            val videoMode = clsMode.enumConstants?.firstOrNull { (it as Enum<*>).name == "VIDEO_NORMAL" }
+                ?: clsMode.enumConstants?.firstOrNull { (it as Enum<*>).name == "VIDEO" }
+            if (videoMode != null) {
+                KeyManager.getInstance().setValue(
+                    KeyTools.createCameraKey(dji.sdk.keyvalue.key.CameraKey.KeyCameraMode,
+                        dji.sdk.keyvalue.value.common.ComponentIndexType.LEFT_OR_MAIN,
+                        dji.sdk.keyvalue.value.common.CameraLensType.CAMERA_LENS_DEFAULT),
+                    videoMode as dji.sdk.keyvalue.value.camera.CameraMode,
+                    object : CommonCallbacks.CompletionCallback {
+                        override fun onSuccess() { h.postDelayed({ lancer() }, 500L) }
+                        override fun onFailure(error: dji.v5.common.error.IDJIError) {
+                            Log.w("PontDjiReel", "bascule mode vidéo échouée (${error.description()}), tentative directe")
+                            lancer()
+                        }
+                    })
+            } else lancer()
+        } catch (e: Throwable) {
+            Log.w("PontDjiReel", "bascule mode vidéo ex: ${e.message}")
+            lancer()
+        }
     }
 
     override fun arreterEnregistrement() {
         KeyManager.getInstance().performAction(
-            KeyTools.createKey(dji.sdk.keyvalue.key.CameraKey.KeyStopRecord),
+            KeyTools.createCameraKey(dji.sdk.keyvalue.key.CameraKey.KeyStopRecord,
+                dji.sdk.keyvalue.value.common.ComponentIndexType.LEFT_OR_MAIN,
+                dji.sdk.keyvalue.value.common.CameraLensType.CAMERA_LENS_DEFAULT),
             null,
             object : CommonCallbacks.CompletionCallbackWithParam<dji.sdk.keyvalue.value.common.EmptyMsg> {
                 override fun onSuccess(t: dji.sdk.keyvalue.value.common.EmptyMsg?) {

@@ -1,6 +1,7 @@
 package ca.cineflight.stage.streaming
 
 import android.util.Log
+import dji.sdk.keyvalue.value.common.ComponentIndexType
 import dji.v5.common.callback.CommonCallbacks
 import dji.v5.common.error.IDJIError
 import dji.v5.manager.datacenter.MediaDataCenter
@@ -44,6 +45,13 @@ internal interface LiveStreamManagerAdapter {
     fun arreter(completion: Completion)
 
     /**
+     * true si le SDK DJI diffuse DEJA un flux (RTSP ou RTMP), independamment de
+     * l'etat interne du moteur. Le liveStreamManager est UNIQUE et partage avec
+     * StreamRtsp : cette sonde evite l'erreur "live stream already started".
+     */
+    fun diffuseDeja(): Boolean
+
+    /**
      * Implementation reelle : enveloppe MediaDataCenter.liveStreamManager.
      *
      * Reprend a l'identique les signatures confirmees par StreamRtsp :
@@ -78,6 +86,18 @@ internal interface LiveStreamManagerAdapter {
             }
 
             mgr.liveStreamSettings = settings
+
+            // SOURCE VIDEO : indispensable sur MSDK 5.8+. Sans setCameraIndex, l'encodeur
+            // live n'a AUCUNE source assignee : la session RTMP s'ouvre (etat "EN DIRECT")
+            // mais publie du vide -> fps 0 / debit 0 / aucune image chez YouTube.
+            // On selectionne la camera principale (meme index que l'apercu FluxCamera).
+            // Best-effort + isole : si la signature differe, on n'empeche pas le demarrage.
+            try {
+                mgr.setCameraIndex(ComponentIndexType.LEFT_OR_MAIN)
+                Log.i(TAG, "Source live = camera principale (LEFT_OR_MAIN)")
+            } catch (e: Throwable) {
+                Log.e(TAG, "setCameraIndex indisponible : ${e.message}")
+            }
 
             // Qualite demandee (resolution + debit). Best-effort : chaque reglage est
             // isole pour qu'un refus du drone n'empeche pas les autres ni le demarrage.
@@ -126,10 +146,22 @@ internal interface LiveStreamManagerAdapter {
         override fun arreter(completion: Completion) {
             val mgr = MediaDataCenter.getInstance().liveStreamManager
             mgr.stopStream(object : CommonCallbacks.CompletionCallback {
-                override fun onSuccess() = completion.onSuccess()
+                override fun onSuccess() {
+                    // Le manager DJI est unique : si on arrete ici, un eventuel flux RTSP
+                    // est aussi coupe. On resynchronise son drapeau pour eviter un etat menteur.
+                    ca.cineflight.stage.control.StreamRtsp.marquerArrete()
+                    completion.onSuccess()
+                }
                 override fun onFailure(error: IDJIError) =
                     completion.onFailure(error.description() ?: "erreur inconnue")
             })
         }
+
+        override fun diffuseDeja(): Boolean =
+            try {
+                MediaDataCenter.getInstance().liveStreamManager.isStreaming
+            } catch (_: Throwable) {
+                false   // SDK indisponible : on suppose "pas de flux" (le demarrage remontera l'erreur reelle)
+            }
     }
 }

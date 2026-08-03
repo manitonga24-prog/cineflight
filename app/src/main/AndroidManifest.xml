@@ -92,6 +92,7 @@
         <activity android:name=".CarteActivity" android:exported="false" android:screenOrientation="landscape" />
         <activity android:name=".CartePointsActivity" android:exported="false" android:screenOrientation="landscape" />
         <activity android:name=".CarteMissionActivity" android:exported="false" android:screenOrientation="landscape" />
+        <activity android:name=".CarteOrbite3DActivity" android:exported="false" android:screenOrientation="landscape" />
         <activity android:name=".TelemetrieActivity" android:exported="false" android:screenOrientation="portrait" />
         <activity android:name=".voice.FlightVoiceTestActivity" android:exported="false" android:screenOrientation="portrait" />
         <activity android:name=".Phase2Activity" android:exported="false" android:screenOrientation="portrait" />
@@ -100,6 +101,9 @@
         <activity android:name=".Phase3Activity" android:exported="false" android:screenOrientation="landscape" />
         <activity android:name=".PhototequeActivity" android:exported="false" android:screenOrientation="landscape" />
         <activity android:name=".VideosSDActivity" android:exported="false" android:screenOrientation="landscape" />
+        <activity android:name=".FindMyDroneActivity" android:exported="false" android:screenOrientation="landscape" />
+        <activity android:name=".AssemblagesActivity" android:exported="false" />
+        <activity android:name=".CarteDroneActivity" android:exported="false" android:screenOrientation="landscape" />
         <activity android:name=".MontageActivity" android:exported="false" android:screenOrientation="landscape" />
         <activity android:name=".MesMontagesActivity" android:exported="false" android:screenOrientation="landscape" />
         <activity android:name=".ReconnaissanceActivity" android:exported="false" android:screenOrientation="landscape" />
@@ -135,5 +139,6 @@
                 android:value="true" />
         </service>
         <activity android:name=".PremierVolActivity" android:exported="false" android:screenOrientation="landscape" />
+        <activity android:name=".AthleteActivity" android:exported="false" />
         </application>
 </manifest>

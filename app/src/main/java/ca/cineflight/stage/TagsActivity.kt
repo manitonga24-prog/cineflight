@@ -91,6 +91,15 @@ class TagsActivity : AppCompatActivity() {
         col.addView(ligneMenu("✂️", getString(R.string.tags_montage)) { ouvrir(MontageActivity::class.java) })
         col.addView(ligneMenu("🎬", getString(R.string.tags_mes_montages)) { ouvrir(MesMontagesActivity::class.java) })
 
+        // Le compteur est affiché DANS le libellé : une file oubliée, c'est un vol perdu.
+        val enAttente = ca.cineflight.stage.cine.AssemblagesEnAttente.nombre(this)
+        col.addView(ligneMenu("🧩", getString(R.string.tags_assemblages) +
+            if (enAttente > 0) "  ($enAttente)" else "") { ouvrir(AssemblagesActivity::class.java) })
+
+        col.addView(sectionTitre(getString(R.string.tags_sec_drone)))
+        col.addView(ligneMenu("💾", getString(R.string.tags_carte_drone)) { ouvrir(CarteDroneActivity::class.java) })
+        col.addView(ligneMenu("📍", getString(R.string.tags_find_drone)) { ouvrir(FindMyDroneActivity::class.java) })
+
         col.addView(sectionTitre(getString(R.string.tags_sec_reglages)))
         col.addView(ligneMenu("⚙️", getString(R.string.tags_reglages)) { ouvrir(ReglagesActivity::class.java) })
         col.addView(ligneMenu("📖", getString(R.string.tags_guide)) { ouvrir(GuideActivity::class.java) })

@@ -80,13 +80,39 @@ class WatchdogIndependantTest {
         assertFalse(declenche)
     }
 
-    @Test fun recul_horloge_est_traite_comme_perime() {
-        // Anomalie d'horloge (age negatif) -> fail-closed : defaillance.
+    /**
+     * CONTRAT REVU le 2026-07-22, sur preuve de terrain.
+     *
+     * Un age NEGATIF ne signifie pas « battement perime » : il signifie que le battement est
+     * PLUS RECENT que l'instant de reference — l'etat le plus sain possible. L'ancienne regle
+     * (negatif -> perime, au nom du fail-closed) transformait un entrelacement de lectures
+     * parfaitement normal en panne, et declenchait un arret d'urgence sans cause. Constate au
+     * banc : `WDG_INDEP declenche age_ms=-3`, mode soccer desarme, serie E03-02 perdue.
+     *
+     * Le fail-closed reste entier la ou il a un sens : un battement TROP VIEUX declenche
+     * toujours. Ce qui disparait, c'est un declenchement sur une condition benigne.
+     */
+    @Test fun un_battement_plus_recent_que_l_instant_de_reference_ne_declenche_pas() {
         var declenche = false
         val w = wd { declenche = true }
         w.armer(1_000L * MS)
-        assertTrue(w.verifier(0L))           // now < dernier battement
+        assertFalse("age negatif = battement tout frais, pas une panne", w.verifier(0L))
+        assertFalse(declenche)
+        // La surveillance reste OPERATIONNELLE : elle n'a pas ete consommee par un faux
+        // declenchement, et detecte toujours une vraie peremption.
+        assertTrue(w.verifier(1_000L * MS + 501L * MS))
         assertTrue(declenche)
+    }
+
+    /** Un ecart negatif AMPLE est comptabilise comme anomalie d'horloge — sans declencher. */
+    @Test fun un_ecart_negatif_ample_est_comptabilise_sans_declencher() {
+        var declenche = false
+        val w = wd { declenche = true }
+        w.armer(10_000L * MS)
+        assertFalse(w.verifier(0L))          // 10 s dans le "futur" : au-dela du seuil
+        assertFalse(declenche)
+        assertEquals(1L, w.anomaliesHorloge())
+        assertTrue("le pire ecart doit etre negatif", w.pireDeltaNegatifMs() < 0L)
     }
 
     @Test fun desarmement_volontaire_suspend_la_surveillance() {
@@ -207,6 +233,67 @@ class WatchdogIndependantTest {
         w.arreter()
         Thread.sleep(100)
         assertEquals(0, n.get())
+    }
+
+    // ── 4. INVARIANT « ARMÉE ⇒ PORTEUR VIVANT » ──────────────────────────────
+    //
+    // Défaut réel du 2026-07-22 : `arreter()` tuait le thread B sans toucher
+    // `surveillanceArmee`. Après un passage en arrière-plan, l'application lisait
+    // « surveillance armée » alors qu'aucun fil ne vérifiait plus rien — et la campagne
+    // anti-faux-positif interrogeait précisément cette variable. Une absence de
+    // déclenchement dans cet état ne prouve rien : elle mesure un détecteur débranché.
+
+    @Test fun arreter_desarme_la_surveillance() {
+        val w = WatchdogIndependant(timeoutMs = 200L, periodeMs = 20L, onDefaillance = { })
+        w.armer()
+        w.demarrer()
+        assertTrue("precondition : la surveillance doit etre armee", w.surveillanceArmee())
+        w.arreter()
+        assertFalse("arreter() doit desarmer la surveillance", w.surveillanceArmee())
+    }
+
+    @Test fun arreter_met_le_detecteur_hors_service() {
+        val w = WatchdogIndependant(timeoutMs = 200L, periodeMs = 20L, onDefaillance = { })
+        w.armer()
+        w.demarrer()
+        assertTrue("precondition : le detecteur doit etre en service", w.estEnService())
+        w.arreter()
+        assertFalse("un porteur arrete ne peut pas etre 'en service'", w.estEnService())
+    }
+
+    /**
+     * Le cas EXACT du défaut : armer, démarrer, arrêter (= onStop), puis interroger l'état.
+     * Aucune combinaison ne doit rendre « armée » alors que le thread est mort.
+     */
+    @Test(timeout = 5_000) fun apres_un_cycle_arret_l_etat_ne_ment_pas() {
+        val w = WatchdogIndependant(timeoutMs = 200L, periodeMs = 20L, onDefaillance = { })
+        w.armer(); w.demarrer()
+        w.arreter()
+        Thread.sleep(80)   // laisse le thread mourir pour de bon
+        assertFalse(w.surveillanceArmee())
+        assertFalse(w.estEnService())
+        // INVARIANT : armee ⇒ en service. Jamais l'un sans l'autre.
+        assertFalse("armee sans porteur vivant est interdit",
+            w.surveillanceArmee() && !w.estEnService())
+    }
+
+    @Test fun surveillance_armee_sans_porteur_demarre_n_est_pas_en_service() {
+        // armer() sans demarrer() : l'intention est posee, le porteur n'existe pas.
+        val w = WatchdogIndependant(timeoutMs = 200L, periodeMs = 20L, onDefaillance = { })
+        w.armer()
+        assertTrue(w.surveillanceArmee())
+        assertFalse("sans thread demarre, le detecteur n'est pas en service", w.estEnService())
+    }
+
+    @Test(timeout = 5_000) fun un_rearmement_explicite_remet_le_detecteur_en_service() {
+        // Après un arrêt, la surveillance ne reprend PAS seule : il faut armer() + demarrer().
+        // C'est la contrepartie de l'invariant — on vérifie qu'elle reste possible.
+        val w = WatchdogIndependant(timeoutMs = 200L, periodeMs = 20L, onDefaillance = { })
+        w.armer(); w.demarrer(); w.arreter()
+        assertFalse(w.estEnService())
+        w.armer(); w.demarrer()
+        assertTrue("un rearmement explicite doit remettre le detecteur en service", w.estEnService())
+        w.arreter()
     }
 
     @Test fun battements_concurrents_sont_surs() {

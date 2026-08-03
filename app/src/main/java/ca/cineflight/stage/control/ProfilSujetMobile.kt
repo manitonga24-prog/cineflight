@@ -120,6 +120,43 @@ enum class ProfilSujetMobile(
         )
     }
 
+    /**
+     * Configuration de prédiction pour la source ATHLETE_PHONE (iPhone ~1 POST / 2 s,
+     * poll app 5 Hz), DÉRIVÉE du profil : mêmes modèles de mouvement (accélérations,
+     * hystérésis, vitesse max), mais fenêtres TEMPORELLES adaptées au GPS téléphone.
+     *
+     * POURQUOI (2026-07-25) : avec la config RTK voiture (ageMax=0,50 s, régression
+     * vitesse sur 1 s, interruption à 1,25 s), la prédiction était MATHÉMATIQUEMENT
+     * inopérante en mode athlète — âge typique 0..2 s → MESURE_TROP_ANCIENNE, jamais
+     * 3 points dans la fenêtre de régression, chaque intervalle entre deux POST compté
+     * comme interruption. `predPret` restait faux → aucune anticipation, le drone
+     * suivait la position brute par bonds de ~2 s.
+     *
+     * Les barrières de QUALITÉ (confiance, incertitude, résidu) restent INCHANGÉES :
+     * seules les fenêtres liées à la CADENCE de la source changent.
+     */
+    fun configurationPredictionAthlete(cadencePostS: Double = 2.0): DiagnosticPredictionRtk.Configuration =
+        configurationPrediction().copy(
+            // Fraîcheur : un POST normal (+ marge) reste exploitable ; purge alignée sur
+            // le seuil PERDU de l'évaluateur athlète (5 s).
+            ageMaxS = cadencePostS + 0.6,            // 2,6 s
+            agePurgeS = 5.0,
+            interruptionMaxS = 2.0 * cadencePostS,   // 2 POST manqués = interruption
+            // Contrôle : cohérent avec le seuil de suivi athlète (3 s, §16).
+            ageControleMaxS = 2.5,
+            ageControleVirageMaxS = 2.2,
+            // Horizon : combler l'âge de la donnée (jusqu'à 2,6 s) + réaction du drone.
+            horizonMaxS = cadencePostS + 0.8,        // 2,8 s
+            horizonVirageMaxS = 1.5,
+            delaiPipelineS = 0.35,                   // POST iPhone + poll 5 Hz
+            // Régression vitesse/cap : 3 points espacés de ~2 s tiennent dans la fenêtre.
+            fenetreRegressionVitesseS = 3.2 * cadencePostS,   // 6,4 s
+            dureeMinRegressionVitesseS = 1.5 * cadencePostS,  // 3,0 s
+            // Démarrage : 4 points (~8 s) au lieu de 6 ; contrôle dès 3 points frais.
+            minEchantillons = 4,
+            echantillonsFixControleMin = 3,
+        )
+
     fun configurationSuivi(): SuiviSujetRtk.Config = SuiviSujetRtk.Config(
         distanceCibleM = distanceCibleM,
         limiteMinM = limiteMinM,

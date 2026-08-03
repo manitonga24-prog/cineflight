@@ -82,7 +82,10 @@ object ExecuteurMissionWpml {
         }
 
         appCtx = ctx.applicationContext
-        nomMission = kmz.nameWithoutExtension
+        // NOM AVEC EXTENSION : le SDK DJI référence la mission par le nom du fichier KMZ
+        // TÉLÉVERSÉ (extension .kmz comprise). Retirer l'extension faisait que startMission()
+        // ne retrouvait pas la mission -> upload OK mais lancement en échec.
+        nomMission = kmz.name
         waypointCourant = 0
         cbProgres = onProgres
         cbTermine = onTermine
@@ -95,7 +98,7 @@ object ExecuteurMissionWpml {
         mgr.pushKMZFileToAircraft(kmz.absolutePath,
             object : CommonCallbacks.CompletionCallbackWithProgress<Double> {
                 override fun onProgressUpdate(progress: Double) { armerDelaiUpload() }
-                override fun onSuccess() { armerDelaiUpload(); lancer() }
+                override fun onSuccess() { annulerDelaiUpload(); lancer() }
                 override fun onFailure(error: IDJIError) {
                     phase = Phase.ERREUR
                     finir(false, ctx.getString(R.string.exw_echec_envoi, error.description()))
@@ -141,6 +144,14 @@ object ExecuteurMissionWpml {
                     WaypointMissionExecuteState.INTERRUPTED -> {
                         phase = Phase.INTERROMPU
                         finir(false, appCtx?.getString(R.string.exw_interrompue_drone) ?: "")
+                    }
+                    // ⚠ Si le build échoue ICI, la constante NOT_SUPPORTED n'existe pas sous ce
+                    // nom en MSDK 5.18.0 -> retirer cette branche (le cas « firmware incompatible »
+                    // remonte alors par startMission().onFailure). Signifie : ce drone/firmware
+                    // ne prend pas en charge Waypoint Mission 3.0.
+                    WaypointMissionExecuteState.NOT_SUPPORTED -> {
+                        phase = Phase.ERREUR
+                        finir(false, appCtx?.getString(R.string.exw_non_supporte) ?: "")
                     }
                     else -> { /* READY, EXECUTING, RETURN_TO_START_POINT... : en cours */ }
                 }
